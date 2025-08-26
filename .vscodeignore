@@ -1,0 +1,83 @@
+# Source files
+src/**/*.ts
+src/**/*.map
+!out/**/*.js
+
+# Files and folders to exclude from the VS Code extension package
+
+# Source TypeScript — keep compiled output in `out/`
+src/**/*.ts
+src/**/*.map
+!out/**/*.js
+
+# Tests and test artifacts
+src/test/**
+test/**
+.vscode-test/**
+
+# Development and build configs
+tsconfig.json
+tslint.json
+.eslintrc.json
+webpack.config.js
+rollup.config.js
+gulpfile.js
+
+# Documentation — keep README/CHANGELOG for marketplace
+docs/
+*.md
+!README.md
+!CHANGELOG.md
+
+# Git metadata
+.git
+.gitignore
+.gitattributes
+
+# Node modules and lockfiles for package managers (lockfiles are not required for published extension)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+
+# IDE/editor folders and files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Build artifacts, logs and temporary files
+*.log
+*.tmp
+*.temp
+dist/
+build/
+
+# Coverage and test reports
+coverage/
+.nyc_output/
+junit.xml
+
+# Environment files and secrets
+.env
+.env.*
+.venv/
+
+# Package artifacts
+*.tgz
+*.zip
+
+# VS Code specific
+.vscode-test
+.vscodeignore
+
+# Keep compiled JS in out/ and types.js if present
+!out/**
+!types.js

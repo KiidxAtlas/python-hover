@@ -1,0 +1,52 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.activate = activate;
+exports.deactivate = deactivate;
+const vscode = require("vscode");
+const cache_1 = require("./cache");
+const config_1 = require("./config");
+const hoverProvider_1 = require("./hoverProvider");
+const inventory_1 = require("./inventory");
+const versionDetector_1 = require("./versionDetector");
+function activate(context) {
+    // Initialize managers
+    const configManager = new config_1.ConfigurationManager();
+    const cacheManager = new cache_1.CacheManager(context.globalStorageUri);
+    const inventoryManager = new inventory_1.InventoryManager(cacheManager);
+    const versionDetector = new versionDetector_1.VersionDetector(configManager);
+    // Create and register hover provider
+    const hoverProvider = new hoverProvider_1.PythonHoverProvider(configManager, inventoryManager, versionDetector, cacheManager);
+    const disposable = vscode.languages.registerHoverProvider({ language: 'python' }, hoverProvider);
+    context.subscriptions.push(disposable);
+    // Register commands
+    context.subscriptions.push(vscode.commands.registerCommand('pythonHover.clearCache', async () => {
+        try {
+            const stats = await cacheManager.clear();
+            await inventoryManager.invalidateCache();
+            // Show detailed feedback
+            const message = `Cache cleared successfully! Deleted ${stats.filesDeleted} files.`;
+            vscode.window.showInformationMessage(message);
+            console.log(`[PythonHover] ${message}`);
+        }
+        catch (error) {
+            const errorMessage = `Failed to clear cache: ${error}`;
+            vscode.window.showErrorMessage(errorMessage);
+            console.error(`[PythonHover] ${errorMessage}`);
+        }
+    }));
+    // Register command to open documentation URL
+    context.subscriptions.push(vscode.commands.registerCommand('pythonHover.openDocumentation', (url) => {
+        vscode.env.openExternal(vscode.Uri.parse(url));
+    }));
+    // Register configuration change handler
+    const configDisposable = vscode.workspace.onDidChangeConfiguration((event) => {
+        if (event.affectsConfiguration('pythonHover')) {
+            configManager.refresh();
+        }
+    });
+    context.subscriptions.push(configDisposable);
+}
+function deactivate() {
+    // Cleanup if needed
+}
+//# sourceMappingURL=extension.js.map
