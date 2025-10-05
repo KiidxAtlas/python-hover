@@ -8,13 +8,13 @@ import { VersionDetector } from './versionDetector';
 export function activate(context: vscode.ExtensionContext) {
     // Debug logging
     console.log('[PythonHover] Extension is being activated');
-    
+
     // Initialize managers
     const configManager = new ConfigurationManager();
     const cacheManager = new CacheManager(context.globalStorageUri);
     const inventoryManager = new InventoryManager(cacheManager);
     const versionDetector = new VersionDetector(configManager);
-    
+
     console.log('[PythonHover] Managers initialized');
 
     // Create and register hover provider
@@ -29,7 +29,7 @@ export function activate(context: vscode.ExtensionContext) {
         { language: 'python' },
         hoverProvider
     );
-    
+
     console.log('[PythonHover] Hover provider registered for Python language');
 
     context.subscriptions.push(disposable);

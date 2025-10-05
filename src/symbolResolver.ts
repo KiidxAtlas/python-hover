@@ -180,7 +180,7 @@ export class SymbolResolver {
                 type: 'exception'
             });
         }
-        
+
         // Check if it's a typing construct
         if (word in TYPING_CONSTRUCTS) {
             results.push({
@@ -279,35 +279,35 @@ export class SymbolResolver {
         }
 
         // Check common patterns with more comprehensive naming conventions
-        if (baseObject.endsWith('_list') || baseObject.includes('list') || 
-            baseObject.endsWith('List') || (baseObject.endsWith('s') && !baseObject.endsWith('ss') && 
-            !baseObject.endsWith('us') && !baseObject.endsWith('is'))) {
+        if (baseObject.endsWith('_list') || baseObject.includes('list') ||
+            baseObject.endsWith('List') || (baseObject.endsWith('s') && !baseObject.endsWith('ss') &&
+                !baseObject.endsWith('us') && !baseObject.endsWith('is'))) {
             return 'list';
         }
-        if (baseObject.endsWith('_dict') || baseObject.includes('dict') || 
-            baseObject.endsWith('Dict') || baseObject.endsWith('Map') || 
+        if (baseObject.endsWith('_dict') || baseObject.includes('dict') ||
+            baseObject.endsWith('Dict') || baseObject.endsWith('Map') ||
             baseObject.includes('mapping') || baseObject.includes('config')) {
             return 'dict';
         }
-        if (baseObject.endsWith('_str') || baseObject.includes('string') || 
-            baseObject.endsWith('String') || baseObject.endsWith('name') || 
+        if (baseObject.endsWith('_str') || baseObject.includes('string') ||
+            baseObject.endsWith('String') || baseObject.endsWith('name') ||
             baseObject.endsWith('text') || baseObject.endsWith('message')) {
             return 'str';
         }
         if (baseObject.endsWith('_set') || baseObject.includes('set') || baseObject.endsWith('Set')) {
             return 'set';
         }
-        if (baseObject.endsWith('_int') || baseObject.includes('int') || baseObject.endsWith('Int') || 
-            baseObject.includes('count') || baseObject.includes('index') || 
+        if (baseObject.endsWith('_int') || baseObject.includes('int') || baseObject.endsWith('Int') ||
+            baseObject.includes('count') || baseObject.includes('index') ||
             baseObject.endsWith('_id') || baseObject.endsWith('Id')) {
             return 'int';
         }
-        if (baseObject.endsWith('_float') || baseObject.includes('float') || baseObject.endsWith('Float') || 
-            baseObject.includes('price') || baseObject.includes('rate') || 
+        if (baseObject.endsWith('_float') || baseObject.includes('float') || baseObject.endsWith('Float') ||
+            baseObject.includes('price') || baseObject.includes('rate') ||
             baseObject.includes('value') || baseObject.includes('amount')) {
             return 'float';
         }
-        
+
         // Default to object (which will resolve to general methods)
         return 'object';
     }

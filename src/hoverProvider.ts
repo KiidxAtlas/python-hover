@@ -6,8 +6,8 @@ import { DocumentationFetcher } from './documentationFetcher';
 import { ENHANCED_EXAMPLES } from './enhancedExamples';
 import { InventoryEntry, InventoryManager } from './inventory';
 import { MethodResolver } from './methodResolver';
-import { buildSpecialMethodsSection, SPECIAL_METHOD_DESCRIPTIONS } from './specialMethods';
-import { getRelatedMethods, getRelatedMethodsForMethod } from './smartSuggestions';
+import { getRelatedMethodsForMethod } from './smartSuggestions';
+import { SPECIAL_METHOD_DESCRIPTIONS } from './specialMethods';
 import { STATIC_EXAMPLES } from './staticExamples';
 import { SymbolResolver } from './symbolResolver';
 import { VersionDetector } from './versionDetector';
@@ -62,7 +62,7 @@ export class PythonHoverProvider implements vscode.HoverProvider {
                 const receiverType = this.contextDetector.detectMethodContext(document, position, primarySymbol.symbol);
                 if (receiverType) {
                     console.log(`[PythonHover] Detected method context: ${receiverType}.${primarySymbol.symbol}`);
-                    
+
                     // Resolve method with context
                     const methodInfo = this.methodResolver.resolveMethodInfo(document, position, primarySymbol.symbol, receiverType);
                     if (methodInfo) {
@@ -75,21 +75,21 @@ export class PythonHoverProvider implements vscode.HoverProvider {
             // ENHANCEMENT: Check for special dunder methods
             if (primarySymbol.symbol.startsWith('__') && primarySymbol.symbol.endsWith('__')) {
                 console.log(`[PythonHover] Detected special method: ${primarySymbol.symbol}`);
-                
+
                 // Log available special method descriptions for debugging
                 console.log(`[PythonHover] Available special method descriptions: ${Object.keys(SPECIAL_METHOD_DESCRIPTIONS).join(', ')}`);
-                
+
                 // Extract pure dunder method name if it's part of a qualified name (e.g., "MyClass.__init__")
                 let dunderMethodName = primarySymbol.symbol;
                 if (dunderMethodName.includes('.')) {
                     dunderMethodName = dunderMethodName.split('.').pop() || dunderMethodName;
                     console.log(`[PythonHover] Extracted dunder method name: ${dunderMethodName}`);
                 }
-                
+
                 // Use SPECIAL_METHOD_DESCRIPTIONS directly
                 const description = SPECIAL_METHOD_DESCRIPTIONS[dunderMethodName];
                 console.log(`[PythonHover] Found description: ${description || 'none'}`);
-                
+
                 if (description) {
                     // Create custom hover for dunder methods
                     const dunderInfo = { description };
@@ -125,7 +125,7 @@ export class PythonHoverProvider implements vscode.HoverProvider {
                 console.log(`[PythonHover] Operator documentation fetched: ${JSON.stringify(operatorDocumentation)}`);
                 return new vscode.Hover(new vscode.MarkdownString(operatorDocumentation.content));
             }
-            
+
             // ENHANCEMENT: Handle language keywords with enhanced examples
             if (primarySymbol.type === 'keyword' && ENHANCED_EXAMPLES[primarySymbol.symbol]) {
                 console.log(`[PythonHover] Found enhanced example for keyword: ${primarySymbol.symbol}`);
@@ -220,14 +220,14 @@ export class PythonHoverProvider implements vscode.HoverProvider {
         // Additional information about special methods
         md.appendMarkdown('*Special methods are invoked by Python\'s syntax and built-in functions.*');
         md.appendMarkdown('\n\n');
-        
+
         // Add documentation links for dunder methods
         // Most dunder methods are documented in the "Data Model" section of the Python docs
         const docUrl = "https://docs.python.org/3/reference/datamodel.html#special-method-names";
         md.appendMarkdown(`**Source:** [docs.python.org/.../datamodel.html](${docUrl})`);
         md.appendMarkdown('\n\n');
         md.appendMarkdown(`<a href="${docUrl}">Open full docs</a> • [Copy link](${docUrl})`);
-        
+
         console.log(`[PythonHover] Created dunder method documentation link: ${docUrl}`);
 
         return new vscode.Hover(md);
@@ -360,10 +360,10 @@ export class PythonHoverProvider implements vscode.HoverProvider {
         if (symbolInfo.type === 'method' && symbolInfo.context) {
             const bareMethod = symbolName.split('.').pop() || '';
             const relatedMethods = getRelatedMethodsForMethod(symbolInfo.context, bareMethod);
-            
+
             if (relatedMethods.length > 0) {
                 md.appendMarkdown('## Related Methods\n\n');
-                
+
                 // Show up to 5 related methods
                 const methodsToShow = relatedMethods.slice(0, 5);
                 for (const method of methodsToShow) {
@@ -372,7 +372,7 @@ export class PythonHoverProvider implements vscode.HoverProvider {
                 md.appendMarkdown('\n');
             }
         }
-        
+
         // Source line with link to the precise anchor (if available)
         if (inventoryEntry) {
             const fullUrl = inventoryEntry.anchor ? `${inventoryEntry.uri}#${inventoryEntry.anchor}` : inventoryEntry.uri;
@@ -380,7 +380,7 @@ export class PythonHoverProvider implements vscode.HoverProvider {
             const displayUrl = inventoryEntry.uri.replace(/^https?:\/\//, '');
             md.appendMarkdown(`**Source:** [${displayUrl}](${fullUrl})`);
             md.appendMarkdown('\n\n');
-            
+
             // Log the URL for debugging
             console.log(`[PythonHover] Created documentation link from inventory: ${fullUrl}`);
         } else if (docSnippet && docSnippet.url) {
@@ -389,7 +389,7 @@ export class PythonHoverProvider implements vscode.HoverProvider {
             const displayUrl = docUrl.replace(/^https?:\/\//, '');
             md.appendMarkdown(`**Source:** [${displayUrl}](${docUrl})`);
             md.appendMarkdown('\n\n');
-            
+
             // Log the URL for debugging
             console.log(`[PythonHover] Created documentation link from docSnippet: ${docUrl}`);
         }

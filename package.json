@@ -6,7 +6,7 @@
     "version": "0.2.0",
     "repository": {
         "type": "git",
-        "url": "https://github.com/yourusername/python-hover.git"
+        "url": "https://github.com/KiidxAtlas/python-hover.git"
     },
     "engines": {
         "vscode": "^1.80.0"

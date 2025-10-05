@@ -6,8 +6,8 @@ const contextDetector_1 = require("./contextDetector");
 const documentationFetcher_1 = require("./documentationFetcher");
 const enhancedExamples_1 = require("./enhancedExamples");
 const methodResolver_1 = require("./methodResolver");
-const specialMethods_1 = require("./specialMethods");
 const smartSuggestions_1 = require("./smartSuggestions");
+const specialMethods_1 = require("./specialMethods");
 const staticExamples_1 = require("./staticExamples");
 const symbolResolver_1 = require("./symbolResolver");
 class PythonHoverProvider {
