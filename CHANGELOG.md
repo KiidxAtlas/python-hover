@@ -1,5 +1,14 @@
 # Change Log
 
+## [0.3.0] - 2025-10-04
+
+### 🔧 **Bug Fixes & Improvements**
+
+- **Fixed Dunder Method Hovers**: Improved detection and display of special methods
+- **Enhanced Documentation Links**: Fixed and improved links to Python documentation
+- **Better Symbol Resolution**: Enhanced symbol detection for special Python constructs
+- **Added Debugging Information**: Improved logging for easier troubleshooting
+
 ## [0.2.0] - 2023-07-15
 
 ### ✨ **Major Enhancement Release**

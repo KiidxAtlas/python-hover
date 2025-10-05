@@ -4,12 +4,22 @@
     "displayName": "🐍 Python Hover - Enhanced Documentation",
     "description": "Instant Python documentation with 300+ constructs, smart context detection, and practical examples. Perfect for learning and quick reference.",
     "version": "0.2.0",
+    "publisher": "KiidxAtlas",
+    "license": "MIT",
     "repository": {
         "type": "git",
         "url": "https://github.com/KiidxAtlas/python-hover.git"
     },
+    "bugs": {
+        "url": "https://github.com/KiidxAtlas/python-hover/issues"
+    },
+    "homepage": "https://github.com/KiidxAtlas/python-hover#readme",
     "engines": {
         "vscode": "^1.80.0"
+    },
+    "galleryBanner": {
+        "color": "#1e415e",
+        "theme": "dark"
     },
     "categories": [
         "Programming Languages",
@@ -31,74 +41,21 @@
         "productivity",
         "string-methods",
         "list-methods",
-        "dict-methods"
+        "dict-methods",
+        "import-support"
     ],
     "activationEvents": [
         "onLanguage:python"
     ],
     "main": "./out/extension.js",
     "contributes": {
-        "languages": [
-            {
-                "id": "python"
-            }
-        ],
         "commands": [
             {
                 "command": "pythonHover.clearCache",
-                "title": "Clear Cache",
-                "category": "Python Hover"
-            },
-            {
-                "command": "pythonHover.openDocumentation",
-                "title": "Open Documentation",
+                "title": "Clear Documentation Cache",
                 "category": "Python Hover"
             }
-        ],
-        "configuration": {
-            "title": "Python Hover Documentation",
-            "properties": {
-                "pythonHover.docsVersion": {
-                    "type": "string",
-                    "default": "auto",
-                    "enum": [
-                        "auto",
-                        "3.8",
-                        "3.9",
-                        "3.10",
-                        "3.11",
-                        "3.12",
-                        "3.13"
-                    ],
-                    "description": "Python documentation version to use"
-                },
-                "pythonHover.maxSnippetLines": {
-                    "type": "number",
-                    "default": 20,
-                    "description": "Maximum lines to show in documentation snippets (including examples)"
-                },
-                "pythonHover.cacheTTL.inventoryDays": {
-                    "type": "number",
-                    "default": 7,
-                    "description": "Days to cache intersphinx inventory files"
-                },
-                "pythonHover.cacheTTL.snippetHours": {
-                    "type": "number",
-                    "default": 48,
-                    "description": "Hours to cache documentation snippets"
-                },
-                "pythonHover.enableKeywordDocs": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Enable documentation for Python keywords"
-                },
-                "pythonHover.telemetry": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "Enable telemetry (disabled by default)"
-                }
-            }
-        }
+        ]
     },
     "scripts": {
         "vscode:prepublish": "npm run compile",
