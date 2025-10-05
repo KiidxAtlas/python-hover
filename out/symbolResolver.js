@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SymbolResolver = void 0;
 const documentationUrls_1 = require("./documentationUrls");
+const typingConstructs_1 = require("./typingConstructs");
 class SymbolResolver {
     resolveSymbolAtPosition(document, position) {
         const line = document.lineAt(position);
@@ -115,9 +116,26 @@ class SymbolResolver {
                 type: 'exception'
             });
         }
+        // Check if it's a typing construct
+        if (word in typingConstructs_1.TYPING_CONSTRUCTS) {
+            results.push({
+                symbol: word,
+                type: 'typing',
+                documentation: typingConstructs_1.TYPING_CONSTRUCTS[word]
+            });
+        }
+        // Check if it's a dunder method
+        if (word.startsWith('__') && word.endsWith('__')) {
+            console.log(`[SymbolResolver] Detected potential dunder method: ${word}`);
+            results.push({
+                symbol: word,
+                type: 'method' // Keep as 'method' type - the hover provider will handle it
+            });
+        }
         // Check for dotted access (method calls)
         const dottedMatch = wordRange ? this.findDottedAccess(text, wordRange) : null;
         if (dottedMatch) {
+            console.log(`[SymbolResolver] Detected dotted access: ${dottedMatch.fullPath}`);
             results.push({
                 symbol: dottedMatch.fullPath,
                 type: 'method',
@@ -172,21 +190,39 @@ class SymbolResolver {
         return null;
     }
     inferBaseType(baseObject) {
-        // Simple heuristics to infer the type of the base object
-        // This could be enhanced with more sophisticated analysis
+        // Enhanced heuristics to infer the type of the base object
         // Check if it's a known builtin type
-        if (['str', 'list', 'dict', 'set', 'tuple', 'int', 'float', 'bytes'].includes(baseObject)) {
+        if (['str', 'list', 'dict', 'set', 'tuple', 'int', 'float', 'bytes', 'bool'].includes(baseObject)) {
             return baseObject;
         }
-        // Check common patterns
-        if (baseObject.endsWith('_list') || baseObject.includes('list')) {
+        // Check common patterns with more comprehensive naming conventions
+        if (baseObject.endsWith('_list') || baseObject.includes('list') ||
+            baseObject.endsWith('List') || (baseObject.endsWith('s') && !baseObject.endsWith('ss') &&
+            !baseObject.endsWith('us') && !baseObject.endsWith('is'))) {
             return 'list';
         }
-        if (baseObject.endsWith('_dict') || baseObject.includes('dict')) {
+        if (baseObject.endsWith('_dict') || baseObject.includes('dict') ||
+            baseObject.endsWith('Dict') || baseObject.endsWith('Map') ||
+            baseObject.includes('mapping') || baseObject.includes('config')) {
             return 'dict';
         }
-        if (baseObject.endsWith('_str') || baseObject.includes('string')) {
+        if (baseObject.endsWith('_str') || baseObject.includes('string') ||
+            baseObject.endsWith('String') || baseObject.endsWith('name') ||
+            baseObject.endsWith('text') || baseObject.endsWith('message')) {
             return 'str';
+        }
+        if (baseObject.endsWith('_set') || baseObject.includes('set') || baseObject.endsWith('Set')) {
+            return 'set';
+        }
+        if (baseObject.endsWith('_int') || baseObject.includes('int') || baseObject.endsWith('Int') ||
+            baseObject.includes('count') || baseObject.includes('index') ||
+            baseObject.endsWith('_id') || baseObject.endsWith('Id')) {
+            return 'int';
+        }
+        if (baseObject.endsWith('_float') || baseObject.includes('float') || baseObject.endsWith('Float') ||
+            baseObject.includes('price') || baseObject.includes('rate') ||
+            baseObject.includes('value') || baseObject.includes('amount')) {
+            return 'float';
         }
         // Default to object (which will resolve to general methods)
         return 'object';

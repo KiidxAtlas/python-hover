@@ -1,13 +1,37 @@
 {
-    "name": "python-hover-docs",
-    "displayName": "Python Documentation Hover",
-    "description": "Shows official Python documentation when hovering Python syntax",
-    "version": "0.1.0",
+    "name": "python-hover",
+    "icon": "media/icon.png",
+    "displayName": "🐍 Python Hover - Enhanced Documentation",
+    "description": "Instant Python documentation with 300+ constructs, smart context detection, and practical examples. Perfect for learning and quick reference.",
+    "version": "0.2.0",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/yourusername/python-hover.git"
+    },
     "engines": {
         "vscode": "^1.80.0"
     },
     "categories": [
+        "Programming Languages",
+        "Education",
         "Other"
+    ],
+    "keywords": [
+        "python",
+        "hover",
+        "documentation",
+        "intellisense",
+        "examples",
+        "learning",
+        "reference",
+        "methods",
+        "built-ins",
+        "type-hints",
+        "education",
+        "productivity",
+        "string-methods",
+        "list-methods",
+        "dict-methods"
     ],
     "activationEvents": [
         "onLanguage:python"

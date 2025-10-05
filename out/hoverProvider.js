@@ -2,7 +2,13 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PythonHoverProvider = void 0;
 const vscode = require("vscode");
+const contextDetector_1 = require("./contextDetector");
 const documentationFetcher_1 = require("./documentationFetcher");
+const enhancedExamples_1 = require("./enhancedExamples");
+const methodResolver_1 = require("./methodResolver");
+const specialMethods_1 = require("./specialMethods");
+const smartSuggestions_1 = require("./smartSuggestions");
+const staticExamples_1 = require("./staticExamples");
 const symbolResolver_1 = require("./symbolResolver");
 class PythonHoverProvider {
     constructor(configManager, inventoryManager, versionDetector, cacheManager) {
@@ -11,6 +17,8 @@ class PythonHoverProvider {
         this.versionDetector = versionDetector;
         this.symbolResolver = new symbolResolver_1.SymbolResolver();
         this.documentationFetcher = new documentationFetcher_1.DocumentationFetcher(cacheManager);
+        this.contextDetector = new contextDetector_1.ContextDetector();
+        this.methodResolver = new methodResolver_1.MethodResolver();
     }
     async provideHover(document, position, token) {
         // Check if cancellation was requested
@@ -30,10 +38,44 @@ class PythonHoverProvider {
             // Try to resolve the first symbol
             const primarySymbol = symbols[0];
             console.log(`[PythonHover] Resolving symbol: ${primarySymbol.symbol} (type: ${primarySymbol.type})`);
+            // ENHANCEMENT: Check for method context
+            if (primarySymbol.type === 'method') {
+                // Detect the method's object type for better context
+                const receiverType = this.contextDetector.detectMethodContext(document, position, primarySymbol.symbol);
+                if (receiverType) {
+                    console.log(`[PythonHover] Detected method context: ${receiverType}.${primarySymbol.symbol}`);
+                    // Resolve method with context
+                    const methodInfo = this.methodResolver.resolveMethodInfo(document, position, primarySymbol.symbol, receiverType);
+                    if (methodInfo) {
+                        primarySymbol.context = receiverType;
+                        primarySymbol.symbol = `${receiverType}.${primarySymbol.symbol}`;
+                    }
+                }
+            }
+            // ENHANCEMENT: Check for special dunder methods
+            if (primarySymbol.symbol.startsWith('__') && primarySymbol.symbol.endsWith('__')) {
+                console.log(`[PythonHover] Detected special method: ${primarySymbol.symbol}`);
+                // Log available special method descriptions for debugging
+                console.log(`[PythonHover] Available special method descriptions: ${Object.keys(specialMethods_1.SPECIAL_METHOD_DESCRIPTIONS).join(', ')}`);
+                // Extract pure dunder method name if it's part of a qualified name (e.g., "MyClass.__init__")
+                let dunderMethodName = primarySymbol.symbol;
+                if (dunderMethodName.includes('.')) {
+                    dunderMethodName = dunderMethodName.split('.').pop() || dunderMethodName;
+                    console.log(`[PythonHover] Extracted dunder method name: ${dunderMethodName}`);
+                }
+                // Use SPECIAL_METHOD_DESCRIPTIONS directly
+                const description = specialMethods_1.SPECIAL_METHOD_DESCRIPTIONS[dunderMethodName];
+                console.log(`[PythonHover] Found description: ${description || 'none'}`);
+                if (description) {
+                    // Create custom hover for dunder methods
+                    const dunderInfo = { description };
+                    return this.createDunderMethodHover(dunderMethodName, dunderInfo);
+                }
+            }
             const inventoryEntry = await this.inventoryManager.resolveSymbol(primarySymbol.symbol, pythonVersion);
             console.log(`[PythonHover] Inventory entry result: ${inventoryEntry ? `${inventoryEntry.name} -> ${inventoryEntry.uri}#${inventoryEntry.anchor}` : 'not found'}`);
             // Check for f-strings
-            if ((primarySymbol.type) === 'f-string') {
+            if (primarySymbol.type === 'f-string') {
                 console.log(`[PythonHover] Handling f-string: ${primarySymbol.symbol}`);
                 // Reuse the unified fetcher for the f-string pseudo-symbol so it benefits
                 // from static examples and direct mapping logic.
@@ -42,11 +84,16 @@ class PythonHoverProvider {
                 return new vscode.Hover(new vscode.MarkdownString(docSnippet.content));
             }
             // Handle operators
-            if ((primarySymbol.type) === 'operator') {
+            if (primarySymbol.type === 'operator') {
                 console.log(`[PythonHover] Handling operator: ${primarySymbol.symbol}`);
                 const operatorDocumentation = await this.documentationFetcher.fetchOperatorDocumentation(primarySymbol.symbol);
                 console.log(`[PythonHover] Operator documentation fetched: ${JSON.stringify(operatorDocumentation)}`);
                 return new vscode.Hover(new vscode.MarkdownString(operatorDocumentation.content));
+            }
+            // ENHANCEMENT: Handle language keywords with enhanced examples
+            if (primarySymbol.type === 'keyword' && enhancedExamples_1.ENHANCED_EXAMPLES[primarySymbol.symbol]) {
+                console.log(`[PythonHover] Found enhanced example for keyword: ${primarySymbol.symbol}`);
+                return this.createEnhancedExampleHover(primarySymbol.symbol);
             }
             // Fetch documentation snippet with adjusted limits for compound statements
             let maxLines = this.configManager.maxSnippetLines;
@@ -55,7 +102,8 @@ class PythonHoverProvider {
                 maxLines = Math.max(40, maxLines); // At least 40 lines for compound statements
             }
             // Use the new unified documentation fetcher that prioritizes direct URL mappings
-            const docSnippet = await this.documentationFetcher.fetchDocumentationForSymbol(primarySymbol.symbol, inventoryEntry || undefined, maxLines);
+            const docSnippet = await this.documentationFetcher.fetchDocumentationForSymbol(primarySymbol.symbol, inventoryEntry || undefined, maxLines, primarySymbol.context // Pass context for better examples
+            );
             console.log(`[PythonHover] Generated documentation URL: ${docSnippet.url}`);
             return this.createRichHover(docSnippet, inventoryEntry, primarySymbol);
         }
@@ -89,6 +137,64 @@ class PythonHoverProvider {
         md.appendMarkdown('\n\n');
         // Small link to docs.python.org
         md.appendMarkdown(`[Open Python docs](https://docs.python.org/)`);
+        return new vscode.Hover(md);
+    }
+    /**
+     * Create a hover for special dunder methods
+     */
+    createDunderMethodHover(methodName, dunderInfo) {
+        const md = new vscode.MarkdownString();
+        md.isTrusted = true;
+        md.supportHtml = true;
+        md.supportThemeIcons = true;
+        // Header with method name
+        md.appendMarkdown(`### \`${methodName}\` - Special Method`);
+        md.appendMarkdown('\n\n');
+        // Description
+        md.appendMarkdown(`**${dunderInfo.description}**`);
+        md.appendMarkdown('\n\n');
+        // Example code if available
+        if (enhancedExamples_1.ENHANCED_EXAMPLES[methodName]) {
+            md.appendMarkdown(enhancedExamples_1.ENHANCED_EXAMPLES[methodName].content);
+            md.appendMarkdown('\n\n');
+        }
+        else if (dunderInfo.example) {
+            md.appendMarkdown('```python\n' + dunderInfo.example + '\n```');
+            md.appendMarkdown('\n\n');
+        }
+        // Additional information about special methods
+        md.appendMarkdown('*Special methods are invoked by Python\'s syntax and built-in functions.*');
+        md.appendMarkdown('\n\n');
+        // Add documentation links for dunder methods
+        // Most dunder methods are documented in the "Data Model" section of the Python docs
+        const docUrl = "https://docs.python.org/3/reference/datamodel.html#special-method-names";
+        md.appendMarkdown(`**Source:** [docs.python.org/.../datamodel.html](${docUrl})`);
+        md.appendMarkdown('\n\n');
+        md.appendMarkdown(`<a href="${docUrl}">Open full docs</a> • [Copy link](${docUrl})`);
+        console.log(`[PythonHover] Created dunder method documentation link: ${docUrl}`);
+        return new vscode.Hover(md);
+    }
+    /**
+     * Create a hover with enhanced examples
+     */
+    createEnhancedExampleHover(symbolName) {
+        const md = new vscode.MarkdownString();
+        md.isTrusted = true;
+        md.supportHtml = true;
+        md.supportThemeIcons = true;
+        // Header with symbol name
+        md.appendMarkdown(`### \`${symbolName}\` - Python ${symbolName === 'class' ? 'Class Definition' : 'Keyword'}`);
+        md.appendMarkdown('\n\n');
+        // Description if available
+        if (enhancedExamples_1.ENHANCED_EXAMPLES[symbolName].description) {
+            md.appendMarkdown(`**${enhancedExamples_1.ENHANCED_EXAMPLES[symbolName].description}**`);
+            md.appendMarkdown('\n\n');
+        }
+        // Rich example content
+        md.appendMarkdown(enhancedExamples_1.ENHANCED_EXAMPLES[symbolName].content);
+        md.appendMarkdown('\n\n');
+        // Link to official docs
+        md.appendMarkdown(`[View in Python documentation](https://docs.python.org/3/reference/compound_stmts.html#${symbolName})`);
         return new vscode.Hover(md);
     }
     createRichHover(docSnippet, inventoryEntry, symbolInfo) {
@@ -137,8 +243,30 @@ class PythonHoverProvider {
                 md.appendMarkdown('\n\n');
             }
         }
+        // ENHANCEMENT: Add examples from STATIC_EXAMPLES or ENHANCED_EXAMPLES
+        const bareSymbol = symbolName.split('.').pop() || symbolName;
+        if (enhancedExamples_1.ENHANCED_EXAMPLES[bareSymbol]) {
+            md.appendMarkdown('## Examples\n\n');
+            md.appendMarkdown(enhancedExamples_1.ENHANCED_EXAMPLES[bareSymbol].content);
+            md.appendMarkdown('\n\n');
+        }
+        else if (staticExamples_1.STATIC_EXAMPLES[bareSymbol]) {
+            md.appendMarkdown('## Examples\n\n');
+            md.appendMarkdown('```python\n');
+            md.appendMarkdown(staticExamples_1.STATIC_EXAMPLES[bareSymbol].examples.join('\n'));
+            md.appendMarkdown('\n```\n\n');
+        }
+        else if (symbolInfo.type === 'method' && symbolInfo.context) {
+            // For methods with context like str.upper, try to find examples for the method
+            const methodKey = `${symbolInfo.context}.${bareSymbol}`;
+            if (enhancedExamples_1.ENHANCED_EXAMPLES[methodKey]) {
+                md.appendMarkdown('## Examples\n\n');
+                md.appendMarkdown(enhancedExamples_1.ENHANCED_EXAMPLES[methodKey].content);
+                md.appendMarkdown('\n\n');
+            }
+        }
         // Append one or two extra paragraphs from the full content to give the hover
-        // more context (the static examples feature was removed per user request).
+        // more context
         try {
             if (docSnippet && docSnippet.content && typeof docSnippet.content === 'string') {
                 const paragraphs = docSnippet.content.split(/\n\s*\n/).map((p) => p.trim()).filter((p) => p.length > 0);
@@ -158,19 +286,44 @@ class PythonHoverProvider {
         catch (e) {
             console.error('[PythonHover] Error while appending extra content to hover:', e);
         }
+        // Add related methods (smart suggestions) for method calls
+        if (symbolInfo.type === 'method' && symbolInfo.context) {
+            const bareMethod = symbolName.split('.').pop() || '';
+            const relatedMethods = (0, smartSuggestions_1.getRelatedMethodsForMethod)(symbolInfo.context, bareMethod);
+            if (relatedMethods.length > 0) {
+                md.appendMarkdown('## Related Methods\n\n');
+                // Show up to 5 related methods
+                const methodsToShow = relatedMethods.slice(0, 5);
+                for (const method of methodsToShow) {
+                    md.appendMarkdown(`- \`${symbolInfo.context}.${method.name}()\` — ${method.description}\n`);
+                }
+                md.appendMarkdown('\n');
+            }
+        }
         // Source line with link to the precise anchor (if available)
         if (inventoryEntry) {
             const fullUrl = inventoryEntry.anchor ? `${inventoryEntry.uri}#${inventoryEntry.anchor}` : inventoryEntry.uri;
-            md.appendMarkdown(`**Source:** [${inventoryEntry.uri.replace(/^https?:\/\//, '')}](${fullUrl})`);
+            // Ensure URL is absolute and properly formatted
+            const displayUrl = inventoryEntry.uri.replace(/^https?:\/\//, '');
+            md.appendMarkdown(`**Source:** [${displayUrl}](${fullUrl})`);
             md.appendMarkdown('\n\n');
+            // Log the URL for debugging
+            console.log(`[PythonHover] Created documentation link from inventory: ${fullUrl}`);
         }
         else if (docSnippet && docSnippet.url) {
-            md.appendMarkdown(`**Source:** [${docSnippet.url.replace(/^https?:\/\//, '')}](${docSnippet.url})`);
+            // Ensure URL is absolute
+            const docUrl = docSnippet.url.startsWith('http') ? docSnippet.url : `https://docs.python.org/3/${docSnippet.url}`;
+            const displayUrl = docUrl.replace(/^https?:\/\//, '');
+            md.appendMarkdown(`**Source:** [${displayUrl}](${docUrl})`);
             md.appendMarkdown('\n\n');
+            // Log the URL for debugging
+            console.log(`[PythonHover] Created documentation link from docSnippet: ${docUrl}`);
         }
         // Helpful quick actions: open full docs, copy link
         if (docSnippet && docSnippet.url) {
-            md.appendMarkdown(`<a href="${docSnippet.url}">Open full docs</a> • [Copy link](${docSnippet.url})`);
+            // Ensure URL is absolute
+            const docUrl = docSnippet.url.startsWith('http') ? docSnippet.url : `https://docs.python.org/3/${docSnippet.url}`;
+            md.appendMarkdown(`<a href="${docUrl}">Open full docs</a> • [Copy link](${docUrl})`);
             md.appendMarkdown('\n\n');
         }
         // If no inventory entry, show alternatives (best effort)

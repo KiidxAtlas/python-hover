@@ -1,9 +1,10 @@
 import * as vscode from 'vscode';
 import { OPERATORS } from './documentationUrls';
+import { TYPING_CONSTRUCTS } from './typingConstructs';
 
 export interface SymbolInfo {
     symbol: string;
-    type: 'builtin' | 'module' | 'method' | 'exception' | 'keyword' | 'decorator' | 'operator' | 'class' | 'f-string';
+    type: 'builtin' | 'module' | 'method' | 'exception' | 'keyword' | 'decorator' | 'operator' | 'class' | 'f-string' | 'typing';
     context?: string;
     documentation?: string;
 }
@@ -179,10 +180,29 @@ export class SymbolResolver {
                 type: 'exception'
             });
         }
+        
+        // Check if it's a typing construct
+        if (word in TYPING_CONSTRUCTS) {
+            results.push({
+                symbol: word,
+                type: 'typing',
+                documentation: TYPING_CONSTRUCTS[word]
+            });
+        }
+
+        // Check if it's a dunder method
+        if (word.startsWith('__') && word.endsWith('__')) {
+            console.log(`[SymbolResolver] Detected potential dunder method: ${word}`);
+            results.push({
+                symbol: word,
+                type: 'method' // Keep as 'method' type - the hover provider will handle it
+            });
+        }
 
         // Check for dotted access (method calls)
         const dottedMatch = wordRange ? this.findDottedAccess(text, wordRange) : null;
         if (dottedMatch) {
+            console.log(`[SymbolResolver] Detected dotted access: ${dottedMatch.fullPath}`);
             results.push({
                 symbol: dottedMatch.fullPath,
                 type: 'method',
@@ -251,25 +271,43 @@ export class SymbolResolver {
     }
 
     private inferBaseType(baseObject: string): string {
-        // Simple heuristics to infer the type of the base object
-        // This could be enhanced with more sophisticated analysis
+        // Enhanced heuristics to infer the type of the base object
 
         // Check if it's a known builtin type
-        if (['str', 'list', 'dict', 'set', 'tuple', 'int', 'float', 'bytes'].includes(baseObject)) {
+        if (['str', 'list', 'dict', 'set', 'tuple', 'int', 'float', 'bytes', 'bool'].includes(baseObject)) {
             return baseObject;
         }
 
-        // Check common patterns
-        if (baseObject.endsWith('_list') || baseObject.includes('list')) {
+        // Check common patterns with more comprehensive naming conventions
+        if (baseObject.endsWith('_list') || baseObject.includes('list') || 
+            baseObject.endsWith('List') || (baseObject.endsWith('s') && !baseObject.endsWith('ss') && 
+            !baseObject.endsWith('us') && !baseObject.endsWith('is'))) {
             return 'list';
         }
-        if (baseObject.endsWith('_dict') || baseObject.includes('dict')) {
+        if (baseObject.endsWith('_dict') || baseObject.includes('dict') || 
+            baseObject.endsWith('Dict') || baseObject.endsWith('Map') || 
+            baseObject.includes('mapping') || baseObject.includes('config')) {
             return 'dict';
         }
-        if (baseObject.endsWith('_str') || baseObject.includes('string')) {
+        if (baseObject.endsWith('_str') || baseObject.includes('string') || 
+            baseObject.endsWith('String') || baseObject.endsWith('name') || 
+            baseObject.endsWith('text') || baseObject.endsWith('message')) {
             return 'str';
         }
-
+        if (baseObject.endsWith('_set') || baseObject.includes('set') || baseObject.endsWith('Set')) {
+            return 'set';
+        }
+        if (baseObject.endsWith('_int') || baseObject.includes('int') || baseObject.endsWith('Int') || 
+            baseObject.includes('count') || baseObject.includes('index') || 
+            baseObject.endsWith('_id') || baseObject.endsWith('Id')) {
+            return 'int';
+        }
+        if (baseObject.endsWith('_float') || baseObject.includes('float') || baseObject.endsWith('Float') || 
+            baseObject.includes('price') || baseObject.includes('rate') || 
+            baseObject.includes('value') || baseObject.includes('amount')) {
+            return 'float';
+        }
+        
         // Default to object (which will resolve to general methods)
         return 'object';
     }

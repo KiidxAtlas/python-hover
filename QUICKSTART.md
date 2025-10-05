@@ -1,25 +1,26 @@
-# Quick Start Guide
+# 🚀 Quick Start Guide
 
-## Testing the Extension
+## 🧪 Testing the Extension
 
-1. **Start Development Mode**
+1. **🔥 Start Development Mode**
    ```bash
    # Press F5 in VS Code to launch Extension Development Host
    # Or use the debug configuration "Run Extension"
    ```
 
-2. **Open Test File**
+2. **📂 Open Test File**
    - In the Extension Development Host window, open `test-examples/demo.py`
    - Or create a new Python file with some test code
 
-3. **Test Hover Functionality**
+3. **🔍 Test Hover Functionality**
    - Hover over built-in functions like `len`, `print`, `str`
    - Hover over string methods like `split`, `lower`, `upper`
    - Hover over list methods like `append`, `extend`
    - Hover over exceptions like `ValueError`, `TypeError`
    - Hover over keywords like `if`, `for`, `while`
+   - Hover over dunder methods like `__init__`, `__str__`
 
-## Example Test Code
+## 💻 Example Test Code
 
 ```python
 # Test this code by hovering over various symbols
@@ -27,6 +28,19 @@ text = "Hello, World!"
 length = len(text)          # Hover over 'len'
 words = text.split(", ")    # Hover over 'split'
 print(words)                # Hover over 'print'
+
+# Test context-aware type detection
+numbers = [1, 2, 3, 4, 5]
+numbers.append(6)           # Hover over 'append'
+numbers.sort()              # Hover over 'sort'
+
+# Test special methods
+class Person:
+    def __init__(self, name): # Hover over '__init__'
+        self.name = name
+    
+    def __str__(self):      # Hover over '__str__'
+        return self.name
 
 numbers = [1, 2, 3]
 numbers.append(4)           # Hover over 'append'

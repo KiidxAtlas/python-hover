@@ -9,14 +9,18 @@ const hoverProvider_1 = require("./hoverProvider");
 const inventory_1 = require("./inventory");
 const versionDetector_1 = require("./versionDetector");
 function activate(context) {
+    // Debug logging
+    console.log('[PythonHover] Extension is being activated');
     // Initialize managers
     const configManager = new config_1.ConfigurationManager();
     const cacheManager = new cache_1.CacheManager(context.globalStorageUri);
     const inventoryManager = new inventory_1.InventoryManager(cacheManager);
     const versionDetector = new versionDetector_1.VersionDetector(configManager);
+    console.log('[PythonHover] Managers initialized');
     // Create and register hover provider
     const hoverProvider = new hoverProvider_1.PythonHoverProvider(configManager, inventoryManager, versionDetector, cacheManager);
     const disposable = vscode.languages.registerHoverProvider({ language: 'python' }, hoverProvider);
+    console.log('[PythonHover] Hover provider registered for Python language');
     context.subscriptions.push(disposable);
     // Register commands
     context.subscriptions.push(vscode.commands.registerCommand('pythonHover.clearCache', async () => {

@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.DocumentationFetcher = void 0;
 const node_fetch_1 = require("node-fetch");
 const cache_1 = require("./cache");
+const exampleEnricher_1 = require("./exampleEnricher");
 const documentationUrls_1 = require("./documentationUrls");
 /**
  * Helper functions for working with documentation mappings
@@ -47,30 +48,36 @@ function buildFullUrlFromInfo(info) {
 class DocumentationFetcher {
     constructor(cacheManager) {
         this.cacheManager = cacheManager;
+        this.exampleEnricher = new exampleEnricher_1.ExampleEnricher();
     }
     /**
      * Primary method that first tries direct URL mapping, then falls back to intersphinx
      */
-    async fetchDocumentationForSymbol(symbol, entry, maxLines = 25) {
+    async fetchDocumentationForSymbol(symbol, entry, maxLines = 25, context) {
         console.log(`[PythonHover] Fetching documentation for symbol: ${symbol}`);
         // First, try the direct URL mapping system
+        let docSnippet;
         if (hasDocumentationMapping(symbol)) {
             console.log(`[PythonHover] Using direct URL mapping for symbol: ${symbol}`);
-            return await this.fetchFromDirectMapping(symbol, maxLines);
+            docSnippet = await this.fetchFromDirectMapping(symbol, maxLines);
         }
         // Fall back to intersphinx inventory entry if provided
-        if (entry) {
+        else if (entry) {
             console.log(`[PythonHover] Using intersphinx inventory for symbol: ${symbol}`);
-            return await this.fetchDocumentation(entry, maxLines);
+            docSnippet = await this.fetchDocumentation(entry, maxLines);
         }
         // No documentation source available
-        console.log(`[PythonHover] No documentation source found for symbol: ${symbol}`);
-        return {
-            title: symbol,
-            content: `No documentation found for '${symbol}'. See the official Python documentation for details.`,
-            url: 'https://docs.python.org/3/',
-            anchor: ''
-        };
+        else {
+            console.log(`[PythonHover] No documentation source found for symbol: ${symbol}`);
+            docSnippet = {
+                title: symbol,
+                content: `No documentation found for '${symbol}'. See the official Python documentation for details.`,
+                url: 'https://docs.python.org/3/',
+                anchor: ''
+            };
+        }
+        // Enrich with examples
+        return this.exampleEnricher.enrichWithExamples(docSnippet, symbol, context);
     }
     /**
      * Fetch documentation using direct URL mappings

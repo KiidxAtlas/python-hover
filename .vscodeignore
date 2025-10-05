@@ -78,6 +78,15 @@ junit.xml
 .vscode-test
 .vscodeignore
 
+# Development/testing files specific to this project
+hover_test.py
+test-examples/
+ARCHITECTURE.md
+FEATURES.md
+IMPROVEMENTS_IMPLEMENTED.md
+QUICKSTART.md
+
 # Keep compiled JS in out/ and types.js if present
 !out/**
 !types.js
+!media/**
