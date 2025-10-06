@@ -273,6 +273,20 @@ export class SymbolResolver {
     private inferBaseType(baseObject: string): string {
         // Enhanced heuristics to infer the type of the base object
 
+        // Check for common third-party library aliases
+        const libraryAliases: { [key: string]: string } = {
+            'np': 'numpy',
+            'pd': 'pandas',
+            'plt': 'matplotlib',
+            'tf': 'tensorflow',
+            'torch': 'pytorch',
+            'sk': 'sklearn'
+        };
+
+        if (baseObject in libraryAliases) {
+            return libraryAliases[baseObject];
+        }
+
         // Check if it's a known builtin type
         if (['str', 'list', 'dict', 'set', 'tuple', 'int', 'float', 'bytes', 'bool'].includes(baseObject)) {
             return baseObject;
