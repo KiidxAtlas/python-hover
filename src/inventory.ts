@@ -1,4 +1,7 @@
-import fetch from 'node-fetch';
+// CommonJS import for node-fetch
+import * as nodeFetch from 'node-fetch';
+const fetch = nodeFetch.default || nodeFetch;
+
 import * as pako from 'pako';
 import { CacheManager } from './cache';
 

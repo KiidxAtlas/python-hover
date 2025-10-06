@@ -1,10 +1,12 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DocumentationFetcher = void 0;
-const node_fetch_1 = require("node-fetch");
+// CommonJS import for node-fetch
+const nodeFetch = require("node-fetch");
+const fetch = nodeFetch.default || nodeFetch;
 const cache_1 = require("./cache");
-const exampleEnricher_1 = require("./exampleEnricher");
 const documentationUrls_1 = require("./documentationUrls");
+const exampleEnricher_1 = require("./exampleEnricher");
 /**
  * Helper functions for working with documentation mappings
  */
@@ -99,7 +101,7 @@ class DocumentationFetcher {
         try {
             const baseUrl = 'https://docs.python.org/3/' + mapping.url;
             console.log(`[PythonHover] Fetching from direct URL: ${baseUrl}`);
-            const response = await (0, node_fetch_1.default)(baseUrl);
+            const response = await fetch(baseUrl);
             if (!response.ok) {
                 throw new Error(`Failed to fetch documentation: ${response.status}`);
             }
@@ -156,7 +158,7 @@ class DocumentationFetcher {
     async fetchAndExtractSnippet(entry, maxLines) {
         const url = this.buildFullUrl(entry);
         console.log(`[PythonHover] Fetching documentation from: ${url}`);
-        const response = await (0, node_fetch_1.default)(url);
+        const response = await fetch(url);
         if (!response.ok) {
             throw new Error(`Failed to fetch documentation: ${response.status}`);
         }

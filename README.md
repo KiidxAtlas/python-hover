@@ -11,11 +11,11 @@
 
 ## ✨ **What Makes This Special**
 
-🚀 **300+ Python Constructs** - Complete coverage of built-ins, methods, and language features  
-🎯 **Smart Context Detection** - Knows when you're working with strings, lists, dicts, or sets  
-💡 **Practical Examples** - Real, copyable code with expected outputs  
-📚 **Import Intelligence** - Hover support for 40+ standard library modules  
-⚙️ **Fully Customizable** - Multiple configuration options to match your workflow  
+🚀 **300+ Python Constructs** - Complete coverage of built-ins, methods, and language features
+🎯 **Smart Context Detection** - Knows when you're working with strings, lists, dicts, or sets
+💡 **Practical Examples** - Real, copyable code with expected outputs
+📚 **Import Intelligence** - Hover support for 40+ standard library modules
+⚙️ **Fully Customizable** - Multiple configuration options to match your workflow
 
 ## 🎥 **See It In Action**
 

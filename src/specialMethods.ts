@@ -46,19 +46,19 @@ export const SPECIAL_METHOD_DESCRIPTIONS: Record<string, string> = {
  * Default list of common special methods
  */
 export const DEFAULT_SPECIAL_METHODS: SpecialMethodEntry[] = [
-    { name: '__init__' }, 
-    { name: '__repr__' }, 
-    { name: '__str__' }, 
-    { name: '__len__' }, 
-    { name: '__iter__' }, 
-    { name: '__contains__' }, 
-    { name: '__getitem__' }, 
-    { name: '__setitem__' }, 
-    { name: '__delitem__' }, 
-    { name: '__enter__' }, 
-    { name: '__exit__' }, 
-    { name: '__call__' }, 
-    { name: '__new__' }, 
+    { name: '__init__' },
+    { name: '__repr__' },
+    { name: '__str__' },
+    { name: '__len__' },
+    { name: '__iter__' },
+    { name: '__contains__' },
+    { name: '__getitem__' },
+    { name: '__setitem__' },
+    { name: '__delitem__' },
+    { name: '__enter__' },
+    { name: '__exit__' },
+    { name: '__call__' },
+    { name: '__new__' },
     { name: '__del__' }
 ];
 

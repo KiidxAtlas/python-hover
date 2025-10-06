@@ -75,16 +75,16 @@ export class MethodResolver {
     /**
      * Resolves method information based on context
      */
-    public resolveMethodInfo(document: vscode.TextDocument, position: vscode.Position, 
-                           methodName: string, receiverType?: string): SymbolInfo | undefined {
-        
+    public resolveMethodInfo(document: vscode.TextDocument, position: vscode.Position,
+        methodName: string, receiverType?: string): SymbolInfo | undefined {
+
         if (!this.isKnownMethod(methodName)) {
             return undefined;
         }
 
         const methodInfo = METHOD_TO_TYPE_MAP[methodName];
         const type = receiverType || methodInfo.types[0];
-        
+
         // Return symbol info with appropriate context
         return {
             symbol: type ? `${type}.${methodName}` : methodName,

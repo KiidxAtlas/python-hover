@@ -38,51 +38,51 @@ export class ContextDetector {
         // Search backward for variable assignments
         for (let i = position.line; i >= startLine; i--) {
             const line = document.lineAt(i).text;
-            
+
             // Check for variable assignments (var = value)
             const assignmentRegex = this.getCachedRegex(`${variableName}\\s*=\\s*(.+)$`);
             const assignmentMatch = line.match(assignmentRegex);
-            
+
             if (assignmentMatch) {
                 const value = assignmentMatch[1].trim();
-                
+
                 // Check for string literals
-                if (value.startsWith('"') || value.startsWith("'") || 
+                if (value.startsWith('"') || value.startsWith("'") ||
                     value.startsWith('r"') || value.startsWith("r'") ||
                     value.startsWith('f"') || value.startsWith("f'")) {
                     return 'str';
                 }
-                
+
                 // Check for list literals
                 if (value.startsWith('[')) {
                     return 'list';
                 }
-                
+
                 // Check for dict literals
                 if (value.startsWith('{') && value.includes(':')) {
                     return 'dict';
                 }
-                
+
                 // Check for set literals
                 if (value.startsWith('{') && !value.includes(':')) {
                     return 'set';
                 }
-                
+
                 // Check for tuple literals
                 if (value.startsWith('(')) {
                     return 'tuple';
                 }
-                
+
                 // Check for numeric literals
                 if (/^-?\d+$/.test(value)) {
                     return 'int';
                 }
-                
+
                 // Check for float literals
                 if (/^-?\d+\.\d+$/.test(value)) {
                     return 'float';
                 }
-                
+
                 // Check for bool literals
                 if (value === 'True' || value === 'False') {
                     return 'bool';
@@ -97,11 +97,11 @@ export class ContextDetector {
                     }
                 }
             }
-            
+
             // Check for type annotations (var: Type)
             const annotationRegex = this.getCachedRegex(`${variableName}\\s*:\\s*(\\w+)`);
             const annotationMatch = line.match(annotationRegex);
-            
+
             if (annotationMatch) {
                 const typeName = annotationMatch[1];
                 if (['str', 'int', 'float', 'list', 'dict', 'set', 'tuple', 'bool'].includes(typeName)) {
@@ -120,7 +120,7 @@ export class ContextDetector {
     public detectMethodContext(document: vscode.TextDocument, position: vscode.Position, methodName: string): string | undefined {
         const line = document.lineAt(position.line).text;
         const beforePosition = line.substring(0, position.character);
-        
+
         // Check for method calls (obj.method)
         const dotMatch = beforePosition.match(this.getCachedRegex(`(\\w+)\\s*\\.\\s*${methodName}\\s*$`));
         if (dotMatch) {
@@ -130,7 +130,7 @@ export class ContextDetector {
 
         // Common method-to-type inference as a fallback
         if (['strip', 'split', 'join', 'replace', 'find', 'startswith', 'endswith', 'upper', 'lower',
-             'capitalize', 'title', 'isdigit', 'isalpha', 'isalnum', 'format'].includes(methodName)) {
+            'capitalize', 'title', 'isdigit', 'isalpha', 'isalnum', 'format'].includes(methodName)) {
             return 'str';
         } else if (['append', 'extend', 'insert', 'remove', 'pop', 'clear', 'copy', 'reverse', 'sort'].includes(methodName)) {
             return 'list';

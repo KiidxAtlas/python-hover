@@ -1,7 +1,9 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.InventoryManager = void 0;
-const node_fetch_1 = require("node-fetch");
+// CommonJS import for node-fetch
+const nodeFetch = require("node-fetch");
+const fetch = nodeFetch.default || nodeFetch;
 const pako = require("pako");
 const cache_1 = require("./cache");
 class InventoryManager {
@@ -60,7 +62,7 @@ class InventoryManager {
     }
     async fetchInventory(version) {
         const inventoryUrl = `${InventoryManager.DOCS_BASE_URL}/${version}/objects.inv`;
-        const response = await (0, node_fetch_1.default)(inventoryUrl);
+        const response = await fetch(inventoryUrl);
         if (!response.ok) {
             throw new Error(`Failed to fetch inventory: ${response.status} ${response.statusText}`);
         }

@@ -3,7 +3,7 @@
     "icon": "media/icon.png",
     "displayName": "🐍 Python Hover - Enhanced Documentation",
     "description": "Instant Python documentation with 300+ constructs, smart context detection, and practical examples. Perfect for learning and quick reference.",
-    "version": "0.2.0",
+    "version": "0.2.4",
     "publisher": "KiidxAtlas",
     "license": "MIT",
     "repository": {
@@ -47,39 +47,106 @@
     "activationEvents": [
         "onLanguage:python"
     ],
-    "main": "./out/extension.js",
+    "main": "./dist/extension.js",
     "contributes": {
         "commands": [
             {
                 "command": "pythonHover.clearCache",
                 "title": "Clear Documentation Cache",
                 "category": "Python Hover"
+            },
+            {
+                "command": "pythonHover.openDocs",
+                "title": "Open Documentation",
+                "category": "Python Hover"
+            },
+            {
+                "command": "pythonHover.copyUrl",
+                "title": "Copy Documentation URL",
+                "category": "Python Hover"
             }
-        ]
+        ],
+        "configuration": {
+            "title": "Python Hover",
+            "properties": {
+                "pythonHover.docsVersion": {
+                    "type": "string",
+                    "default": "auto",
+                    "description": "Python version to use for documentation. Use 'auto' for automatic detection or specify a version like '3.11'."
+                },
+                "pythonHover.maxSnippetLines": {
+                    "type": "number",
+                    "default": 12,
+                    "minimum": 1,
+                    "maximum": 100,
+                    "description": "Maximum number of lines to show in hover snippets."
+                },
+                "pythonHover.cacheTTL.inventoryDays": {
+                    "type": "number",
+                    "default": 7,
+                    "minimum": 1,
+                    "description": "Number of days to cache inventory files."
+                },
+                "pythonHover.cacheTTL.snippetHours": {
+                    "type": "number",
+                    "default": 48,
+                    "minimum": 1,
+                    "description": "Number of hours to cache documentation snippets."
+                },
+                "pythonHover.enableKeywordDocs": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Enable keyword documentation."
+                },
+                "pythonHover.enhancedMethodResolution": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Enable smart method resolution to better detect method context."
+                },
+                "pythonHover.showPracticalExamples": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show practical code examples in hover documentation."
+                },
+                "pythonHover.telemetry": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Enable telemetry data collection."
+                }
+            }
+        }
     },
     "scripts": {
-        "vscode:prepublish": "npm run compile",
-        "compile": "tsc -p ./",
-        "watch": "tsc -watch -p ./",
-        "pretest": "npm run compile",
+        "vscode:prepublish": "npm run package",
+        "compile": "webpack",
+        "watch": "webpack --watch",
+        "package": "webpack --mode production --devtool hidden-source-map",
+        "compile-tests": "tsc -p . --outDir out",
+        "watch-tests": "tsc -p . -w --outDir out",
+        "pretest": "npm run compile-tests",
         "test": "node ./out/test/runTest.js",
-        "lint": "eslint src --ext ts"
+        "lint": "eslint src --ext ts",
+        "clean": "rm -rf out && rm -rf dist && rm -rf node_modules/.cache"
     },
     "devDependencies": {
-        "@types/vscode": "^1.80.0",
-        "@types/node": "18.x",
-        "@types/pako": "^2.0.0",
         "@types/mocha": "^10.0.1",
+        "@types/node": "18.x",
+        "@types/node-fetch": "^2.6.13",
+        "@types/pako": "^2.0.0",
+        "@types/vscode": "^1.80.0",
         "@typescript-eslint/eslint-plugin": "^6.4.1",
         "@typescript-eslint/parser": "^6.4.1",
+        "@vscode/test-electron": "^2.3.4",
         "eslint": "^8.47.0",
-        "typescript": "^5.1.6",
-        "mocha": "^10.2.0",
         "glob": "^10.3.0",
-        "@vscode/test-electron": "^2.3.4"
+        "mocha": "^10.2.0",
+        "ts-loader": "^9.5.4",
+        "typescript": "^5.1.6",
+        "webpack": "^5.102.0",
+        "webpack-cli": "^6.0.1"
     },
     "dependencies": {
-        "node-fetch": "^3.3.2",
+        "node-fetch": "^2.6.12",
         "pako": "^2.1.0"
     }
 }

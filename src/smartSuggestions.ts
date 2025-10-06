@@ -22,7 +22,7 @@ export const TYPE_METHOD_MAP: Record<string, RelatedMethod[]> = {
         { name: 'startswith', description: 'Check if string starts with prefix' },
         { name: 'endswith', description: 'Check if string ends with suffix' }
     ],
-    
+
     // List methods
     'list': [
         { name: 'append', description: 'Add item to end' },
@@ -33,7 +33,7 @@ export const TYPE_METHOD_MAP: Record<string, RelatedMethod[]> = {
         { name: 'sort', description: 'Sort in place' },
         { name: 'reverse', description: 'Reverse in place' }
     ],
-    
+
     // Dictionary methods
     'dict': [
         { name: 'get', description: 'Get value for key with optional default' },
@@ -43,7 +43,7 @@ export const TYPE_METHOD_MAP: Record<string, RelatedMethod[]> = {
         { name: 'update', description: 'Update with key/value pairs from another mapping' },
         { name: 'pop', description: 'Remove and return value for key' }
     ],
-    
+
     // Set methods
     'set': [
         { name: 'add', description: 'Add element to set' },
@@ -70,7 +70,7 @@ export function getRelatedMethodsForMethod(type: string, method: string): Relate
     if (!type || !method || !(type in TYPE_METHOD_MAP)) {
         return [];
     }
-    
+
     // Return all methods for this type except the current one
     return TYPE_METHOD_MAP[type].filter(m => m.name !== method);
 }

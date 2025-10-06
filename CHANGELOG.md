@@ -1,5 +1,23 @@
 # Change Log
 
+## [0.2.3] - 2025-10-05
+
+### 🔧 **Bug Fixes & Improvements**
+
+- **Fixed Missing Dependencies**: Resolved `node-fetch` and `pako` module loading errors
+- **Cleaned Hover Display**: Removed raw HTML tags and improved markdown formatting
+- **Fixed Broken Links**: All documentation links now display and work correctly
+- **Improved Click-ability**: Converted HTML anchors to proper Markdown links
+- **Package Optimization**: Properly included runtime dependencies in VSIX package
+- **Code Cleanup**: Removed development artifacts and test files from repository
+
+### 📦 **Technical Details**
+
+- Fixed `.vscodeignore` to include `node_modules` production dependencies
+- Removed raw `<a>` and `<sub>` HTML tags from hover content
+- Simplified "No docs found" messaging with clean fallback links
+- Updated extension activation and initialization logic
+
 ## [0.3.0] - 2025-10-04
 
 ### 🔧 **Bug Fixes & Improvements**
@@ -8,6 +26,15 @@
 - **Enhanced Documentation Links**: Fixed and improved links to Python documentation
 - **Better Symbol Resolution**: Enhanced symbol detection for special Python constructs
 - **Added Debugging Information**: Improved logging for easier troubleshooting
+
+## [0.2.1] - 2025-10-04
+
+### 🐛 **Bug Fixes**
+
+- **CommonJS Compatibility**: Fixed node-fetch import issues for proper CommonJS compatibility
+- **Configuration Settings**: Added missing configuration settings in package.json
+- **Cleaner Package**: Removed duplicate entries in .vscodeignore
+- **Type Definitions**: Added proper type definitions for dependencies
 
 ## [0.2.0] - 2023-07-15
 

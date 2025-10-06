@@ -1,6 +1,6 @@
+import { DocumentationSnippet } from './documentationFetcher';
 import { ENHANCED_EXAMPLES } from './enhancedExamples';
 import { STATIC_EXAMPLES } from './staticExamples';
-import { DocumentationSnippet } from './documentationFetcher';
 
 /**
  * Enriches documentation snippets with examples from staticExamples and enhancedExamples
@@ -13,8 +13,8 @@ export class ExampleEnricher {
      * @param context Optional context (like 'str' for str.upper)
      */
     public enrichWithExamples(
-        docSnippet: DocumentationSnippet, 
-        symbol: string, 
+        docSnippet: DocumentationSnippet,
+        symbol: string,
         context?: string
     ): DocumentationSnippet {
         // Make a copy to avoid modifying the original

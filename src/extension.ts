@@ -6,8 +6,7 @@ import { InventoryManager } from './inventory';
 import { VersionDetector } from './versionDetector';
 
 export function activate(context: vscode.ExtensionContext) {
-    // Debug logging
-    console.log('[PythonHover] Extension is being activated');
+    console.log('[PythonHover] 🐍 Extension activating...');
 
     // Initialize managers
     const configManager = new ConfigurationManager();
@@ -15,9 +14,7 @@ export function activate(context: vscode.ExtensionContext) {
     const inventoryManager = new InventoryManager(cacheManager);
     const versionDetector = new VersionDetector(configManager);
 
-    console.log('[PythonHover] Managers initialized');
-
-    // Create and register hover provider
+    // Register hover provider
     const hoverProvider = new PythonHoverProvider(
         configManager,
         inventoryManager,
@@ -25,51 +22,57 @@ export function activate(context: vscode.ExtensionContext) {
         cacheManager
     );
 
-    const disposable = vscode.languages.registerHoverProvider(
-        { language: 'python' },
-        hoverProvider
+    context.subscriptions.push(
+        vscode.languages.registerHoverProvider({ language: 'python' }, hoverProvider)
     );
 
-    console.log('[PythonHover] Hover provider registered for Python language');
-
-    context.subscriptions.push(disposable);
-
-    // Register commands
+    // Register clear cache command
     context.subscriptions.push(
         vscode.commands.registerCommand('pythonHover.clearCache', async () => {
             try {
                 const stats = await cacheManager.clear();
                 await inventoryManager.invalidateCache();
-
-                // Show detailed feedback
-                const message = `Cache cleared successfully! Deleted ${stats.filesDeleted} files.`;
-                vscode.window.showInformationMessage(message);
-                console.log(`[PythonHover] ${message}`);
+                vscode.window.showInformationMessage(
+                    `✅ Cache cleared! Deleted ${stats.filesDeleted} files.`
+                );
             } catch (error) {
-                const errorMessage = `Failed to clear cache: ${error}`;
-                vscode.window.showErrorMessage(errorMessage);
-                console.error(`[PythonHover] ${errorMessage}`);
+                vscode.window.showErrorMessage(`❌ Failed to clear cache: ${error}`);
+                console.error('[PythonHover] Cache clear error:', error);
             }
         })
     );
 
-    // Register command to open documentation URL
+    // Register command to open documentation URL (makes links clickable)
     context.subscriptions.push(
-        vscode.commands.registerCommand('pythonHover.openDocumentation', (url: string) => {
-            vscode.env.openExternal(vscode.Uri.parse(url));
+        vscode.commands.registerCommand('pythonHover.openDocs', (url: string) => {
+            if (url && url.startsWith('http')) {
+                vscode.env.openExternal(vscode.Uri.parse(url));
+            }
         })
     );
 
-    // Register configuration change handler
-    const configDisposable = vscode.workspace.onDidChangeConfiguration((event: vscode.ConfigurationChangeEvent) => {
-        if (event.affectsConfiguration('pythonHover')) {
-            configManager.refresh();
-        }
-    });
+    // Register command to copy documentation URL
+    context.subscriptions.push(
+        vscode.commands.registerCommand('pythonHover.copyUrl', (url: string) => {
+            if (url) {
+                vscode.env.clipboard.writeText(url);
+                vscode.window.showInformationMessage('📋 URL copied to clipboard!');
+            }
+        })
+    );
 
-    context.subscriptions.push(configDisposable);
+    // Handle configuration changes
+    context.subscriptions.push(
+        vscode.workspace.onDidChangeConfiguration((event: vscode.ConfigurationChangeEvent) => {
+            if (event.affectsConfiguration('pythonHover')) {
+                configManager.refresh();
+            }
+        })
+    );
+
+    console.log('[PythonHover] ✅ Extension activated successfully');
 }
 
 export function deactivate() {
-    // Cleanup if needed
+    console.log('[PythonHover] Extension deactivated');
 }

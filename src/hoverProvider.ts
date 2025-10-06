@@ -58,17 +58,36 @@ export class PythonHoverProvider implements vscode.HoverProvider {
 
             // ENHANCEMENT: Check for method context
             if (primarySymbol.type === 'method') {
-                // Detect the method's object type for better context
-                const receiverType = this.contextDetector.detectMethodContext(document, position, primarySymbol.symbol);
+                // If symbol contains a dot (like "my_list.append"), extract just the method name
+                let methodName = primarySymbol.symbol;
+                let receiverType = primarySymbol.context;
+                
+                if (methodName.includes('.')) {
+                    const parts = methodName.split('.');
+                    methodName = parts[parts.length - 1]; // Get just "append"
+                    console.log(`[PythonHover] Extracted method name: ${methodName}`);
+                }
+
+                // Detect the method's object type for better context if not already provided
+                if (!receiverType) {
+                    receiverType = this.contextDetector.detectMethodContext(document, position, methodName);
+                }
+                
                 if (receiverType) {
-                    console.log(`[PythonHover] Detected method context: ${receiverType}.${primarySymbol.symbol}`);
+                    console.log(`[PythonHover] Detected method context: ${receiverType}.${methodName}`);
 
                     // Resolve method with context
-                    const methodInfo = this.methodResolver.resolveMethodInfo(document, position, primarySymbol.symbol, receiverType);
+                    const methodInfo = this.methodResolver.resolveMethodInfo(document, position, methodName, receiverType);
                     if (methodInfo) {
                         primarySymbol.context = receiverType;
-                        primarySymbol.symbol = `${receiverType}.${primarySymbol.symbol}`;
+                        // Store as "type.method" for display, but we'll look up just the method
+                        primarySymbol.symbol = methodName;
+                    } else {
+                        primarySymbol.symbol = methodName;
                     }
+                } else {
+                    // No context found, just use the method name
+                    primarySymbol.symbol = methodName;
                 }
             }
 
@@ -97,8 +116,16 @@ export class PythonHoverProvider implements vscode.HoverProvider {
                 }
             }
 
+            // Build the symbol to look up in inventory
+            let lookupSymbol = primarySymbol.symbol;
+            if (primarySymbol.type === 'method' && primarySymbol.context) {
+                // For methods, look up as "type.method" (e.g., "list.append")
+                lookupSymbol = `${primarySymbol.context}.${primarySymbol.symbol}`;
+                console.log(`[PythonHover] Looking up method as: ${lookupSymbol}`);
+            }
+
             const inventoryEntry = await this.inventoryManager.resolveSymbol(
-                primarySymbol.symbol,
+                lookupSymbol,
                 pythonVersion
             );
 
@@ -160,33 +187,36 @@ export class PythonHoverProvider implements vscode.HoverProvider {
 
     private createBasicHover(symbolInfo: { symbol: string; type: string }): vscode.Hover {
         const md = new vscode.MarkdownString();
-        md.isTrusted = true; // allow clicking links
+        md.isTrusted = true;  // Enable command URIs
         md.supportHtml = true;
         md.supportThemeIcons = true;
 
-        // Header
-        md.appendMarkdown(`### \`${symbolInfo.symbol}\``);
-        md.appendMarkdown('\n\n');
+        // Header with emoji
+        const emoji = this.getSymbolEmoji(symbolInfo.type);
+        md.appendMarkdown(`## ${emoji} \`${symbolInfo.symbol}\`\n\n`);
 
-        // One-line hint about the type
+        // Type hint
         const typeHint = (() => {
             switch (symbolInfo.type) {
-                case 'keyword': return 'Keyword';
-                case 'builtin': return 'Built-in function/constant';
-                case 'exception': return 'Exception';
-                default: return 'Symbol';
+                case 'keyword': return '🔑 Keyword';
+                case 'builtin': return '🐍 Built-in function/constant';
+                case 'exception': return '⚠️ Exception';
+                default: return '📝 Symbol';
             }
         })();
 
-        md.appendMarkdown(`**${typeHint}**`);
-        md.appendMarkdown('\n\n');
+        md.appendMarkdown(`**${typeHint}**\n\n`);
+        md.appendMarkdown(`---\n\n`);
 
-        // Helpful pointer
-        md.appendMarkdown('Quick reference: see the official Python docs for authoritative details.');
-        md.appendMarkdown('\n\n');
+        // Helpful pointer with blockquote
+        md.appendMarkdown('> 💡 See the official Python documentation for complete details.\n\n');
 
-        // Small link to docs.python.org
-        md.appendMarkdown(`[Open Python docs](https://docs.python.org/)`);
+        // Link to Python docs with command URI
+        const docsUrl = 'https://docs.python.org/3/';
+        const encodedUrl = encodeURIComponent(JSON.stringify([docsUrl]));
+        md.appendMarkdown(
+            `[📖 Open Python Docs](command:pythonHover.openDocs?${encodedUrl})\n`
+        );
 
         return new vscode.Hover(md);
     }
@@ -196,39 +226,40 @@ export class PythonHoverProvider implements vscode.HoverProvider {
      */
     private createDunderMethodHover(methodName: string, dunderInfo: { description: string; example?: string }): vscode.Hover {
         const md = new vscode.MarkdownString();
-        md.isTrusted = true;
+        md.isTrusted = true;  // CRITICAL: Enable command URIs
         md.supportHtml = true;
         md.supportThemeIcons = true;
 
-        // Header with method name
-        md.appendMarkdown(`### \`${methodName}\` - Special Method`);
-        md.appendMarkdown('\n\n');
+        // Eye-catching header with emoji
+        md.appendMarkdown(`## 🔮 \`${methodName}\` — Special Method\n\n`);
+        md.appendMarkdown(`---\n\n`);
 
-        // Description
-        md.appendMarkdown(`**${dunderInfo.description}**`);
-        md.appendMarkdown('\n\n');
+        // Description with emphasis
+        md.appendMarkdown(`**${dunderInfo.description}**\n\n`);
 
         // Example code if available
         if (ENHANCED_EXAMPLES[methodName]) {
+            md.appendMarkdown(`### 💡 Example\n\n`);
             md.appendMarkdown(ENHANCED_EXAMPLES[methodName].content);
             md.appendMarkdown('\n\n');
         } else if (dunderInfo.example) {
+            md.appendMarkdown(`### 💡 Example\n\n`);
             md.appendMarkdown('```python\n' + dunderInfo.example + '\n```');
             md.appendMarkdown('\n\n');
         }
 
-        // Additional information about special methods
-        md.appendMarkdown('*Special methods are invoked by Python\'s syntax and built-in functions.*');
-        md.appendMarkdown('\n\n');
+        // Informative note with blockquote
+        md.appendMarkdown('> 💡 **Note:** Special methods are invoked implicitly by Python syntax and built-in operations.\n\n');
+        md.appendMarkdown(`---\n\n`);
 
-        // Add documentation links for dunder methods
-        // Most dunder methods are documented in the "Data Model" section of the Python docs
+        // Action links with command URIs for better reliability
         const docUrl = "https://docs.python.org/3/reference/datamodel.html#special-method-names";
-        md.appendMarkdown(`**Source:** [docs.python.org/.../datamodel.html](${docUrl})`);
-        md.appendMarkdown('\n\n');
-        md.appendMarkdown(`<a href="${docUrl}">Open full docs</a> • [Copy link](${docUrl})`);
-
-        console.log(`[PythonHover] Created dunder method documentation link: ${docUrl}`);
+        const encodedUrl = encodeURIComponent(JSON.stringify([docUrl]));
+        
+        md.appendMarkdown(
+            `[📖 Open Documentation](command:pythonHover.openDocs?${encodedUrl}) · ` +
+            `[📋 Copy URL](command:pythonHover.copyUrl?${encodedUrl})\n`
+        );
 
         return new vscode.Hover(md);
     }
@@ -268,158 +299,191 @@ export class PythonHoverProvider implements vscode.HoverProvider {
         symbolInfo: { symbol: string; type: string; context?: string }
     ): vscode.Hover {
         const md = new vscode.MarkdownString();
-        md.isTrusted = true;
+        md.isTrusted = true;  // CRITICAL: Enable command URIs for clickable links
         md.supportHtml = true;
         md.supportThemeIcons = true;
 
-        const symbolName = inventoryEntry?.name || symbolInfo.symbol;
+        // Determine display name - for methods with context, show "type.method"
+        let displayName: string;
+        if (symbolInfo.type === 'method' && symbolInfo.context) {
+            displayName = `${symbolInfo.context}.${symbolInfo.symbol}`;
+        } else {
+            displayName = inventoryEntry?.name || symbolInfo.symbol;
+        }
+        
+        const bareSymbol = symbolInfo.symbol.split('.').pop() || symbolInfo.symbol;
 
-        // Header with small role badge
+        // Prominent header with emoji based on type
+        const emoji = this.getSymbolEmoji(symbolInfo.type);
+        md.appendMarkdown(`## ${emoji} \`${displayName}\`\n\n`);
+
+        // Type badge
         const roleBadge = inventoryEntry ? `**${inventoryEntry.domain}:${inventoryEntry.role}**` : `**${symbolInfo.type}**`;
-        md.appendMarkdown(`### \`${symbolName}\`  `);
-        md.appendMarkdown(`${roleBadge}`);
-        md.appendMarkdown('\n\n');
+        md.appendMarkdown(`${roleBadge}\n\n`);
+        md.appendMarkdown(`---\n\n`);
 
         // Signature block (if available)
         if (docSnippet && docSnippet.signature) {
-            // Render signature as a fenced code block for clarity
             md.appendMarkdown('```python\n' + docSnippet.signature + '\n```\n\n');
         }
 
-        // Short summary / excerpt: prefer the first non-header paragraph
+        // Short summary / excerpt
         if (docSnippet && docSnippet.summary && docSnippet.summary.trim()) {
             md.appendMarkdown(docSnippet.summary.trim());
             md.appendMarkdown('\n\n');
         } else if (docSnippet && docSnippet.content && docSnippet.content.trim()) {
-            // Split into paragraphs and skip leading header-only paragraphs
-            const paragraphs = docSnippet.content.split(/\n\s*\n/).map((p: string) => p.trim()).filter((p: string) => p.length > 0);
-            let chosen = '';
-            for (const p of paragraphs) {
-                // skip Markdown headers and tiny fragments
-                if (/^#{1,6}\s+/.test(p)) continue;
-                // skip single-line links or source-only lines
-                if (/^\[.*\]\(.*\)$/.test(p)) continue;
-                // prefer paragraphs with some alpha characters
-                if (/[A-Za-z]/.test(p)) {
-                    chosen = p;
-                    break;
-                }
-            }
-            // If none matched, fall back to the first paragraph
-            if (!chosen && paragraphs.length > 0) chosen = paragraphs[0];
-
-            if (chosen) {
-                md.appendMarkdown(chosen);
+            const summary = this.extractBestParagraph(docSnippet.content);
+            if (summary) {
+                md.appendMarkdown(summary);
                 md.appendMarkdown('\n\n');
             }
         }
 
-        // ENHANCEMENT: Add examples from STATIC_EXAMPLES or ENHANCED_EXAMPLES
-        const bareSymbol = symbolName.split('.').pop() || symbolName;
-        if (ENHANCED_EXAMPLES[bareSymbol]) {
-            md.appendMarkdown('## Examples\n\n');
-            md.appendMarkdown(ENHANCED_EXAMPLES[bareSymbol].content);
-            md.appendMarkdown('\n\n');
-        } else if (STATIC_EXAMPLES[bareSymbol]) {
-            md.appendMarkdown('## Examples\n\n');
-            md.appendMarkdown('```python\n');
-            md.appendMarkdown(STATIC_EXAMPLES[bareSymbol].examples.join('\n'));
-            md.appendMarkdown('\n```\n\n');
-        } else if (symbolInfo.type === 'method' && symbolInfo.context) {
-            // For methods with context like str.upper, try to find examples for the method
-            const methodKey = `${symbolInfo.context}.${bareSymbol}`;
-            if (ENHANCED_EXAMPLES[methodKey]) {
-                md.appendMarkdown('## Examples\n\n');
-                md.appendMarkdown(ENHANCED_EXAMPLES[methodKey].content);
-                md.appendMarkdown('\n\n');
-            }
-        }
-
-        // Append one or two extra paragraphs from the full content to give the hover
-        // more context
-        try {
-            if (docSnippet && docSnippet.content && typeof docSnippet.content === 'string') {
-                const paragraphs = docSnippet.content.split(/\n\s*\n/).map((p: string) => p.trim()).filter((p: string) => p.length > 0);
-                // Find index of the paragraph already shown (chosen) and append the next 1-2 paragraphs
-                let startIndex = 0;
-                if (paragraphs.length > 0) {
-                    // If the heading/summary was used, find its index to append next paragraphs
-                    startIndex = 0;
-                }
-                const extras = paragraphs.slice(startIndex + 1, startIndex + 3).join('\n\n');
-                if (extras) {
-                    md.appendMarkdown(extras);
-                    md.appendMarkdown('\n\n');
-                }
-            }
-        } catch (e) {
-            console.error('[PythonHover] Error while appending extra content to hover:', e);
-        }
+        // ENHANCEMENT: Add examples with better formatting
+        this.appendExamplesSection(md, bareSymbol, symbolInfo);
 
         // Add related methods (smart suggestions) for method calls
         if (symbolInfo.type === 'method' && symbolInfo.context) {
-            const bareMethod = symbolName.split('.').pop() || '';
-            const relatedMethods = getRelatedMethodsForMethod(symbolInfo.context, bareMethod);
-
-            if (relatedMethods.length > 0) {
-                md.appendMarkdown('## Related Methods\n\n');
-
-                // Show up to 5 related methods
-                const methodsToShow = relatedMethods.slice(0, 5);
-                for (const method of methodsToShow) {
-                    md.appendMarkdown(`- \`${symbolInfo.context}.${method.name}()\` — ${method.description}\n`);
-                }
-                md.appendMarkdown('\n');
-            }
+            this.appendRelatedMethodsSection(md, symbolInfo.context, bareSymbol);
         }
 
-        // Source line with link to the precise anchor (if available)
-        if (inventoryEntry) {
-            const fullUrl = inventoryEntry.anchor ? `${inventoryEntry.uri}#${inventoryEntry.anchor}` : inventoryEntry.uri;
-            // Ensure URL is absolute and properly formatted
-            const displayUrl = inventoryEntry.uri.replace(/^https?:\/\//, '');
-            md.appendMarkdown(`**Source:** [${displayUrl}](${fullUrl})`);
-            md.appendMarkdown('\n\n');
-
-            // Log the URL for debugging
-            console.log(`[PythonHover] Created documentation link from inventory: ${fullUrl}`);
-        } else if (docSnippet && docSnippet.url) {
-            // Ensure URL is absolute
-            const docUrl = docSnippet.url.startsWith('http') ? docSnippet.url : `https://docs.python.org/3/${docSnippet.url}`;
-            const displayUrl = docUrl.replace(/^https?:\/\//, '');
-            md.appendMarkdown(`**Source:** [${displayUrl}](${docUrl})`);
-            md.appendMarkdown('\n\n');
-
-            // Log the URL for debugging
-            console.log(`[PythonHover] Created documentation link from docSnippet: ${docUrl}`);
-        }
-
-        // Helpful quick actions: open full docs, copy link
-        if (docSnippet && docSnippet.url) {
-            // Ensure URL is absolute
-            const docUrl = docSnippet.url.startsWith('http') ? docSnippet.url : `https://docs.python.org/3/${docSnippet.url}`;
-            md.appendMarkdown(`<a href="${docUrl}">Open full docs</a> • [Copy link](${docUrl})`);
-            md.appendMarkdown('\n\n');
-        }
-
-        // If no inventory entry, show alternatives (best effort)
-        if (!inventoryEntry) {
-            // Synchronous call is not possible here, but we can show a small hint
-            md.appendMarkdown('*No exact docs found — try these nearby terms:*  \n');
-            // Use symbolResolver/search outside if available; show placeholder suggestions
-            if (docSnippet && Array.isArray(docSnippet.alternatives) && docSnippet.alternatives.length > 0) {
-                const list = docSnippet.alternatives.slice(0, 5).map((a: any) => `- [${a.name}](${a.url || '#'})`).join('\n');
-                md.appendMarkdown(list);
-                md.appendMarkdown('\n\n');
-            } else {
-                md.appendMarkdown('- Try the Python docs search: [Search docs](https://docs.python.org/search.html)\n\n');
-            }
-        }
-
-        // Final small footer
-        md.appendMarkdown('<sub>Hover provided by Python Hover — documentation snippets are extracted from docs.python.org</sub>');
+        // Source line with clickable action links
+        this.appendActionLinks(md, docSnippet, inventoryEntry);
 
         return new vscode.Hover(md);
+    }
+
+    /**
+     * Get emoji for symbol type to make hover stand out
+     */
+    private getSymbolEmoji(type: string): string {
+        const emojiMap: Record<string, string> = {
+            'function': '🔧',
+            'method': '⚙️',
+            'class': '📦',
+            'module': '📚',
+            'keyword': '🔑',
+            'builtin': '🐍',
+            'exception': '⚠️',
+            'constant': '💎',
+            'variable': '📊'
+        };
+        return emojiMap[type] || '📝';
+    }
+
+    /**
+     * Extract the best paragraph from content
+     */
+    private extractBestParagraph(content: string): string {
+        const paragraphs = content
+            .split(/\n\s*\n/)
+            .map((p: string) => p.trim())
+            .filter((p: string) => p.length > 0);
+
+        for (const p of paragraphs) {
+            // Skip headers
+            if (/^#{1,6}\s+/.test(p)) continue;
+            // Skip standalone links
+            if (/^\[.*\]\(.*\)$/.test(p)) continue;
+            // Prefer paragraphs with text
+            if (/[A-Za-z]/.test(p)) {
+                return p;
+            }
+        }
+
+        return paragraphs[0] || '';
+    }
+
+    /**
+     * Append examples section with enhanced formatting
+     */
+    private appendExamplesSection(
+        md: vscode.MarkdownString,
+        bareSymbol: string,
+        symbolInfo: { symbol: string; type: string; context?: string }
+    ): void {
+        let exampleAdded = false;
+
+        // Check for enhanced examples
+        if (ENHANCED_EXAMPLES[bareSymbol]) {
+            md.appendMarkdown('### 💡 Examples\n\n');
+            md.appendMarkdown(ENHANCED_EXAMPLES[bareSymbol].content);
+            md.appendMarkdown('\n\n');
+            exampleAdded = true;
+        }
+        // Check for static examples
+        else if (STATIC_EXAMPLES[bareSymbol]) {
+            md.appendMarkdown('### 💡 Examples\n\n');
+            md.appendMarkdown('```python\n');
+            md.appendMarkdown(STATIC_EXAMPLES[bareSymbol].examples.join('\n'));
+            md.appendMarkdown('\n```\n\n');
+            exampleAdded = true;
+        }
+        // Check for method-specific examples
+        else if (symbolInfo.type === 'method' && symbolInfo.context) {
+            const methodKey = `${symbolInfo.context}.${bareSymbol}`;
+            if (ENHANCED_EXAMPLES[methodKey]) {
+                md.appendMarkdown('### 💡 Examples\n\n');
+                md.appendMarkdown(ENHANCED_EXAMPLES[methodKey].content);
+                md.appendMarkdown('\n\n');
+                exampleAdded = true;
+            }
+        }
+    }
+
+    /**
+     * Append related methods section
+     */
+    private appendRelatedMethodsSection(
+        md: vscode.MarkdownString,
+        context: string,
+        methodName: string
+    ): void {
+        const relatedMethods = getRelatedMethodsForMethod(context, methodName);
+
+        if (relatedMethods.length > 0) {
+            md.appendMarkdown('### 🔗 Related Methods\n\n');
+            const methodsToShow = relatedMethods.slice(0, 5);
+            
+            for (const method of methodsToShow) {
+                md.appendMarkdown(`- \`${context}.${method.name}()\` — ${method.description}\n`);
+            }
+            md.appendMarkdown('\n');
+        }
+    }
+
+    /**
+     * Append action links with proper command URIs for guaranteed clickability
+     */
+    private appendActionLinks(
+        md: vscode.MarkdownString,
+        docSnippet: any,
+        inventoryEntry: InventoryEntry | null
+    ): void {
+        let docUrl: string | null = null;
+
+        // Determine documentation URL
+        if (inventoryEntry) {
+            docUrl = inventoryEntry.anchor 
+                ? `${inventoryEntry.uri}#${inventoryEntry.anchor}`
+                : inventoryEntry.uri;
+        } else if (docSnippet && docSnippet.url) {
+            docUrl = docSnippet.url.startsWith('http')
+                ? docSnippet.url
+                : `https://docs.python.org/3/${docSnippet.url}`;
+        }
+
+        if (docUrl) {
+            const encodedUrl = encodeURIComponent(JSON.stringify([docUrl]));
+            const displayUrl = docUrl.replace(/^https?:\/\//, '');
+            
+            md.appendMarkdown(`---\n\n`);
+            md.appendMarkdown(`**Source:** [${displayUrl}](${docUrl})\n\n`);
+            md.appendMarkdown(
+                `[📖 Open Documentation](command:pythonHover.openDocs?${encodedUrl}) · ` +
+                `[📋 Copy URL](command:pythonHover.copyUrl?${encodedUrl})\n`
+            );
+        }
     }
 
     private async searchForAlternatives(

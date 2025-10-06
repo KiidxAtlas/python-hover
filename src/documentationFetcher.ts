@@ -1,7 +1,10 @@
-import fetch from 'node-fetch';
+// CommonJS import for node-fetch
+import * as nodeFetch from 'node-fetch';
+const fetch = nodeFetch.default || nodeFetch;
+
 import { CacheManager } from './cache';
-import { ExampleEnricher } from './exampleEnricher';
 import { getDunderInfo, IMPORT_INFO, MAP, MODULES, OPERATORS } from './documentationUrls';
+import { ExampleEnricher } from './exampleEnricher';
 import { InventoryEntry } from './inventory';
 import { Info } from './types';
 
@@ -62,7 +65,7 @@ function buildFullUrlFromInfo(info: Info): string {
 
 export class DocumentationFetcher {
     private exampleEnricher: ExampleEnricher;
-    
+
     constructor(private cacheManager: CacheManager) {
         this.exampleEnricher = new ExampleEnricher();
     }
@@ -80,7 +83,7 @@ export class DocumentationFetcher {
 
         // First, try the direct URL mapping system
         let docSnippet: DocumentationSnippet;
-        
+
         if (hasDocumentationMapping(symbol)) {
             console.log(`[PythonHover] Using direct URL mapping for symbol: ${symbol}`);
             docSnippet = await this.fetchFromDirectMapping(symbol, maxLines);
@@ -100,7 +103,7 @@ export class DocumentationFetcher {
                 anchor: ''
             };
         }
-        
+
         // Enrich with examples
         return this.exampleEnricher.enrichWithExamples(docSnippet, symbol, context);
     }
