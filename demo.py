@@ -16,10 +16,7 @@ arr = np.array([1, 2, 3, 4, 5])
 zeros = np.zeros(10)
 
 # Hover over 'DataFrame' to see Pandas documentation
-df = pd.DataFrame({
-    'name': ['Alice', 'Bob'],
-    'age': [25, 30]
-})
+df = pd.DataFrame({"name": ["Alice", "Bob"], "age": [25, 30]})
 
 # 3. Version Comparison - Hover over 'removeprefix' to see version info
 text = "Hello World"
@@ -37,8 +34,8 @@ numbers = [3, 1, 4, 1, 5, 9, 2, 6]
 numbers.sort()  # Hover to see comparison with sorted()
 
 # 7. Dictionary methods
-data = {'a': 1, 'b': 2}
-value = data.get('c', 0)  # Hover to see comparison with setdefault
+data = {"a": 1, "b": 2}
+value = data.get("c", 0)  # Hover to see comparison with setdefault
 
 # 8. String methods
 sentence = "  hello world  "
@@ -47,6 +44,7 @@ cleaned = sentence.strip()  # Hover for examples
 # 9. Flask support (if imported)
 try:
     from flask import Flask, render_template
+
     # Hover over Flask or render_template for documentation
 except ImportError:
     pass
@@ -54,6 +52,7 @@ except ImportError:
 # 10. Requests library support
 try:
     import requests
+
     # Hover over 'get' or 'post' for documentation
     # response = requests.get('https://api.github.com')
 except ImportError:
