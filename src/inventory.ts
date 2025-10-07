@@ -75,6 +75,46 @@ export class InventoryManager {
             inventoryUrl: 'https://www.sphinx-doc.org/en/master/objects.inv',
             baseUrl: 'https://www.sphinx-doc.org/en/master/'
         },
+        {
+            name: 'fastapi',
+            inventoryUrl: 'https://fastapi.tiangolo.com/objects.inv',
+            baseUrl: 'https://fastapi.tiangolo.com/'
+        },
+        {
+            name: 'pydantic',
+            inventoryUrl: 'https://docs.pydantic.dev/latest/objects.inv',
+            baseUrl: 'https://docs.pydantic.dev/latest/'
+        },
+        {
+            name: 'sqlalchemy',
+            inventoryUrl: 'https://docs.sqlalchemy.org/en/20/objects.inv',
+            baseUrl: 'https://docs.sqlalchemy.org/en/20/'
+        },
+        {
+            name: 'beautifulsoup4',
+            inventoryUrl: 'https://www.crummy.com/software/BeautifulSoup/bs4/doc/objects.inv',
+            baseUrl: 'https://www.crummy.com/software/BeautifulSoup/bs4/doc/'
+        },
+        {
+            name: 'bs4',
+            inventoryUrl: 'https://www.crummy.com/software/BeautifulSoup/bs4/doc/objects.inv',
+            baseUrl: 'https://www.crummy.com/software/BeautifulSoup/bs4/doc/'
+        },
+        {
+            name: 'selenium',
+            inventoryUrl: 'https://www.selenium.dev/selenium/docs/api/py/objects.inv',
+            baseUrl: 'https://www.selenium.dev/selenium/docs/api/py/'
+        },
+        {
+            name: 'pillow',
+            inventoryUrl: 'https://pillow.readthedocs.io/en/stable/objects.inv',
+            baseUrl: 'https://pillow.readthedocs.io/en/stable/'
+        },
+        {
+            name: 'pil',
+            inventoryUrl: 'https://pillow.readthedocs.io/en/stable/objects.inv',
+            baseUrl: 'https://pillow.readthedocs.io/en/stable/'
+        },
     ];
 
     constructor(private cacheManager: CacheManager) { }

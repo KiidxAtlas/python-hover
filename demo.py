@@ -11,6 +11,9 @@ Hover over any highlighted method/function to see rich documentation!
    📚 Third-party library support
    ⚡ Quick actions (Copy/Insert/Docs)
 """
+import fastapi
+# noqa: F401
+import flask  # noqa: F401
 
 # ============================================================================
 # 1️⃣ STRING METHODS - Context-Aware Documentation
@@ -38,6 +41,7 @@ parts = "a,b,c".split(",")  # → ["a", "b", "c"]
 url = "https://example.com"
 domain = url.removeprefix("https://")  # New in 3.9
 clean_url = domain.removesuffix(".com")  # New in 3.9
+tuple()
 
 
 # ============================================================================

@@ -39,6 +39,11 @@ function getModuleDocumentationUrl(moduleName: string): string {
         'pydantic': 'https://docs.pydantic.dev/',
         'fastapi': 'https://fastapi.tiangolo.com/',
         'aiohttp': 'https://docs.aiohttp.org/',
+        'beautifulsoup4': 'https://www.crummy.com/software/BeautifulSoup/bs4/doc/',
+        'bs4': 'https://www.crummy.com/software/BeautifulSoup/bs4/doc/',
+        'selenium': 'https://www.selenium.dev/selenium/docs/api/py/',
+        'pillow': 'https://pillow.readthedocs.io/en/stable/',
+        'pil': 'https://pillow.readthedocs.io/en/stable/',
     };
 
     return moduleUrls[moduleName] || `https://pypi.org/project/${moduleName}/`;
