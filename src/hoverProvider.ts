@@ -639,17 +639,17 @@ export class PythonHoverProvider implements vscode.HoverProvider {
             .filter((p: string) => p.length > 0);
 
         const goodParagraphs: string[] = [];
-        
+
         for (const p of paragraphs) {
             // Skip headers (except the first one if it's the function signature)
             if (/^#{1,6}\s+/.test(p) && goodParagraphs.length > 0) continue;
             // Skip standalone links
             if (/^\[.*\]\(.*\)$/.test(p)) continue;
-            
+
             // Include paragraphs with substantial text content
             if (/[A-Za-z]/.test(p) && p.length > 10) {
                 goodParagraphs.push(p);
-                
+
                 // Collect up to 3-4 paragraphs or ~400 characters, whichever comes first
                 const totalLength = goodParagraphs.join('\n\n').length;
                 if (goodParagraphs.length >= 3 || totalLength >= 400) {

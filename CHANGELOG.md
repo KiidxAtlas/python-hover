@@ -6,7 +6,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
-## [0.3.1] - 2025-10-06
+# Changelog
+
+All notable changes to the Python Hover extension will be documented in this file.
+
+---
+
+## [0.3.2] - 2025-01-06
+
+### Added
+
+- **TensorFlow Support**: Added Intersphinx inventory for TensorFlow machine learning framework (tf alias)
+- **PyTorch Support**: Added Intersphinx inventory for PyTorch deep learning framework (torch alias)
+- **OpenCV Support**: Added Intersphinx inventory for computer vision library (cv2 alias)
+- **aiohttp Support**: Added Intersphinx inventory for async HTTP client/server
+- **httpx Support**: Added Intersphinx inventory for modern HTTP client
+- **Click Support**: Added Intersphinx inventory for CLI creation framework
+
+### Improvements
+
+- Enhanced fallback URLs for all 6 newly supported libraries
+- Updated library count to 23+ total third-party libraries
+- Improved README documentation with better library categorization
+- Removed deprecated `collapseLongExamples` configuration reference
+
+### Documentation
+
+- Fixed version inconsistencies in README (now correctly shows 0.3.2)
+- Removed duplicate "Beautiful, Customizable Interface" section
+- Clarified asyncio as standard library (not third-party)
+- Removed missing demo.gif reference
+- Updated library categories: Machine Learning, Computer Vision, HTTP & Async, CLI
+
+---
+
+## [0.3.1] - 2025-01-06
 
 ### ✨ **Added**
 

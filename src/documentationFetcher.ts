@@ -32,18 +32,24 @@ function getModuleDocumentationUrl(moduleName: string): string {
         'scipy': 'https://docs.scipy.org/doc/scipy/',
         'matplotlib': 'https://matplotlib.org/stable/',
         'sklearn': 'https://scikit-learn.org/stable/',
-        'tensorflow': 'https://www.tensorflow.org/api_docs/python/',
-        'torch': 'https://pytorch.org/docs/stable/',
         'pytest': 'https://docs.pytest.org/',
         'sqlalchemy': 'https://docs.sqlalchemy.org/',
         'pydantic': 'https://docs.pydantic.dev/',
         'fastapi': 'https://fastapi.tiangolo.com/',
-        'aiohttp': 'https://docs.aiohttp.org/',
         'beautifulsoup4': 'https://www.crummy.com/software/BeautifulSoup/bs4/doc/',
         'bs4': 'https://www.crummy.com/software/BeautifulSoup/bs4/doc/',
         'selenium': 'https://www.selenium.dev/selenium/docs/api/py/',
         'pillow': 'https://pillow.readthedocs.io/en/stable/',
         'pil': 'https://pillow.readthedocs.io/en/stable/',
+        'tensorflow': 'https://www.tensorflow.org/api_docs/python/',
+        'tf': 'https://www.tensorflow.org/api_docs/python/',
+        'torch': 'https://pytorch.org/docs/stable/',
+        'pytorch': 'https://pytorch.org/docs/stable/',
+        'cv2': 'https://docs.opencv.org/4.x/',
+        'opencv': 'https://docs.opencv.org/4.x/',
+        'aiohttp': 'https://docs.aiohttp.org/en/stable/',
+        'httpx': 'https://www.python-httpx.org/',
+        'click': 'https://click.palletsprojects.com/',
     };
 
     return moduleUrls[moduleName] || `https://pypi.org/project/${moduleName}/`;
@@ -126,11 +132,11 @@ export class DocumentationFetcher {
         // No documentation source available
         else {
             console.log(`[PythonHover] No documentation source found for symbol: ${symbol}`);
-            
+
             // Determine the appropriate fallback URL based on context
             let fallbackUrl = 'https://docs.python.org/3/';
             let fallbackMessage = `No documentation found for '${symbol}'.`;
-            
+
             if (context) {
                 // Extract the base module name (e.g., 'numpy' from 'numpy.linalg')
                 const baseModule = context.split('.')[0];
@@ -139,7 +145,7 @@ export class DocumentationFetcher {
             } else {
                 fallbackMessage = `No documentation found for '${symbol}'. See the official Python documentation for details.`;
             }
-            
+
             docSnippet = {
                 title: symbol,
                 content: fallbackMessage,
@@ -232,7 +238,7 @@ export class DocumentationFetcher {
                 return cached.data;
             }
 
-                        console.error(`[PythonHover] Failed to fetch or extract documentation for ${entry.name}:`, error);
+            console.error(`[PythonHover] Failed to fetch or extract documentation for ${entry.name}:`, error);
 
             // Return a snippet that indicates documentation is available but extraction failed
             return {

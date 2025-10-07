@@ -22,7 +22,7 @@ export interface LibraryInventoryConfig {
 
 export class InventoryManager {
     private static readonly DOCS_BASE_URL = 'https://docs.python.org';
-    
+
     // Third-party library inventory configurations
     private static readonly THIRD_PARTY_LIBRARIES: LibraryInventoryConfig[] = [
         {
@@ -115,6 +115,55 @@ export class InventoryManager {
             inventoryUrl: 'https://pillow.readthedocs.io/en/stable/objects.inv',
             baseUrl: 'https://pillow.readthedocs.io/en/stable/'
         },
+        // Machine Learning & AI
+        {
+            name: 'tensorflow',
+            inventoryUrl: 'https://www.tensorflow.org/api_docs/python/objects.inv',
+            baseUrl: 'https://www.tensorflow.org/api_docs/python/'
+        },
+        {
+            name: 'tf',
+            inventoryUrl: 'https://www.tensorflow.org/api_docs/python/objects.inv',
+            baseUrl: 'https://www.tensorflow.org/api_docs/python/'
+        },
+        {
+            name: 'torch',
+            inventoryUrl: 'https://pytorch.org/docs/stable/objects.inv',
+            baseUrl: 'https://pytorch.org/docs/stable/'
+        },
+        {
+            name: 'pytorch',
+            inventoryUrl: 'https://pytorch.org/docs/stable/objects.inv',
+            baseUrl: 'https://pytorch.org/docs/stable/'
+        },
+        // Computer Vision
+        {
+            name: 'cv2',
+            inventoryUrl: 'https://docs.opencv.org/4.x/objects.inv',
+            baseUrl: 'https://docs.opencv.org/4.x/'
+        },
+        {
+            name: 'opencv',
+            inventoryUrl: 'https://docs.opencv.org/4.x/objects.inv',
+            baseUrl: 'https://docs.opencv.org/4.x/'
+        },
+        // HTTP & Async
+        {
+            name: 'aiohttp',
+            inventoryUrl: 'https://docs.aiohttp.org/en/stable/objects.inv',
+            baseUrl: 'https://docs.aiohttp.org/en/stable/'
+        },
+        {
+            name: 'httpx',
+            inventoryUrl: 'https://www.python-httpx.org/objects.inv',
+            baseUrl: 'https://www.python-httpx.org/'
+        },
+        // CLI
+        {
+            name: 'click',
+            inventoryUrl: 'https://click.palletsprojects.com/objects.inv',
+            baseUrl: 'https://click.palletsprojects.com/'
+        },
     ];
 
     constructor(private cacheManager: CacheManager) { }
@@ -185,7 +234,7 @@ export class InventoryManager {
      */
     public async getThirdPartyInventory(libraryName: string): Promise<Map<string, InventoryEntry> | null> {
         const config = InventoryManager.THIRD_PARTY_LIBRARIES.find(lib => lib.name === libraryName);
-        
+
         if (!config) {
             console.log(`[PythonHover] No inventory configuration for library: ${libraryName}`);
             return null;
@@ -199,10 +248,10 @@ export class InventoryManager {
         try {
             // Check cache first
             const cached = await this.cacheManager.get<Record<string, InventoryEntry>>(cacheKey);
-            
+
             if (cached) {
                 const isExpired = await this.cacheManager.isExpired(cacheKey, maxAge);
-                
+
                 if (!isExpired) {
                     console.log(`[PythonHover] Using cached inventory for ${libraryName}`);
                     return new Map(Object.entries(cached.data));
@@ -344,7 +393,7 @@ export class InventoryManager {
                     entryCount++;
                 }
             }
-            
+
             console.log(`[PythonHover] Loaded ${entryCount} entries from ${config.name} inventory`);
         } catch (error) {
             throw new Error(`Failed to parse third-party inventory for ${config.name}: ${error}`);
@@ -356,7 +405,7 @@ export class InventoryManager {
     private parseThirdPartyInventoryLine(line: string, config: LibraryInventoryConfig): InventoryEntry | null {
         // Intersphinx inventory format:
         // name domain:role priority uri anchor [display_name]
-        
+
         const parts = line.split(/\s+/);
         if (parts.length < 5) {
             return null;
@@ -552,7 +601,7 @@ export class InventoryManager {
         if (context) {
             const baseModule = context.split('.')[0];
             console.log(`[PythonHover] Checking third-party library: ${baseModule} for symbol: ${symbol}`);
-            
+
             const thirdPartyInventory = await this.getThirdPartyInventory(baseModule);
             if (thirdPartyInventory) {
                 // Try different qualified name variations
@@ -561,12 +610,12 @@ export class InventoryManager {
                     `${baseModule}.pyplot.${symbol}`,    // e.g., matplotlib.pyplot.plot
                     symbol                               // Direct name from inventory
                 ];
-                
+
                 // Special case for matplotlib - also try matplotlib.pyplot
                 if (baseModule === 'matplotlib') {
                     searchPatterns.push(`matplotlib.pyplot.${symbol}`);
                 }
-                
+
                 for (const pattern of searchPatterns) {
                     const entry = thirdPartyInventory.get(pattern);
                     if (entry) {
@@ -574,12 +623,12 @@ export class InventoryManager {
                         return entry;
                     }
                 }
-                
+
                 // If not found with exact names, search through all entries for partial matches
                 for (const [key, entry] of thirdPartyInventory) {
                     // Skip domain:role entries
                     if (key.includes(':')) continue;
-                    
+
                     // Check if the entry name ends with the symbol we're looking for
                     if (entry.name.endsWith(`.${symbol}`) || entry.name === symbol) {
                         console.log(`[PythonHover] Found third-party entry via partial match: ${entry.name} -> ${entry.uri}#${entry.anchor}`);
@@ -588,7 +637,7 @@ export class InventoryManager {
                 }
             }
         }
-        
+
         // Fall back to standard library inventory
         const inventory = await this.getInventory(version);
 
