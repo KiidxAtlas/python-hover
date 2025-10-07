@@ -273,6 +273,22 @@ export class SymbolResolver {
     private inferBaseType(baseObject: string): string {
         // Enhanced heuristics to infer the type of the base object
 
+        // Check for common standard library modules
+        const stdlibModules = [
+            'os', 'sys', 'math', 'random', 'datetime', 'json', 're', 'pathlib',
+            'typing', 'collections', 'itertools', 'functools', 'csv', 'sqlite3',
+            'threading', 'multiprocessing', 'subprocess', 'argparse', 'logging',
+            'unittest', 'pickle', 'copy', 'time', 'calendar', 'decimal', 'fractions',
+            'statistics', 'heapq', 'bisect', 'array', 'enum', 'dataclasses', 'abc',
+            'contextlib', 'tempfile', 'shutil', 'glob', 'fnmatch', 'zipfile', 'tarfile',
+            'gzip', 'bz2', 'hashlib', 'hmac', 'secrets', 'uuid', 'urllib', 'http',
+            'email', 'base64', 'struct', 'codecs', 'io', 'socket', 'ssl', 'asyncio'
+        ];
+
+        if (stdlibModules.includes(baseObject)) {
+            return baseObject; // Return module name as the type
+        }
+
         // Check for common third-party library aliases
         const libraryAliases: { [key: string]: string } = {
             'np': 'numpy',

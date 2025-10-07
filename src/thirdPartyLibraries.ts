@@ -60,6 +60,27 @@ z_int = np.zeros(3, dtype=int)
 print(z_int)  # [0 0 0]`,
             url: 'https://numpy.org/doc/stable/reference/generated/numpy.zeros.html'
         },
+        'ones': {
+            name: 'numpy.ones',
+            description: 'Return a new array of given shape and type, filled with ones.',
+            example: `import numpy as np
+
+# 1D array of ones
+o1 = np.ones(5)
+print(o1)  # [1. 1. 1. 1. 1.]
+
+# 2D array of ones
+o2 = np.ones((3, 4))
+print(o2)
+# [[1. 1. 1. 1.]
+#  [1. 1. 1. 1.]
+#  [1. 1. 1. 1.]]
+
+# Integer ones
+o_int = np.ones(3, dtype=int)
+print(o_int)  # [1 1 1]`,
+            url: 'https://numpy.org/doc/stable/reference/generated/numpy.ones.html'
+        },
         'arange': {
             name: 'numpy.arange',
             description: 'Return evenly spaced values within a given interval.',
@@ -307,28 +328,503 @@ article = Article.objects.create(
 )`,
             url: 'https://docs.djangoproject.com/en/stable/ref/models/instances/'
         }
+    },
+    matplotlib: {
+        'pyplot': {
+            name: 'matplotlib.pyplot',
+            description: 'MATLAB-like plotting framework. Provides functions for creating visualizations.',
+            example: `import matplotlib.pyplot as plt
+
+# Simple line plot
+plt.plot([1, 2, 3, 4], [1, 4, 9, 16])
+plt.ylabel('y-axis')
+plt.xlabel('x-axis')
+plt.title('Simple Plot')
+plt.show()
+
+# Multiple plots
+x = [1, 2, 3, 4, 5]
+y1 = [1, 4, 9, 16, 25]
+y2 = [1, 2, 3, 4, 5]
+
+plt.plot(x, y1, label='squared')
+plt.plot(x, y2, label='linear')
+plt.legend()
+plt.show()`,
+            url: 'https://matplotlib.org/stable/api/pyplot_summary.html'
+        },
+        'figure': {
+            name: 'matplotlib.pyplot.figure',
+            description: 'Create a new figure or activate an existing figure.',
+            example: `import matplotlib.pyplot as plt
+
+# Create figure with specific size
+fig = plt.figure(figsize=(10, 6))
+
+# Add subplots
+ax1 = fig.add_subplot(221)  # 2x2 grid, position 1
+ax2 = fig.add_subplot(222)  # 2x2 grid, position 2
+
+ax1.plot([1, 2, 3], [1, 4, 9])
+ax2.plot([1, 2, 3], [1, 2, 3])
+
+plt.show()`,
+            url: 'https://matplotlib.org/stable/api/_as_gen/matplotlib.pyplot.figure.html'
+        },
+        'scatter': {
+            name: 'matplotlib.pyplot.scatter',
+            description: 'Create a scatter plot of x vs y with varying marker size and/or color.',
+            example: `import matplotlib.pyplot as plt
+import numpy as np
+
+# Simple scatter
+x = np.random.rand(50)
+y = np.random.rand(50)
+plt.scatter(x, y)
+plt.show()
+
+# With colors and sizes
+colors = np.random.rand(50)
+sizes = 1000 * np.random.rand(50)
+plt.scatter(x, y, c=colors, s=sizes, alpha=0.5)
+plt.colorbar()
+plt.show()`,
+            url: 'https://matplotlib.org/stable/api/_as_gen/matplotlib.pyplot.scatter.html'
+        }
+    },
+    scipy: {
+        'stats': {
+            name: 'scipy.stats',
+            description: 'Statistical functions and probability distributions.',
+            example: `from scipy import stats
+import numpy as np
+
+# Normal distribution
+data = stats.norm.rvs(loc=0, scale=1, size=1000)
+
+# T-test
+t_stat, p_value = stats.ttest_1samp(data, 0)
+print(f'T-statistic: {t_stat}, P-value: {p_value}')
+
+# Descriptive statistics
+print(stats.describe(data))`,
+            url: 'https://docs.scipy.org/doc/scipy/reference/stats.html'
+        },
+        'integrate': {
+            name: 'scipy.integrate',
+            description: 'Integration and ODE solvers.',
+            example: `from scipy import integrate
+import numpy as np
+
+# Integrate a function
+def f(x):
+    return x**2
+
+result, error = integrate.quad(f, 0, 1)
+print(f'Integral: {result}')  # 0.333...
+
+# Solve ODE
+def deriv(y, t):
+    return -2 * y
+
+t = np.linspace(0, 4, 100)
+y = integrate.odeint(deriv, 1.0, t)`,
+            url: 'https://docs.scipy.org/doc/scipy/reference/integrate.html'
+        }
+    },
+    sklearn: {
+        'LinearRegression': {
+            name: 'sklearn.linear_model.LinearRegression',
+            description: 'Ordinary least squares Linear Regression.',
+            example: `from sklearn.linear_model import LinearRegression
+import numpy as np
+
+# Create sample data
+X = np.array([[1], [2], [3], [4], [5]])
+y = np.array([2, 4, 5, 4, 5])
+
+# Fit model
+model = LinearRegression()
+model.fit(X, y)
+
+# Make predictions
+predictions = model.predict([[6]])
+print(f'Prediction: {predictions[0]}')
+
+# Get coefficients
+print(f'Slope: {model.coef_[0]}')
+print(f'Intercept: {model.intercept_}')`,
+            url: 'https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.LinearRegression.html'
+        },
+        'train_test_split': {
+            name: 'sklearn.model_selection.train_test_split',
+            description: 'Split arrays or matrices into random train and test subsets.',
+            example: `from sklearn.model_selection import train_test_split
+import numpy as np
+
+# Sample data
+X = np.arange(100).reshape((20, 5))
+y = np.arange(20)
+
+# Split data
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42
+)
+
+print(f'Train size: {len(X_train)}')  # 16
+print(f'Test size: {len(X_test)}')    # 4`,
+            url: 'https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.train_test_split.html'
+        }
+    },
+    bs4: {
+        'BeautifulSoup': {
+            name: 'bs4.BeautifulSoup',
+            description: 'Beautiful Soup parses HTML and XML documents, even with malformed markup.',
+            example: `from bs4 import BeautifulSoup
+
+html = """
+<html>
+<head><title>Page Title</title></head>
+<body>
+    <p class="story">Once upon a time...</p>
+    <a href="http://example.com">Link</a>
+</body>
+</html>
+"""
+
+soup = BeautifulSoup(html, 'html.parser')
+
+# Find elements
+title = soup.find('title')
+print(title.text)  # "Page Title"
+
+# Find by class
+story = soup.find('p', class_='story')
+print(story.text)
+
+# Find all links
+links = soup.find_all('a')
+for link in links:
+    print(link.get('href'))`,
+            url: 'https://www.crummy.com/software/BeautifulSoup/bs4/doc/'
+        }
+    },
+    sqlalchemy: {
+        'create_engine': {
+            name: 'sqlalchemy.create_engine',
+            description: 'Create a new Engine instance.',
+            example: `from sqlalchemy import create_engine
+
+# SQLite in-memory
+engine = create_engine('sqlite:///:memory:')
+
+# SQLite file
+engine = create_engine('sqlite:///database.db')
+
+# PostgreSQL
+engine = create_engine(
+    'postgresql://user:password@localhost/dbname'
+)
+
+# MySQL
+engine = create_engine(
+    'mysql+pymysql://user:password@localhost/dbname'
+)
+
+# Execute query
+with engine.connect() as conn:
+    result = conn.execute("SELECT * FROM users")`,
+            url: 'https://docs.sqlalchemy.org/en/20/core/engines.html'
+        }
+    },
+    fastapi: {
+        'FastAPI': {
+            name: 'fastapi.FastAPI',
+            description: 'Modern, fast web framework for building APIs with Python.',
+            example: `from fastapi import FastAPI
+
+app = FastAPI()
+
+@app.get("/")
+def read_root():
+    return {"Hello": "World"}
+
+@app.get("/items/{item_id}")
+def read_item(item_id: int, q: str = None):
+    return {"item_id": item_id, "q": q}
+
+# POST endpoint with body
+from pydantic import BaseModel
+
+class Item(BaseModel):
+    name: str
+    price: float
+
+@app.post("/items/")
+def create_item(item: Item):
+    return {"name": item.name, "price": item.price}
+
+# Run with: uvicorn main:app --reload`,
+            url: 'https://fastapi.tiangolo.com/'
+        }
+    },
+    pytest: {
+        'fixture': {
+            name: 'pytest.fixture',
+            description: 'Decorator to mark a function as a fixture factory.',
+            example: `import pytest
+
+@pytest.fixture
+def sample_data():
+    return [1, 2, 3, 4, 5]
+
+@pytest.fixture
+def db_connection():
+    # Setup
+    conn = create_connection()
+    yield conn
+    # Teardown
+    conn.close()
+
+def test_sum(sample_data):
+    assert sum(sample_data) == 15
+
+def test_database(db_connection):
+    result = db_connection.query("SELECT 1")
+    assert result == 1`,
+            url: 'https://docs.pytest.org/en/stable/fixture.html'
+        },
+        'mark': {
+            name: 'pytest.mark',
+            description: 'Mark test functions with metadata.',
+            example: `import pytest
+
+@pytest.mark.slow
+def test_slow_function():
+    # This test is slow
+    pass
+
+@pytest.mark.parametrize("input,expected", [
+    (1, 2),
+    (2, 4),
+    (3, 6),
+])
+def test_multiply_by_2(input, expected):
+    assert input * 2 == expected
+
+@pytest.mark.skip(reason="Not implemented yet")
+def test_future_feature():
+    pass
+
+# Run with: pytest -m slow`,
+            url: 'https://docs.pytest.org/en/stable/mark.html'
+        }
+    },
+    selenium: {
+        'webdriver': {
+            name: 'selenium.webdriver',
+            description: 'WebDriver implementations for browser automation.',
+            example: `from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+
+# Chrome driver
+driver = webdriver.Chrome()
+
+# Navigate to URL
+driver.get("https://www.example.com")
+
+# Find element
+element = driver.find_element(By.ID, "username")
+element.send_keys("myusername")
+
+# Wait for element
+wait = WebDriverWait(driver, 10)
+element = wait.until(
+    EC.presence_of_element_located((By.ID, "submit"))
+)
+
+# Click button
+element.click()
+
+driver.quit()`,
+            url: 'https://selenium-python.readthedocs.io/'
+        }
+    },
+    asyncio: {
+        'run': {
+            name: 'asyncio.run',
+            description: 'Execute the coroutine and return the result.',
+            example: `import asyncio
+
+async def main():
+    print('Hello')
+    await asyncio.sleep(1)
+    print('World')
+
+# Run async function
+asyncio.run(main())
+
+# Multiple tasks
+async def fetch_data(id):
+    await asyncio.sleep(1)
+    return f'Data {id}'
+
+async def main():
+    tasks = [fetch_data(i) for i in range(3)]
+    results = await asyncio.gather(*tasks)
+    print(results)
+
+asyncio.run(main())`,
+            url: 'https://docs.python.org/3/library/asyncio-task.html#asyncio.run'
+        },
+        'gather': {
+            name: 'asyncio.gather',
+            description: 'Run awaitable objects in the sequence concurrently.',
+            example: `import asyncio
+
+async def task1():
+    await asyncio.sleep(1)
+    return 'Task 1'
+
+async def task2():
+    await asyncio.sleep(2)
+    return 'Task 2'
+
+async def main():
+    # Run concurrently
+    results = await asyncio.gather(task1(), task2())
+    print(results)  # ['Task 1', 'Task 2']
+
+asyncio.run(main())`,
+            url: 'https://docs.python.org/3/library/asyncio-task.html#asyncio.gather'
+        }
+    },
+    pydantic: {
+        'BaseModel': {
+            name: 'pydantic.BaseModel',
+            description: 'Base class for creating data validation models.',
+            example: `from pydantic import BaseModel, validator
+from typing import Optional
+
+class User(BaseModel):
+    id: int
+    name: str
+    email: str
+    age: Optional[int] = None
+
+    @validator('email')
+    def email_must_be_valid(cls, v):
+        if '@' not in v:
+            raise ValueError('Invalid email')
+        return v
+
+# Create instance
+user = User(id=1, name='John', email='john@example.com')
+print(user.dict())
+
+# Validation error
+try:
+    User(id=1, name='John', email='invalid')
+except ValueError as e:
+    print(e)`,
+            url: 'https://docs.pydantic.dev/'
+        }
+    },
+    pillow: {
+        'Image': {
+            name: 'PIL.Image',
+            description: 'The Image module provides a class with the same name for representing a PIL image.',
+            example: `from PIL import Image
+
+# Open image
+img = Image.open('photo.jpg')
+
+# Get info
+print(img.size)     # (width, height)
+print(img.format)   # JPEG
+print(img.mode)     # RGB
+
+# Resize image
+img_resized = img.resize((800, 600))
+
+# Crop image
+box = (100, 100, 400, 400)
+img_cropped = img.crop(box)
+
+# Save image
+img.save('output.png')
+
+# Create new image
+new_img = Image.new('RGB', (100, 100), color='red')`,
+            url: 'https://pillow.readthedocs.io/en/stable/reference/Image.html'
+        }
     }
 };
 
 /**
- * Check if a library is imported in the document
+ * Detect imported libraries and their aliases
+ * Returns a Map of alias -> library name
  */
-export function getImportedLibraries(documentText: string): Set<string> {
-    const libraries = new Set<string>();
-    const importRegex = /^(?:import|from)\s+(numpy|pandas|requests|flask|django|sklearn|matplotlib|scipy|asyncio|aiohttp)\b/gm;
+export function getImportedLibraries(documentText: string): Map<string, string> {
+    const imports = new Map<string, string>(); // alias -> library name
+    const lines = documentText.split('\n');
 
-    let match;
-    while ((match = importRegex.exec(documentText)) !== null) {
-        libraries.add(match[1]);
+    for (const line of lines) {
+        const trimmed = line.trim();
+
+        // Match: import numpy as np
+        const importAsMatch = trimmed.match(/^import\s+(\w+)(?:\s+as\s+(\w+))?$/);
+        if (importAsMatch) {
+            const library = importAsMatch[1];
+            const alias = importAsMatch[2] || library;
+            if (THIRD_PARTY_LIBRARIES[library]) {
+                imports.set(alias, library);
+            }
+            continue;
+        }
+
+        // Match: from numpy import array, zeros
+        const fromMatch = trimmed.match(/^from\s+(\w+)\s+import\s+/);
+        if (fromMatch) {
+            const library = fromMatch[1];
+            if (THIRD_PARTY_LIBRARIES[library]) {
+                imports.set(library, library);
+            }
+            continue;
+        }
+
+        // Match: import numpy (without alias)
+        const simpleImportMatch = trimmed.match(/^import\s+(\w+)$/);
+        if (simpleImportMatch) {
+            const library = simpleImportMatch[1];
+            if (THIRD_PARTY_LIBRARIES[library]) {
+                imports.set(library, library);
+            }
+        }
     }
 
-    return libraries;
+    return imports;
+}
+
+/**
+ * Check if a library is imported (legacy function for backward compatibility)
+ */
+export function getImportedLibrariesSet(documentText: string): Set<string> {
+    const importMap = getImportedLibraries(documentText);
+    return new Set(importMap.values());
 }
 
 /**
  * Get documentation for a third-party library symbol
  */
 export function getThirdPartyDoc(library: string, symbol: string): LibraryDoc | null {
+    // Input validation
+    if (!library || !symbol || typeof library !== 'string' || typeof symbol !== 'string') {
+        return null;
+    }
+
     const libraryDocs = THIRD_PARTY_LIBRARIES[library];
     if (!libraryDocs) {
         return null;

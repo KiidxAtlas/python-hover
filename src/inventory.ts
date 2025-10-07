@@ -14,8 +14,68 @@ export interface InventoryEntry {
     anchor: string;
 }
 
+export interface LibraryInventoryConfig {
+    name: string;
+    inventoryUrl: string;
+    baseUrl: string; // Base URL for resolving relative links
+}
+
 export class InventoryManager {
     private static readonly DOCS_BASE_URL = 'https://docs.python.org';
+    
+    // Third-party library inventory configurations
+    private static readonly THIRD_PARTY_LIBRARIES: LibraryInventoryConfig[] = [
+        {
+            name: 'numpy',
+            inventoryUrl: 'https://numpy.org/doc/stable/objects.inv',
+            baseUrl: 'https://numpy.org/doc/stable/'
+        },
+        {
+            name: 'pandas',
+            inventoryUrl: 'https://pandas.pydata.org/docs/objects.inv',
+            baseUrl: 'https://pandas.pydata.org/docs/'
+        },
+        {
+            name: 'requests',
+            inventoryUrl: 'https://docs.python-requests.org/en/latest/objects.inv',
+            baseUrl: 'https://docs.python-requests.org/en/latest/'
+        },
+        {
+            name: 'scipy',
+            inventoryUrl: 'https://docs.scipy.org/doc/scipy/objects.inv',
+            baseUrl: 'https://docs.scipy.org/doc/scipy/'
+        },
+        {
+            name: 'matplotlib',
+            inventoryUrl: 'https://matplotlib.org/stable/objects.inv',
+            baseUrl: 'https://matplotlib.org/stable/'
+        },
+        {
+            name: 'flask',
+            inventoryUrl: 'https://flask.palletsprojects.com/en/stable/objects.inv',
+            baseUrl: 'https://flask.palletsprojects.com/en/stable/'
+        },
+        {
+            name: 'django',
+            inventoryUrl: 'https://docs.djangoproject.com/en/stable/_objects/',
+            baseUrl: 'https://docs.djangoproject.com/en/stable/'
+        },
+        {
+            name: 'sklearn',
+            inventoryUrl: 'https://scikit-learn.org/stable/objects.inv',
+            baseUrl: 'https://scikit-learn.org/stable/'
+        },
+        {
+            name: 'pytest',
+            inventoryUrl: 'https://docs.pytest.org/en/stable/objects.inv',
+            baseUrl: 'https://docs.pytest.org/en/stable/'
+        },
+        {
+            name: 'sphinx',
+            inventoryUrl: 'https://www.sphinx-doc.org/en/master/objects.inv',
+            baseUrl: 'https://www.sphinx-doc.org/en/master/'
+        },
+    ];
 
     constructor(private cacheManager: CacheManager) { }
 
@@ -80,6 +140,68 @@ export class InventoryManager {
         // in the getInventory method's cacheKey generation
     }
 
+    /**
+     * Get inventory for a third-party library
+     */
+    public async getThirdPartyInventory(libraryName: string): Promise<Map<string, InventoryEntry> | null> {
+        const config = InventoryManager.THIRD_PARTY_LIBRARIES.find(lib => lib.name === libraryName);
+        
+        if (!config) {
+            console.log(`[PythonHover] No inventory configuration for library: ${libraryName}`);
+            return null;
+        }
+
+        const cacheKey = `inventory-${libraryName}-v1`;
+        const maxAge = CacheManager.hoursToMs(24 * 7); // 7 days for third-party (more stable)
+
+        console.log(`[PythonHover] Getting third-party inventory for ${libraryName}`);
+
+        try {
+            // Check cache first
+            const cached = await this.cacheManager.get<Record<string, InventoryEntry>>(cacheKey);
+            
+            if (cached) {
+                const isExpired = await this.cacheManager.isExpired(cacheKey, maxAge);
+                
+                if (!isExpired) {
+                    console.log(`[PythonHover] Using cached inventory for ${libraryName}`);
+                    return new Map(Object.entries(cached.data));
+                }
+            }
+
+            console.log(`[PythonHover] Fetching fresh inventory for ${libraryName}`);
+            const inventory = await this.fetchThirdPartyInventory(config);
+
+            // Convert Map to Object for storage
+            const inventoryObj: Record<string, InventoryEntry> = {};
+            inventory.forEach((value, key) => {
+                inventoryObj[key] = value;
+            });
+
+            await this.cacheManager.set(cacheKey, inventoryObj);
+            return inventory;
+        } catch (error) {
+            console.error(`[PythonHover] Failed to get inventory for ${libraryName}:`, error);
+            // If fetch fails but we have cached data, use it
+            const cached = await this.cacheManager.get<Record<string, InventoryEntry>>(cacheKey);
+            if (cached) {
+                console.log(`[PythonHover] Using stale cached inventory due to fetch error`);
+                return new Map(Object.entries(cached.data));
+            }
+            return null; // Return null instead of throwing for third-party libraries
+        }
+    }
+
+    private async fetchThirdPartyInventory(config: LibraryInventoryConfig): Promise<Map<string, InventoryEntry>> {
+        const response = await fetch(config.inventoryUrl);
+        if (!response.ok) {
+            throw new Error(`Failed to fetch inventory: ${response.status} ${response.statusText}`);
+        }
+
+        const buffer = await response.arrayBuffer();
+        return this.parseThirdPartyInventory(new Uint8Array(buffer), config);
+    }
+
     private async fetchInventory(version: string): Promise<Map<string, InventoryEntry>> {
         const inventoryUrl = `${InventoryManager.DOCS_BASE_URL}/${version}/objects.inv`;
 
@@ -141,6 +263,107 @@ export class InventoryManager {
         }
 
         return inventory;
+    }
+
+    private parseThirdPartyInventory(data: Uint8Array, config: LibraryInventoryConfig): Map<string, InventoryEntry> {
+        const inventory = new Map<string, InventoryEntry>();
+
+        try {
+            // Skip the header (first 4 lines)
+            let offset = 0;
+            let lineCount = 0;
+
+            // Find the end of the header
+            while (lineCount < 4 && offset < data.length) {
+                if (data[offset] === 0x0A) { // newline
+                    lineCount++;
+                }
+                offset++;
+            }
+
+            // The rest is zlib-compressed
+            const compressedData = data.slice(offset);
+            const decompressed = pako.inflate(compressedData, { to: 'string' });
+
+            // Parse each line
+            const lines = decompressed.split('\n');
+            let entryCount = 0;
+            for (const line of lines) {
+                if (line.trim() === '') continue;
+
+                const entry = this.parseThirdPartyInventoryLine(line, config);
+                if (entry) {
+                    // Store with the full qualified name from the inventory
+                    // This preserves submodule structure (e.g., matplotlib.pyplot.plot)
+                    inventory.set(entry.name, entry);
+
+                    // Also store with domain:role qualified name
+                    const domainRoleName = `${entry.name}:${entry.domain}:${entry.role}`;
+                    inventory.set(domainRoleName, entry);
+
+                    entryCount++;
+                }
+            }
+            
+            console.log(`[PythonHover] Loaded ${entryCount} entries from ${config.name} inventory`);
+        } catch (error) {
+            throw new Error(`Failed to parse third-party inventory for ${config.name}: ${error}`);
+        }
+
+        return inventory;
+    }
+
+    private parseThirdPartyInventoryLine(line: string, config: LibraryInventoryConfig): InventoryEntry | null {
+        // Intersphinx inventory format:
+        // name domain:role priority uri anchor [display_name]
+        
+        const parts = line.split(/\s+/);
+        if (parts.length < 5) {
+            return null;
+        }
+
+        const name = parts[0];
+        const [domain, role] = parts[1].split(':');
+        const priority = parseInt(parts[2], 10);
+
+        let uri = parts[3];
+        let anchor = parts[4];
+
+        // Check if URI contains # - if so, split it
+        if (uri.includes('#')) {
+            const uriParts = uri.split('#');
+            uri = uriParts[0];
+            if (uriParts.length > 1 && uriParts[1]) {
+                anchor = uriParts[1];
+            }
+            if (parts[4] === '-' && uriParts[1]) {
+                anchor = uriParts[1];
+            }
+        }
+
+        // Skip if invalid
+        if (!name || !domain || !role || isNaN(priority)) {
+            return null;
+        }
+
+        // Handle special placeholders
+        if (anchor.includes('$')) {
+            anchor = anchor.replace(/\$/g, name);
+        }
+
+        // Resolve relative URIs to absolute using the base URL
+        if (!uri.startsWith('http')) {
+            uri = config.baseUrl + uri;
+        }
+
+        return {
+            name,
+            domain,
+            role,
+            priority,
+            uri,
+            anchor
+        };
     }
 
     private shouldReplaceEntry(existing: InventoryEntry, newEntry: InventoryEntry): boolean {
@@ -284,7 +507,49 @@ export class InventoryManager {
         };
     }
 
-    public async resolveSymbol(symbol: string, version: string): Promise<InventoryEntry | null> {
+    public async resolveSymbol(symbol: string, version: string, context?: string): Promise<InventoryEntry | null> {
+        // If we have a context (e.g., 'numpy'), check third-party library inventories first
+        if (context) {
+            const baseModule = context.split('.')[0];
+            console.log(`[PythonHover] Checking third-party library: ${baseModule} for symbol: ${symbol}`);
+            
+            const thirdPartyInventory = await this.getThirdPartyInventory(baseModule);
+            if (thirdPartyInventory) {
+                // Try different qualified name variations
+                const searchPatterns = [
+                    `${baseModule}.${symbol}`,           // e.g., numpy.ones
+                    `${baseModule}.pyplot.${symbol}`,    // e.g., matplotlib.pyplot.plot
+                    symbol                               // Direct name from inventory
+                ];
+                
+                // Special case for matplotlib - also try matplotlib.pyplot
+                if (baseModule === 'matplotlib') {
+                    searchPatterns.push(`matplotlib.pyplot.${symbol}`);
+                }
+                
+                for (const pattern of searchPatterns) {
+                    const entry = thirdPartyInventory.get(pattern);
+                    if (entry) {
+                        console.log(`[PythonHover] Found third-party entry: ${pattern} -> ${entry.uri}#${entry.anchor}`);
+                        return entry;
+                    }
+                }
+                
+                // If not found with exact names, search through all entries for partial matches
+                for (const [key, entry] of thirdPartyInventory) {
+                    // Skip domain:role entries
+                    if (key.includes(':')) continue;
+                    
+                    // Check if the entry name ends with the symbol we're looking for
+                    if (entry.name.endsWith(`.${symbol}`) || entry.name === symbol) {
+                        console.log(`[PythonHover] Found third-party entry via partial match: ${entry.name} -> ${entry.uri}#${entry.anchor}`);
+                        return entry;
+                    }
+                }
+            }
+        }
+        
+        // Fall back to standard library inventory
         const inventory = await this.getInventory(version);
 
         // Collect all matching entries by checking both simple names and qualified names

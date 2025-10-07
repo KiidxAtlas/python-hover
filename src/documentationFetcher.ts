@@ -20,6 +20,31 @@ export interface DocumentationSnippet {
  */
 
 /**
+ * Get the documentation URL for a third-party module
+ */
+function getModuleDocumentationUrl(moduleName: string): string {
+    const moduleUrls: { [key: string]: string } = {
+        'numpy': 'https://numpy.org/doc/stable/',
+        'pandas': 'https://pandas.pydata.org/docs/',
+        'requests': 'https://docs.python-requests.org/',
+        'flask': 'https://flask.palletsprojects.com/',
+        'django': 'https://docs.djangoproject.com/',
+        'scipy': 'https://docs.scipy.org/doc/scipy/',
+        'matplotlib': 'https://matplotlib.org/stable/',
+        'sklearn': 'https://scikit-learn.org/stable/',
+        'tensorflow': 'https://www.tensorflow.org/api_docs/python/',
+        'torch': 'https://pytorch.org/docs/stable/',
+        'pytest': 'https://docs.pytest.org/',
+        'sqlalchemy': 'https://docs.sqlalchemy.org/',
+        'pydantic': 'https://docs.pydantic.dev/',
+        'fastapi': 'https://fastapi.tiangolo.com/',
+        'aiohttp': 'https://docs.aiohttp.org/',
+    };
+
+    return moduleUrls[moduleName] || `https://pypi.org/project/${moduleName}/`;
+}
+
+/**
  * Check if a symbol has a direct documentation mapping
  */
 function hasDocumentationMapping(symbol: string): boolean {
@@ -96,10 +121,24 @@ export class DocumentationFetcher {
         // No documentation source available
         else {
             console.log(`[PythonHover] No documentation source found for symbol: ${symbol}`);
+            
+            // Determine the appropriate fallback URL based on context
+            let fallbackUrl = 'https://docs.python.org/3/';
+            let fallbackMessage = `No documentation found for '${symbol}'.`;
+            
+            if (context) {
+                // Extract the base module name (e.g., 'numpy' from 'numpy.linalg')
+                const baseModule = context.split('.')[0];
+                fallbackUrl = getModuleDocumentationUrl(baseModule);
+                fallbackMessage = `No documentation found for '${symbol}'. See the ${baseModule} documentation for details.`;
+            } else {
+                fallbackMessage = `No documentation found for '${symbol}'. See the official Python documentation for details.`;
+            }
+            
             docSnippet = {
                 title: symbol,
-                content: `No documentation found for '${symbol}'. See the official Python documentation for details.`,
-                url: 'https://docs.python.org/3/',
+                content: fallbackMessage,
+                url: fallbackUrl,
                 anchor: ''
             };
         }
@@ -188,10 +227,12 @@ export class DocumentationFetcher {
                 return cached.data;
             }
 
-            // Return a minimal snippet with just the link
+                        console.error(`[PythonHover] Failed to fetch or extract documentation for ${entry.name}:`, error);
+
+            // Return a snippet that indicates documentation is available but extraction failed
             return {
                 title: entry.name,
-                content: `See the official documentation for details.`,
+                content: ``, // Empty content - hover provider will show fallback message
                 url: this.buildFullUrl(entry),
                 anchor: entry.anchor
             };

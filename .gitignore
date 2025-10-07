@@ -40,3 +40,4 @@ coverage/
 # Build artifacts
 *.tgz
 *.zip
+PUBLISH_SUCCESS.md

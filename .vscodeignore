@@ -10,6 +10,8 @@ out/**
 *.vsix
 test.py
 test_hover.py
+test_*.py
+demo.py
 TEST_INSTRUCTIONS.md
 
 # Git

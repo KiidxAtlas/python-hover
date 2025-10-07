@@ -2,8 +2,8 @@
     "name": "python-hover",
     "icon": "media/icon.png",
     "displayName": "🐍 Python Hover - Enhanced Documentation",
-    "description": "Instant Python documentation with 300+ constructs, smart context detection, and practical examples. Perfect for learning and quick reference.",
-    "version": "0.2.4",
+    "description": "Instant Python documentation with 300+ constructs, 15+ libraries (NumPy, Pandas, FastAPI, Django), practical examples, and smart context detection. Zero context switching!",
+    "version": "0.3.0",
     "publisher": "KiidxAtlas",
     "license": "MIT",
     "repository": {
@@ -24,6 +24,8 @@
     "categories": [
         "Programming Languages",
         "Education",
+        "Data Science",
+        "Snippets",
         "Other"
     ],
     "keywords": [
@@ -39,10 +41,28 @@
         "type-hints",
         "education",
         "productivity",
-        "string-methods",
-        "list-methods",
-        "dict-methods",
-        "import-support"
+        "numpy",
+        "pandas",
+        "matplotlib",
+        "data-science",
+        "machine-learning",
+        "web-development",
+        "fastapi",
+        "django",
+        "flask",
+        "scikit-learn",
+        "scipy",
+        "pytest",
+        "asyncio",
+        "beautifulsoup",
+        "sqlalchemy",
+        "pydantic",
+        "selenium",
+        "pillow",
+        "code-examples",
+        "quick-reference",
+        "offline",
+        "beginner-friendly"
     ],
     "activationEvents": [
         "onLanguage:python"
@@ -64,6 +84,21 @@
                 "command": "pythonHover.copyUrl",
                 "title": "Copy Documentation URL",
                 "category": "Python Hover"
+            },
+            {
+                "command": "pythonHover.insertExample",
+                "title": "Insert Example at Cursor",
+                "category": "Python Hover"
+            },
+            {
+                "command": "pythonHover.increaseFontSize",
+                "title": "Increase Hover Font Size",
+                "category": "Python Hover"
+            },
+            {
+                "command": "pythonHover.decreaseFontSize",
+                "title": "Decrease Hover Font Size",
+                "category": "Python Hover"
             }
         ],
         "configuration": {
@@ -80,6 +115,31 @@
                     "minimum": 1,
                     "maximum": 100,
                     "description": "Maximum number of lines to show in hover snippets."
+                },
+                "pythonHover.fontSize": {
+                    "type": "string",
+                    "enum": [
+                        "small",
+                        "medium",
+                        "large"
+                    ],
+                    "default": "medium",
+                    "description": "Font size for hover content."
+                },
+                "pythonHover.showEmojis": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show emoji icons in hover tooltips."
+                },
+                "pythonHover.showColors": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Enable colored sections in hover tooltips."
+                },
+                "pythonHover.showBorders": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show borders between sections."
                 },
                 "pythonHover.cacheTTL.inventoryDays": {
                     "type": "number",
@@ -107,6 +167,21 @@
                     "type": "boolean",
                     "default": true,
                     "description": "Show practical code examples in hover documentation."
+                },
+                "pythonHover.showRelatedMethods": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show related methods and alternatives."
+                },
+                "pythonHover.showVersionInfo": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show Python version information for features."
+                },
+                "pythonHover.openDocsInEditor": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Open documentation links in VS Code's Simple Browser instead of external browser."
                 },
                 "pythonHover.telemetry": {
                     "type": "boolean",

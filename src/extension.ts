@@ -22,9 +22,17 @@ export function activate(context: vscode.ExtensionContext) {
         cacheManager
     );
 
-    context.subscriptions.push(
-        vscode.languages.registerHoverProvider({ language: 'python' }, hoverProvider)
+    const hoverProviderDisposable = vscode.languages.registerHoverProvider(
+        { language: 'python' },
+        hoverProvider
     );
+
+    context.subscriptions.push(hoverProviderDisposable);
+
+    // Ensure proper disposal
+    context.subscriptions.push({
+        dispose: () => hoverProvider.dispose()
+    });
 
     // Register clear cache command
     context.subscriptions.push(
@@ -42,11 +50,20 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
 
-    // Register command to open documentation URL (makes links clickable)
+    // Register command to open documentation URL (respects openDocsInEditor setting)
     context.subscriptions.push(
         vscode.commands.registerCommand('pythonHover.openDocs', (url: string) => {
             if (url && url.startsWith('http')) {
-                vscode.env.openExternal(vscode.Uri.parse(url));
+                const config = vscode.workspace.getConfiguration('pythonHover');
+                const openInEditor = config.get<boolean>('openDocsInEditor', false);
+
+                if (openInEditor) {
+                    // Open in VS Code's Simple Browser
+                    vscode.commands.executeCommand('simpleBrowser.show', url);
+                } else {
+                    // Open in external browser
+                    vscode.env.openExternal(vscode.Uri.parse(url));
+                }
             }
         })
     );
@@ -61,11 +78,62 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
 
+    // Register insert example command
+    context.subscriptions.push(
+        vscode.commands.registerCommand('pythonHover.insertExample', (code: string) => {
+            const editor = vscode.window.activeTextEditor;
+            if (editor && code) {
+                const snippet = new vscode.SnippetString(code);
+                editor.insertSnippet(snippet);
+                vscode.window.showInformationMessage('✅ Example inserted!');
+            }
+        })
+    );
+
+    // Register font size increase command
+    context.subscriptions.push(
+        vscode.commands.registerCommand('pythonHover.increaseFontSize', async () => {
+            const config = vscode.workspace.getConfiguration('pythonHover');
+            const sizes = ['small', 'medium', 'large'];
+            const currentSize = config.get<string>('fontSize', 'medium');
+            const currentIndex = sizes.indexOf(currentSize);
+
+            if (currentIndex < sizes.length - 1) {
+                const newSize = sizes[currentIndex + 1];
+                await config.update('fontSize', newSize, vscode.ConfigurationTarget.Global);
+                hoverProvider.refreshTheme();
+                vscode.window.showInformationMessage(`🔤 Font size: ${newSize}`);
+            } else {
+                vscode.window.showInformationMessage('Already at maximum font size');
+            }
+        })
+    );
+
+    // Register font size decrease command
+    context.subscriptions.push(
+        vscode.commands.registerCommand('pythonHover.decreaseFontSize', async () => {
+            const config = vscode.workspace.getConfiguration('pythonHover');
+            const sizes = ['small', 'medium', 'large'];
+            const currentSize = config.get<string>('fontSize', 'medium');
+            const currentIndex = sizes.indexOf(currentSize);
+
+            if (currentIndex > 0) {
+                const newSize = sizes[currentIndex - 1];
+                await config.update('fontSize', newSize, vscode.ConfigurationTarget.Global);
+                hoverProvider.refreshTheme();
+                vscode.window.showInformationMessage(`🔤 Font size: ${newSize}`);
+            } else {
+                vscode.window.showInformationMessage('Already at minimum font size');
+            }
+        })
+    );
+
     // Handle configuration changes
     context.subscriptions.push(
         vscode.workspace.onDidChangeConfiguration((event: vscode.ConfigurationChangeEvent) => {
             if (event.affectsConfiguration('pythonHover')) {
                 configManager.refresh();
+                hoverProvider.refreshTheme();
             }
         })
     );
