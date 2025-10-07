@@ -117,16 +117,6 @@ export class InventoryManager {
         },
         // Machine Learning & AI
         {
-            name: 'tensorflow',
-            inventoryUrl: 'https://www.tensorflow.org/api_docs/python/objects.inv',
-            baseUrl: 'https://www.tensorflow.org/api_docs/python/'
-        },
-        {
-            name: 'tf',
-            inventoryUrl: 'https://www.tensorflow.org/api_docs/python/objects.inv',
-            baseUrl: 'https://www.tensorflow.org/api_docs/python/'
-        },
-        {
             name: 'torch',
             inventoryUrl: 'https://pytorch.org/docs/stable/objects.inv',
             baseUrl: 'https://pytorch.org/docs/stable/'
@@ -136,33 +126,17 @@ export class InventoryManager {
             inventoryUrl: 'https://pytorch.org/docs/stable/objects.inv',
             baseUrl: 'https://pytorch.org/docs/stable/'
         },
-        // Computer Vision
-        {
-            name: 'cv2',
-            inventoryUrl: 'https://docs.opencv.org/4.x/objects.inv',
-            baseUrl: 'https://docs.opencv.org/4.x/'
-        },
-        {
-            name: 'opencv',
-            inventoryUrl: 'https://docs.opencv.org/4.x/objects.inv',
-            baseUrl: 'https://docs.opencv.org/4.x/'
-        },
         // HTTP & Async
         {
             name: 'aiohttp',
             inventoryUrl: 'https://docs.aiohttp.org/en/stable/objects.inv',
             baseUrl: 'https://docs.aiohttp.org/en/stable/'
         },
-        {
-            name: 'httpx',
-            inventoryUrl: 'https://www.python-httpx.org/objects.inv',
-            baseUrl: 'https://www.python-httpx.org/'
-        },
         // CLI
         {
             name: 'click',
-            inventoryUrl: 'https://click.palletsprojects.com/objects.inv',
-            baseUrl: 'https://click.palletsprojects.com/'
+            inventoryUrl: 'https://click.palletsprojects.com/en/stable/objects.inv',
+            baseUrl: 'https://click.palletsprojects.com/en/stable/'
         },
     ];
 
@@ -282,25 +256,59 @@ export class InventoryManager {
     }
 
     private async fetchThirdPartyInventory(config: LibraryInventoryConfig): Promise<Map<string, InventoryEntry>> {
-        const response = await fetch(config.inventoryUrl);
-        if (!response.ok) {
-            throw new Error(`Failed to fetch inventory: ${response.status} ${response.statusText}`);
-        }
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
 
-        const buffer = await response.arrayBuffer();
-        return this.parseThirdPartyInventory(new Uint8Array(buffer), config);
+        try {
+            const response = await fetch(config.inventoryUrl, {
+                signal: controller.signal,
+                headers: { 'User-Agent': 'VSCode-Python-Hover-Extension' }
+            });
+            
+            clearTimeout(timeoutId);
+            
+            if (!response.ok) {
+                throw new Error(`Failed to fetch inventory: ${response.status} ${response.statusText}`);
+            }
+
+            const buffer = await response.arrayBuffer();
+            return this.parseThirdPartyInventory(new Uint8Array(buffer), config);
+        } catch (error: any) {
+            clearTimeout(timeoutId);
+            if (error.name === 'AbortError') {
+                throw new Error(`Inventory fetch timed out after 10 seconds: ${config.inventoryUrl}`);
+            }
+            throw error;
+        }
     }
 
     private async fetchInventory(version: string): Promise<Map<string, InventoryEntry>> {
         const inventoryUrl = `${InventoryManager.DOCS_BASE_URL}/${version}/objects.inv`;
 
-        const response = await fetch(inventoryUrl);
-        if (!response.ok) {
-            throw new Error(`Failed to fetch inventory: ${response.status} ${response.statusText}`);
-        }
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000);
 
-        const buffer = await response.arrayBuffer();
-        return this.parseInventory(new Uint8Array(buffer), version);
+        try {
+            const response = await fetch(inventoryUrl, {
+                signal: controller.signal,
+                headers: { 'User-Agent': 'VSCode-Python-Hover-Extension' }
+            });
+            
+            clearTimeout(timeoutId);
+            
+            if (!response.ok) {
+                throw new Error(`Failed to fetch inventory: ${response.status} ${response.statusText}`);
+            }
+
+            const buffer = await response.arrayBuffer();
+            return this.parseInventory(new Uint8Array(buffer), version);
+        } catch (error: any) {
+            clearTimeout(timeoutId);
+            if (error.name === 'AbortError') {
+                throw new Error(`Inventory fetch timed out after 10 seconds: ${inventoryUrl}`);
+            }
+            throw error;
+        }
     }
 
     private parseInventory(data: Uint8Array, version: string): Map<string, InventoryEntry> {
@@ -604,16 +612,20 @@ export class InventoryManager {
 
             const thirdPartyInventory = await this.getThirdPartyInventory(baseModule);
             if (thirdPartyInventory) {
+                // Extract the method name from the symbol (in case it's already qualified like "torch.zeros")
+                const methodName = symbol.includes('.') ? symbol.split('.').pop()! : symbol;
+
                 // Try different qualified name variations
                 const searchPatterns = [
-                    `${baseModule}.${symbol}`,           // e.g., numpy.ones
-                    `${baseModule}.pyplot.${symbol}`,    // e.g., matplotlib.pyplot.plot
-                    symbol                               // Direct name from inventory
+                    symbol,                              // Try the symbol as-is first (e.g., "torch.zeros")
+                    `${baseModule}.${methodName}`,       // e.g., numpy.ones
+                    `${baseModule}.pyplot.${methodName}`, // e.g., matplotlib.pyplot.plot
+                    methodName                           // Direct name from inventory
                 ];
 
                 // Special case for matplotlib - also try matplotlib.pyplot
                 if (baseModule === 'matplotlib') {
-                    searchPatterns.push(`matplotlib.pyplot.${symbol}`);
+                    searchPatterns.push(`matplotlib.pyplot.${methodName}`);
                 }
 
                 for (const pattern of searchPatterns) {
@@ -630,11 +642,13 @@ export class InventoryManager {
                     if (key.includes(':')) continue;
 
                     // Check if the entry name ends with the symbol we're looking for
-                    if (entry.name.endsWith(`.${symbol}`) || entry.name === symbol) {
+                    if (entry.name.endsWith(`.${methodName}`) || entry.name === methodName) {
                         console.log(`[PythonHover] Found third-party entry via partial match: ${entry.name} -> ${entry.uri}#${entry.anchor}`);
                         return entry;
                     }
                 }
+
+                console.log(`[PythonHover] Symbol '${symbol}' not found in ${baseModule} inventory, falling back to stdlib`);
             }
         }
 

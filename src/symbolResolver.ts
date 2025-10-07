@@ -295,7 +295,7 @@ export class SymbolResolver {
             'pd': 'pandas',
             'plt': 'matplotlib',
             'tf': 'tensorflow',
-            'torch': 'pytorch',
+            'torch': 'torch',  // torch is the module name
             'sk': 'sklearn'
         };
 

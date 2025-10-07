@@ -4,21 +4,26 @@
 >
 > Get comprehensive examples, type hints, and practical code snippets without leaving your editor.
 
-[![Visual Studio Marketplace](https://img.shields.io/visual-studio-maSee [CHANGELOG.md](CHANGELOG.md) for a detailed history of changes and version updates.
-
-**Latest Version: 0.3.2**
-- 🚀 Complete third-party library coverage with 23+ libraries
-- 🤖 Added TensorFlow, PyTorch, OpenCV, aiohttp, httpx, Click support
-- 🎯 Machine learning, computer vision, and async HTTP now fully supported
-- ✨ Enhanced documentation with better library categorization
-- 🔧 Dynamic documentation via Intersphinx inventories (zero manual maintenance)
-
 [![Visual Studio Marketplace](https://img.shields.io/visual-studio-marketplace/v/KiidxAtlas.python-hover?color=blue&label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=KiidxAtlas.python-hover)
 [![Downloads](https://img.shields.io/visual-studio-marketplace/d/KiidxAtlas.python-hover?color=success)](https://marketplace.visualstudio.com/items?itemName=KiidxAtlas.python-hover)
 [![Rating](https://img.shields.io/visual-studio-marketplace/r/KiidxAtlas.python-hover?color=orange)](https://marketplace.visualstudio.com/items?itemName=KiidxAtlas.python-hover)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![GitHub Stars](https://img.shields.io/github/stars/KiidxAtlas/python-hover?style=social)](https://github.com/KiidxAtlas/python-hover)
 [![GitHub Issues](https://img.shields.io/github/issues/KiidxAtlas/python-hover)](https://github.com/KiidxAtlas/python-hover/issues)
+
+![Python Hover in Action](media/media.gif)
+
+**Latest Version: 0.3.2**
+- 🚀 Enhanced third-party library coverage with 19+ libraries
+- 🤖 Added PyTorch, aiohttp, Click support with verified Intersphinx
+- 🎯 All library integrations tested and working
+- ✨ Enhanced documentation with better library categorization
+- 🔧 Fixed broken Intersphinx URLs (removed TensorFlow, OpenCV, httpx - no Intersphinx support)
+- 📊 Added status bar showing cache size and quick access to cache management
+- ⏱️ Request timeouts (10 seconds) for better reliability
+- 🐛 Centralized logging system with debug control
+
+See [CHANGELOG.md](CHANGELOG.md) for a detailed history of changes and version updates
 
 ---
 
@@ -95,10 +100,9 @@ my_list.append(4)  # ← Hover shows: list method with examples and comparison w
 Third-party libraries now use **Intersphinx inventories** for automatic, comprehensive documentation coverage:
 
 - **Data Science**: NumPy, Pandas, SciPy, Matplotlib, scikit-learn
-- **Machine Learning**: TensorFlow, PyTorch
-- **Computer Vision**: OpenCV
+- **Machine Learning**: PyTorch
 - **Web Frameworks**: FastAPI, Django, Flask
-- **HTTP & Async**: Requests, aiohttp, httpx
+- **HTTP & Async**: Requests, aiohttp
 - **Testing**: pytest
 - **Web Scraping**: BeautifulSoup4
 - **Database**: SQLAlchemy
@@ -255,7 +259,7 @@ np.zeros()  # ← Instant NumPy documentation
 | Feature                           | Python Hover                    | Other Extensions         |
 | --------------------------------- | ------------------------------- | ------------------------ |
 | **Offline Support**         | ✅ Full offline with cache      | ⚠️ Limited             |
-| **Third-Party Libraries**   | ✅ 23+ major libraries          | ❌ Python built-ins only |
+| **Third-Party Libraries**   | ✅ 19+ major libraries          | ❌ Python built-ins only |
 | **Practical Examples**      | ✅ Real, runnable code          | ⚠️ Basic examples      |
 | **Visual Customization**    | ✅ Themes, colors, icons        | ❌ No customization      |
 | **Smart Context Detection** | ✅ Knows list vs string vs dict | ⚠️ Generic             |

@@ -2,7 +2,7 @@
     "name": "python-hover",
     "icon": "media/icon.png",
     "displayName": "🐍 Python Hover - Enhanced Documentation",
-    "description": "Instant Python documentation with 300+ constructs, 23+ libraries (NumPy, Pandas, FastAPI, Django, PyTorch, TensorFlow, OpenCV), practical examples, and smart context detection. Zero context switching!",
+    "description": "Instant Python documentation with 300+ constructs, 19+ libraries (NumPy, Pandas, FastAPI, Django, PyTorch, aiohttp, Click), practical examples, and smart context detection. Zero context switching!",
     "version": "0.3.2",
     "publisher": "KiidxAtlas",
     "license": "MIT",
@@ -59,11 +59,8 @@
         "pydantic",
         "selenium",
         "pillow",
-        "tensorflow",
         "pytorch",
-        "opencv",
         "aiohttp",
-        "httpx",
         "click",
         "code-examples",
         "quick-reference",
@@ -182,7 +179,19 @@
                 "pythonHover.showVersionInfo": {
                     "type": "boolean",
                     "default": true,
-                    "description": "Show Python version information for features."
+                    "description": "Show Python version information when available."
+                },
+                "pythonHover.enableDebugLogging": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Enable verbose debug logging in the console (for troubleshooting)."
+                },
+                "pythonHover.requestTimeout": {
+                    "type": "number",
+                    "default": 10000,
+                    "minimum": 1000,
+                    "maximum": 60000,
+                    "description": "Timeout in milliseconds for HTTP requests to documentation sites (default: 10 seconds)."
                 },
                 "pythonHover.openDocsInEditor": {
                     "type": "boolean",

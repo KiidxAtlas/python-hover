@@ -233,7 +233,10 @@ export class PythonHoverProvider implements vscode.HoverProvider {
             let lookupSymbol = primarySymbol.symbol;
             if (primarySymbol.type === 'method' && primarySymbol.context) {
                 // For methods, look up as "type.method" (e.g., "list.append")
-                lookupSymbol = `${primarySymbol.context}.${primarySymbol.symbol}`;
+                // But don't duplicate if the symbol already includes the context (e.g., "torch.zeros")
+                if (!primarySymbol.symbol.startsWith(primarySymbol.context + '.')) {
+                    lookupSymbol = `${primarySymbol.context}.${primarySymbol.symbol}`;
+                }
                 console.log(`[PythonHover] Looking up method as: ${lookupSymbol}`);
             }
 

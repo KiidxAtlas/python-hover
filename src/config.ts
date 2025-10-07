@@ -64,4 +64,12 @@ export class ConfigurationManager {
     public get telemetryEnabled(): boolean {
         return this.config.telemetry;
     }
+
+    /**
+     * Get a configuration value by key with optional default
+     */
+    public getValue<T>(key: string, defaultValue: T): T {
+        const vscodeConfig = vscode.workspace.getConfiguration('pythonHover');
+        return vscodeConfig.get(key, defaultValue);
+    }
 }

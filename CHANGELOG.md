@@ -6,37 +6,53 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
-# Changelog
+## [0.3.2] - 2025-10-06
 
-All notable changes to the Python Hover extension will be documented in this file.
+### ✨ Added
 
----
-
-## [0.3.2] - 2025-01-06
-
-### Added
-
-- **TensorFlow Support**: Added Intersphinx inventory for TensorFlow machine learning framework (tf alias)
+- **Status Bar Integration**: Real-time cache size indicator in VS Code status bar
+  - Shows cache size (e.g., "5.2MB") with automatic updates every 30 seconds
+  - Click to view detailed cache statistics (file count, size, location)
+  - Quick actions: Clear Cache, Open Location
+- **Request Timeouts**: All HTTP requests now timeout after 10 seconds (configurable)
+  - New setting: `pythonHover.requestTimeout` (1-60 seconds, default: 10)
+  - Prevents extension from hanging on slow/offline documentation sites
+  - User-Agent header added to all requests
+- **Centralized Logging**: New logger infrastructure with debug control
+  - New setting: `pythonHover.enableDebugLogging` (boolean, default: false)
+  - Replaces console.log statements with controlled logging
+- **Test Infrastructure**: Complete test suite with 10 passing tests
+  - SymbolResolver tests (6 tests): dotted access, builtins, keywords, dunder methods
+  - InventoryManager tests (4 tests): third-party libraries, stdlib fallback
 - **PyTorch Support**: Added Intersphinx inventory for PyTorch deep learning framework (torch alias)
-- **OpenCV Support**: Added Intersphinx inventory for computer vision library (cv2 alias)
 - **aiohttp Support**: Added Intersphinx inventory for async HTTP client/server
-- **httpx Support**: Added Intersphinx inventory for modern HTTP client
 - **Click Support**: Added Intersphinx inventory for CLI creation framework
 
-### Improvements
+### 🔧 Fixed
 
-- Enhanced fallback URLs for all 6 newly supported libraries
-- Updated library count to 23+ total third-party libraries
-- Improved README documentation with better library categorization
+- **PyTorch URL**: Fixed Intersphinx URL (now uses pytorch.org/docs/stable)
+- **Click URL**: Fixed Intersphinx URL (now uses /en/stable/ path)
+- **Removed Broken Libraries**: Removed TensorFlow, OpenCV, and httpx (no Intersphinx support available)
+- Fixed duplicate configManager declaration in extension.ts
+
+### 📈 Improvements
+
+- Enhanced fallback URLs for verified working libraries
+- Updated library count to 19+ total third-party libraries (all tested and working)
+- Improved README documentation with accurate library categorization
 - Removed deprecated `collapseLongExamples` configuration reference
+- All Intersphinx URLs verified and functional
+- Status bar updates automatically after cache operations
+- Graceful error handling for network timeouts
 
-### Documentation
+### 📚 Documentation
 
-- Fixed version inconsistencies in README (now correctly shows 0.3.2)
-- Removed duplicate "Beautiful, Customizable Interface" section
+- Fixed version inconsistencies in README
+- Added GIF demo to README (media/media.gif)
+- Removed duplicate sections in README
 - Clarified asyncio as standard library (not third-party)
-- Removed missing demo.gif reference
-- Updated library categories: Machine Learning, Computer Vision, HTTP & Async, CLI
+- Updated library categories: Machine Learning, HTTP & Async, CLI
+- Comprehensive test documentation
 
 ---
 

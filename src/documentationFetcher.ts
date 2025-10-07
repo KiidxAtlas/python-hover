@@ -41,15 +41,10 @@ function getModuleDocumentationUrl(moduleName: string): string {
         'selenium': 'https://www.selenium.dev/selenium/docs/api/py/',
         'pillow': 'https://pillow.readthedocs.io/en/stable/',
         'pil': 'https://pillow.readthedocs.io/en/stable/',
-        'tensorflow': 'https://www.tensorflow.org/api_docs/python/',
-        'tf': 'https://www.tensorflow.org/api_docs/python/',
         'torch': 'https://pytorch.org/docs/stable/',
         'pytorch': 'https://pytorch.org/docs/stable/',
-        'cv2': 'https://docs.opencv.org/4.x/',
-        'opencv': 'https://docs.opencv.org/4.x/',
         'aiohttp': 'https://docs.aiohttp.org/en/stable/',
-        'httpx': 'https://www.python-httpx.org/',
-        'click': 'https://click.palletsprojects.com/',
+        'click': 'https://click.palletsprojects.com/en/stable/',
     };
 
     return moduleUrls[moduleName] || `https://pypi.org/project/${moduleName}/`;
@@ -184,16 +179,34 @@ export class DocumentationFetcher {
         try {
             const baseUrl = 'https://docs.python.org/3/' + mapping.url;
             console.log(`[PythonHover] Fetching from direct URL: ${baseUrl}`);
-            const response = await fetch(baseUrl);
-            if (!response.ok) {
-                throw new Error(`Failed to fetch documentation: ${response.status}`);
+            
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 10000);
+            
+            try {
+                const response = await fetch(baseUrl, {
+                    signal: controller.signal,
+                    headers: { 'User-Agent': 'VSCode-Python-Hover-Extension' }
+                });
+                
+                clearTimeout(timeoutId);
+                
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch documentation: ${response.status}`);
+                }
+
+                const html = await response.text();
+                const snippet = await this.extractDirectMappingContent(html, mapping, symbol, maxLines);
+
+                await this.cacheManager.set(cacheKey, snippet);
+                return snippet;
+            } catch (fetchError: any) {
+                clearTimeout(timeoutId);
+                if (fetchError.name === 'AbortError') {
+                    throw new Error(`Documentation fetch timed out after 10 seconds: ${baseUrl}`);
+                }
+                throw fetchError;
             }
-
-            const html = await response.text();
-            const snippet = await this.extractDirectMappingContent(html, mapping, symbol, maxLines);
-
-            await this.cacheManager.set(cacheKey, snippet);
-            return snippet;
         } catch (error) {
             console.error(`[PythonHover] Error fetching direct mapping for ${symbol}:`, error);
 
@@ -257,24 +270,43 @@ export class DocumentationFetcher {
         const url = this.buildFullUrl(entry);
         console.log(`[PythonHover] Fetching documentation from: ${url}`);
 
-        const response = await fetch(url);
-        if (!response.ok) {
-            throw new Error(`Failed to fetch documentation: ${response.status}`);
+        // Add timeout to prevent hanging
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+
+        try {
+            const response = await fetch(url, { 
+                signal: controller.signal,
+                headers: { 'User-Agent': 'VSCode-Python-Hover-Extension' }
+            });
+            
+            clearTimeout(timeoutId);
+            
+            if (!response.ok) {
+                throw new Error(`Failed to fetch documentation: ${response.status}`);
+            }
+
+            const html = await response.text();
+            console.log(`[PythonHover] Fetched HTML length: ${html.length} characters`);
+
+            const snippet = this.extractRelevantSection(html, entry.anchor, maxLines, url, entry.name);
+            console.log(`[PythonHover] Extracted snippet length: ${snippet.length} characters`);
+            console.log(`[PythonHover] Snippet preview: ${snippet.substring(0, 200)}...`);
+
+            return {
+                title: entry.name,
+                content: snippet,
+                url: url,
+                anchor: entry.anchor
+            };
+        } catch (error: any) {
+            clearTimeout(timeoutId);
+            
+            if (error.name === 'AbortError') {
+                throw new Error(`Documentation fetch timed out after 10 seconds: ${url}`);
+            }
+            throw error;
         }
-
-        const html = await response.text();
-        console.log(`[PythonHover] Fetched HTML length: ${html.length} characters`);
-
-        const snippet = this.extractRelevantSection(html, entry.anchor, maxLines, url, entry.name);
-        console.log(`[PythonHover] Extracted snippet length: ${snippet.length} characters`);
-        console.log(`[PythonHover] Snippet preview: ${snippet.substring(0, 200)}...`);
-
-        return {
-            title: entry.name,
-            content: snippet,
-            url: url,
-            anchor: entry.anchor
-        };
     }
 
     private buildFullUrl(entry: InventoryEntry): string {

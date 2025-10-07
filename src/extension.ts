@@ -4,12 +4,17 @@ import { ConfigurationManager } from './config';
 import { PythonHoverProvider } from './hoverProvider';
 import { InventoryManager } from './inventory';
 import { VersionDetector } from './versionDetector';
+import { Logger } from './logger';
 
 export function activate(context: vscode.ExtensionContext) {
-    console.log('[PythonHover] 🐍 Extension activating...');
+    // Initialize configuration first
+    const configManager = new ConfigurationManager();
+    
+    // Initialize logger with configuration
+    const logger = Logger.getInstance(configManager);
+    logger.info('🐍 Extension activating...');
 
     // Initialize managers
-    const configManager = new ConfigurationManager();
     const cacheManager = new CacheManager(context.globalStorageUri);
     const inventoryManager = new InventoryManager(cacheManager);
     const versionDetector = new VersionDetector(configManager);
@@ -34,18 +39,90 @@ export function activate(context: vscode.ExtensionContext) {
         dispose: () => hoverProvider.dispose()
     });
 
+    // Create status bar item
+    const statusBarItem = vscode.window.createStatusBarItem(
+        vscode.StatusBarAlignment.Right,
+        100
+    );
+    
+    statusBarItem.text = '$(database) Python Docs';
+    statusBarItem.tooltip = 'Python Hover: Click to view cache info';
+    statusBarItem.command = 'pythonHover.showCacheInfo';
+    statusBarItem.show();
+    
+    context.subscriptions.push(statusBarItem);
+    
+    // Function to update status bar with cache stats
+    async function updateStatusBar() {
+        try {
+            const stats = await cacheManager.getStats();
+            if (stats && stats.totalSize !== undefined) {
+                const sizeMB = (stats.totalSize / (1024 * 1024)).toFixed(1);
+                statusBarItem.text = `$(database) ${sizeMB}MB`;
+                statusBarItem.tooltip = `Python Hover Cache\n${stats.fileCount} files • ${sizeMB}MB\nClick for details`;
+            }
+        } catch (error) {
+            logger.error('Failed to update status bar:', error);
+            statusBarItem.text = '$(database) Python Docs';
+        }
+    }
+    
+    // Update status bar every 30 seconds
+    const statusBarInterval = setInterval(updateStatusBar, 30000);
+    context.subscriptions.push({
+        dispose: () => clearInterval(statusBarInterval)
+    });
+    
+    // Initial update
+    updateStatusBar();
+    
+    // Register command to show cache info
+    context.subscriptions.push(
+        vscode.commands.registerCommand('pythonHover.showCacheInfo', async () => {
+            try {
+                const stats = await cacheManager.getStats();
+                const sizeMB = (stats.totalSize / (1024 * 1024)).toFixed(2);
+                const sizeKB = (stats.totalSize / 1024).toFixed(0);
+                
+                const message = `📦 **Python Hover Cache**\n\n` +
+                    `📁 Files: ${stats.fileCount}\n` +
+                    `💾 Size: ${sizeMB} MB (${sizeKB} KB)\n` +
+                    `📍 Location: ${stats.cacheDir || 'Global storage'}\n\n` +
+                    `Cache includes documentation snippets and Intersphinx inventories for faster hover responses.`;
+                
+                const action = await vscode.window.showInformationMessage(
+                    message,
+                    'Clear Cache',
+                    'Open Location',
+                    'Close'
+                );
+                
+                if (action === 'Clear Cache') {
+                    await vscode.commands.executeCommand('pythonHover.clearCache');
+                    updateStatusBar();
+                } else if (action === 'Open Location' && stats.cacheDir) {
+                    await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(stats.cacheDir));
+                }
+            } catch (error) {
+                logger.error('Failed to show cache info:', error);
+                vscode.window.showErrorMessage('Failed to retrieve cache information');
+            }
+        })
+    );
+
     // Register clear cache command
     context.subscriptions.push(
         vscode.commands.registerCommand('pythonHover.clearCache', async () => {
             try {
                 const stats = await cacheManager.clear();
                 await inventoryManager.invalidateCache();
+                updateStatusBar(); // Update status bar after clearing cache
                 vscode.window.showInformationMessage(
                     `✅ Cache cleared! Deleted ${stats.filesDeleted} files.`
                 );
             } catch (error) {
                 vscode.window.showErrorMessage(`❌ Failed to clear cache: ${error}`);
-                console.error('[PythonHover] Cache clear error:', error);
+                logger.error('Cache clear error:', error);
             }
         })
     );

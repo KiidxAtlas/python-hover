@@ -108,6 +108,40 @@ export class CacheManager {
         }
     }
 
+    public async getStats(): Promise<{
+        fileCount: number;
+        totalSize: number;
+        cacheDir: string;
+    }> {
+        try {
+            await this.ensureCacheDir();
+            const files = await fs.readdir(this.cacheDir);
+            let totalSize = 0;
+
+            for (const file of files) {
+                try {
+                    const filePath = path.join(this.cacheDir, file);
+                    const stats = await fs.stat(filePath);
+                    totalSize += stats.size;
+                } catch (error) {
+                    // Skip files that can't be read
+                }
+            }
+
+            return {
+                fileCount: files.length,
+                totalSize,
+                cacheDir: this.cacheDir
+            };
+        } catch (error) {
+            return {
+                fileCount: 0,
+                totalSize: 0,
+                cacheDir: this.cacheDir
+            };
+        }
+    }
+
     // Helper methods for common cache duration calculations
     public static daysToMs(days: number): number {
         return days * 24 * 60 * 60 * 1000;
