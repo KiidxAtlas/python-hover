@@ -179,18 +179,18 @@ export class DocumentationFetcher {
         try {
             const baseUrl = 'https://docs.python.org/3/' + mapping.url;
             console.log(`[PythonHover] Fetching from direct URL: ${baseUrl}`);
-            
+
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 10000);
-            
+
             try {
                 const response = await fetch(baseUrl, {
                     signal: controller.signal,
                     headers: { 'User-Agent': 'VSCode-Python-Hover-Extension' }
                 });
-                
+
                 clearTimeout(timeoutId);
-                
+
                 if (!response.ok) {
                     throw new Error(`Failed to fetch documentation: ${response.status}`);
                 }
@@ -275,13 +275,13 @@ export class DocumentationFetcher {
         const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
 
         try {
-            const response = await fetch(url, { 
+            const response = await fetch(url, {
                 signal: controller.signal,
                 headers: { 'User-Agent': 'VSCode-Python-Hover-Extension' }
             });
-            
+
             clearTimeout(timeoutId);
-            
+
             if (!response.ok) {
                 throw new Error(`Failed to fetch documentation: ${response.status}`);
             }
@@ -301,7 +301,7 @@ export class DocumentationFetcher {
             };
         } catch (error: any) {
             clearTimeout(timeoutId);
-            
+
             if (error.name === 'AbortError') {
                 throw new Error(`Documentation fetch timed out after 10 seconds: ${url}`);
             }

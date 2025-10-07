@@ -3,13 +3,13 @@ import { CacheManager } from './cache';
 import { ConfigurationManager } from './config';
 import { PythonHoverProvider } from './hoverProvider';
 import { InventoryManager } from './inventory';
-import { VersionDetector } from './versionDetector';
 import { Logger } from './logger';
+import { VersionDetector } from './versionDetector';
 
 export function activate(context: vscode.ExtensionContext) {
     // Initialize configuration first
     const configManager = new ConfigurationManager();
-    
+
     // Initialize logger with configuration
     const logger = Logger.getInstance(configManager);
     logger.info('🐍 Extension activating...');
@@ -44,14 +44,14 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.StatusBarAlignment.Right,
         100
     );
-    
+
     statusBarItem.text = '$(database) Python Docs';
     statusBarItem.tooltip = 'Python Hover: Click to view cache info';
     statusBarItem.command = 'pythonHover.showCacheInfo';
     statusBarItem.show();
-    
+
     context.subscriptions.push(statusBarItem);
-    
+
     // Function to update status bar with cache stats
     async function updateStatusBar() {
         try {
@@ -66,16 +66,16 @@ export function activate(context: vscode.ExtensionContext) {
             statusBarItem.text = '$(database) Python Docs';
         }
     }
-    
+
     // Update status bar every 30 seconds
     const statusBarInterval = setInterval(updateStatusBar, 30000);
     context.subscriptions.push({
         dispose: () => clearInterval(statusBarInterval)
     });
-    
+
     // Initial update
     updateStatusBar();
-    
+
     // Register command to show cache info
     context.subscriptions.push(
         vscode.commands.registerCommand('pythonHover.showCacheInfo', async () => {
@@ -83,20 +83,20 @@ export function activate(context: vscode.ExtensionContext) {
                 const stats = await cacheManager.getStats();
                 const sizeMB = (stats.totalSize / (1024 * 1024)).toFixed(2);
                 const sizeKB = (stats.totalSize / 1024).toFixed(0);
-                
+
                 const message = `📦 **Python Hover Cache**\n\n` +
                     `📁 Files: ${stats.fileCount}\n` +
                     `💾 Size: ${sizeMB} MB (${sizeKB} KB)\n` +
                     `📍 Location: ${stats.cacheDir || 'Global storage'}\n\n` +
                     `Cache includes documentation snippets and Intersphinx inventories for faster hover responses.`;
-                
+
                 const action = await vscode.window.showInformationMessage(
                     message,
                     'Clear Cache',
                     'Open Location',
                     'Close'
                 );
-                
+
                 if (action === 'Clear Cache') {
                     await vscode.commands.executeCommand('pythonHover.clearCache');
                     updateStatusBar();

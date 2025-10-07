@@ -264,9 +264,9 @@ export class InventoryManager {
                 signal: controller.signal,
                 headers: { 'User-Agent': 'VSCode-Python-Hover-Extension' }
             });
-            
+
             clearTimeout(timeoutId);
-            
+
             if (!response.ok) {
                 throw new Error(`Failed to fetch inventory: ${response.status} ${response.statusText}`);
             }
@@ -293,9 +293,9 @@ export class InventoryManager {
                 signal: controller.signal,
                 headers: { 'User-Agent': 'VSCode-Python-Hover-Extension' }
             });
-            
+
             clearTimeout(timeoutId);
-            
+
             if (!response.ok) {
                 throw new Error(`Failed to fetch inventory: ${response.status} ${response.statusText}`);
             }

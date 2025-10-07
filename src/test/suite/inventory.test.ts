@@ -1,6 +1,6 @@
 import * as assert from 'assert';
-import { InventoryManager } from '../../inventory';
 import { CacheManager } from '../../cache';
+import { InventoryManager } from '../../inventory';
 
 suite('InventoryManager Test Suite', () => {
     test('Should resolve torch.zeros correctly', async () => {
@@ -9,7 +9,7 @@ suite('InventoryManager Test Suite', () => {
 
         // This tests the fix we made - torch should map to torch, not pytorch
         const entry = await inventory.resolveSymbol('zeros', '3.11', 'torch');
-        
+
         assert.ok(entry, 'Should find torch.zeros');
         assert.ok(entry!.uri.includes('pytorch.org'), 'Should point to PyTorch docs');
     });
@@ -19,7 +19,7 @@ suite('InventoryManager Test Suite', () => {
         const inventory = new InventoryManager(cache);
 
         const entry = await inventory.resolveSymbol('array', '3.11', 'numpy');
-        
+
         assert.ok(entry, 'Should find numpy.array');
         assert.ok(entry!.uri.includes('numpy.org'), 'Should point to NumPy docs');
     });
@@ -29,7 +29,7 @@ suite('InventoryManager Test Suite', () => {
         const inventory = new InventoryManager(cache);
 
         const entry = await inventory.resolveSymbol('open', '3.11', 'unknown_lib');
-        
+
         assert.ok(entry, 'Should find builtin open() via fallback');
         assert.ok(entry!.uri.includes('docs.python.org'), 'Should point to Python docs');
     });
@@ -39,7 +39,7 @@ suite('InventoryManager Test Suite', () => {
         const inventory = new InventoryManager(cache);
 
         const entry = await inventory.resolveSymbol('__init__', '3.11');
-        
+
         assert.ok(entry, 'Should find __init__ special method');
     });
 });

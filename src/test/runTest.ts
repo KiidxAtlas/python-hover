@@ -1,5 +1,5 @@
-import * as path from 'path';
 import { runTests } from '@vscode/test-electron';
+import * as path from 'path';
 
 async function main() {
     try {
@@ -10,8 +10,8 @@ async function main() {
         const extensionTestsPath = path.resolve(__dirname, './suite/index');
 
         // Download VS Code, unzip it and run the integration test
-        await runTests({ 
-            extensionDevelopmentPath, 
+        await runTests({
+            extensionDevelopmentPath,
             extensionTestsPath,
             launchArgs: ['--disable-extensions'] // Run without other extensions
         });
