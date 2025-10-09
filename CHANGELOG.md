@@ -6,6 +6,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.4.1] - 2025-10-09
+
+### ✨ New Features
+
+- **Python Version Display**: Shows detected Python version at bottom-right of all hover tooltips
+  - Displays version from active Python environment (e.g., "Python 3.13")
+  - Updates automatically when switching Python interpreters
+  - Helps identify which Python version documentation is being used
+  - Added to all hover types: standard library, third-party, custom docs, and module hovers
+
+### 🔧 Configuration Changes
+
+- **Auto-Detect Libraries Default Changed**: `pythonHover.experimental.autoDetectLibraries` now defaults to `false`
+  - Changed from `true` to `false` to prevent performance impact by default
+  - Users can enable manually if needed for third-party library auto-detection
+  - Reduces startup time and improves responsiveness for most users
+  - Custom libraries still work without enabling this setting
+
+### 📚 Documentation
+
+- **Demo File Added**: New `demo.py` file showcasing all extension features
+  - 18 comprehensive sections covering built-ins, standard library, third-party libs
+  - Testing instructions for all features
+  - Library discovery section to check installed/supported libraries
+  - Interactive examples for keywords, methods, classes, and special methods
+  - Type hints, decorators, file operations, and more
+
+### 📈 Improvements
+
+- Better visual separation of Python version info in hover tooltips
+- Consistent version display across all hover types
+- Improved hover tooltip formatting with right-aligned version info
+
+---
+
 ## [0.4.0] - 2025-10-08
 
 ### 🎉 Major Features
