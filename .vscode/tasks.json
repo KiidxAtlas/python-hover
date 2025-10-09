@@ -1,4 +1,4 @@
-{
+'{
     "version": "2.0.0",
     "tasks": [
         {
@@ -8,18 +8,18 @@
                 "kind": "build",
                 "isDefault": true
             },
-            "problemMatcher": "$tsc",
+            "problemMatcher": [],
             "label": "npm: compile",
-            "detail": "tsc -p ./"
+            "detail": "webpack"
         },
         {
             "type": "npm",
             "script": "watch",
             "group": "build",
-            "problemMatcher": "$tsc-watch",
+            "problemMatcher": [],
             "isBackground": true,
             "label": "npm: watch",
-            "detail": "tsc -watch -p ./"
+            "detail": "webpack --watch"
         }
     ]
 }

@@ -4,6 +4,8 @@ const fetch = nodeFetch.default || nodeFetch;
 
 import * as pako from 'pako';
 import { CacheManager } from './cache';
+import { ConfigurationManager } from './config';
+import { PackageDetector } from './packageDetector';
 
 export interface InventoryEntry {
     name: string;
@@ -18,6 +20,12 @@ export interface LibraryInventoryConfig {
     name: string;
     inventoryUrl: string;
     baseUrl: string; // Base URL for resolving relative links
+    version?: string; // Optional: specific version
+}
+
+export interface VersionedInventoryConfig extends LibraryInventoryConfig {
+    version: string;
+    isExactMatch: boolean; // true if exact version match, false if fallback
 }
 
 export class InventoryManager {
@@ -140,7 +148,46 @@ export class InventoryManager {
         },
     ];
 
-    constructor(private cacheManager: CacheManager) { }
+    constructor(
+        private cacheManager: CacheManager,
+        private configManager?: ConfigurationManager,
+        private packageDetector?: PackageDetector
+    ) { }
+
+    /**
+     * Get all library configurations (hardcoded + custom)
+     */
+    private getAllLibraryConfigs(): LibraryInventoryConfig[] {
+        const customLibs: LibraryInventoryConfig[] = this.configManager
+            ? this.configManager.customLibraries
+            : [];
+
+        // Merge custom libraries with hardcoded ones
+        // Custom libraries take precedence if there's a name collision
+        const allLibs = [...InventoryManager.THIRD_PARTY_LIBRARIES];
+
+        for (const customLib of customLibs) {
+            // Validate custom library config
+            if (!customLib.name || !customLib.inventoryUrl || !customLib.baseUrl) {
+                console.warn(`[PythonHover] Invalid custom library config, skipping:`, customLib);
+                continue;
+            }
+
+            // Check if library with same name exists
+            const existingIndex = allLibs.findIndex(lib => lib.name === customLib.name);
+            if (existingIndex !== -1) {
+                // Replace existing with custom
+                console.log(`[PythonHover] Overriding built-in config for library: ${customLib.name}`);
+                allLibs[existingIndex] = customLib;
+            } else {
+                // Add new custom library
+                console.log(`[PythonHover] Adding custom library: ${customLib.name}`);
+                allLibs.push(customLib);
+            }
+        }
+
+        return allLibs;
+    }
 
     public async getInventory(version: string): Promise<Map<string, InventoryEntry>> {
         const cacheKey = `inventory-${version}-v8`; // v8 for enhanced cache invalidation support
@@ -204,10 +251,25 @@ export class InventoryManager {
     }
 
     /**
-     * Get inventory for a third-party library
+     * Get inventory for a third-party library with version awareness
+     * If packageDetector is available, tries to use installed package version
      */
-    public async getThirdPartyInventory(libraryName: string): Promise<Map<string, InventoryEntry> | null> {
-        const config = InventoryManager.THIRD_PARTY_LIBRARIES.find(lib => lib.name === libraryName);
+    public async getThirdPartyInventory(
+        libraryName: string,
+        pythonPath?: string
+    ): Promise<Map<string, InventoryEntry> | null> {
+        // Try version-aware lookup if package detector is available
+        if (this.packageDetector && pythonPath) {
+            const versionedConfig = await this.getVersionedLibraryConfig(libraryName, pythonPath);
+            if (versionedConfig) {
+                console.log(`[PythonHover] Using ${versionedConfig.isExactMatch ? 'exact' : 'fallback'} version ${versionedConfig.version} for ${libraryName}`);
+                return await this.fetchVersionedInventory(versionedConfig);
+            }
+        }
+
+        // Fallback to standard lookup
+        const allLibs = this.getAllLibraryConfigs();
+        const config = allLibs.find(lib => lib.name === libraryName);
 
         if (!config) {
             console.log(`[PythonHover] No inventory configuration for library: ${libraryName}`);
@@ -604,13 +666,18 @@ export class InventoryManager {
         };
     }
 
-    public async resolveSymbol(symbol: string, version: string, context?: string): Promise<InventoryEntry | null> {
+    public async resolveSymbol(
+        symbol: string,
+        version: string,
+        context?: string,
+        pythonPath?: string
+    ): Promise<InventoryEntry | null> {
         // If we have a context (e.g., 'numpy'), check third-party library inventories first
         if (context) {
             const baseModule = context.split('.')[0];
             console.log(`[PythonHover] Checking third-party library: ${baseModule} for symbol: ${symbol}`);
 
-            const thirdPartyInventory = await this.getThirdPartyInventory(baseModule);
+            const thirdPartyInventory = await this.getThirdPartyInventory(baseModule, pythonPath);
             if (thirdPartyInventory) {
                 // Extract the method name from the symbol (in case it's already qualified like "torch.zeros")
                 const methodName = symbol.includes('.') ? symbol.split('.').pop()! : symbol;
@@ -944,5 +1011,289 @@ export class InventoryManager {
         });
 
         return results;
+    }
+
+    /**
+     * Get version-aware library configuration based on installed package
+     */
+    private async getVersionedLibraryConfig(
+        libraryName: string,
+        pythonPath: string
+    ): Promise<VersionedInventoryConfig | null> {
+        if (!this.packageDetector) {
+            return null;
+        }
+
+        try {
+            // Get installed package version
+            const installedVersion = await this.packageDetector.getPackageVersion(pythonPath, libraryName);
+
+            if (!installedVersion) {
+                console.log(`[PythonHover] Package ${libraryName} not installed in environment`);
+                return null;
+            }
+
+            console.log(`[PythonHover] Found ${libraryName} version ${installedVersion} in environment`);
+
+            // Try to build version-specific URL
+            const versionedConfig = this.buildVersionedConfig(libraryName, installedVersion);
+
+            if (versionedConfig) {
+                // Test if the exact version inventory exists
+                const exists = await this.testInventoryUrl(versionedConfig.inventoryUrl);
+                if (exists) {
+                    return {
+                        name: versionedConfig.name,
+                        inventoryUrl: versionedConfig.inventoryUrl,
+                        baseUrl: versionedConfig.baseUrl,
+                        version: installedVersion,
+                        isExactMatch: true
+                    };
+                }
+
+                // Try fallback to closest version
+                const fallbackConfig = await this.findClosestVersion(libraryName, installedVersion);
+                if (fallbackConfig && fallbackConfig.version) {
+                    return {
+                        name: fallbackConfig.name,
+                        inventoryUrl: fallbackConfig.inventoryUrl,
+                        baseUrl: fallbackConfig.baseUrl,
+                        version: fallbackConfig.version,
+                        isExactMatch: false
+                    };
+                }
+            }
+        } catch (error) {
+            console.error(`[PythonHover] Error getting versioned config for ${libraryName}:`, error);
+        }
+
+        return null;
+    }
+
+    /**
+     * Build version-specific inventory configuration
+     */
+    private buildVersionedConfig(libraryName: string, version: string): LibraryInventoryConfig | null {
+        // Known URL patterns for popular libraries
+        const versionPatterns: Record<string, (v: string) => LibraryInventoryConfig> = {
+            'numpy': (v) => ({
+                name: 'numpy',
+                inventoryUrl: `https://numpy.org/doc/${v}/objects.inv`,
+                baseUrl: `https://numpy.org/doc/${v}/`,
+                version: v
+            }),
+            'pandas': (v) => ({
+                name: 'pandas',
+                inventoryUrl: `https://pandas.pydata.org/pandas-docs/version/${v}/objects.inv`,
+                baseUrl: `https://pandas.pydata.org/pandas-docs/version/${v}/`,
+                version: v
+            }),
+            'scipy': (v) => ({
+                name: 'scipy',
+                inventoryUrl: `https://docs.scipy.org/doc/scipy-${v}/objects.inv`,
+                baseUrl: `https://docs.scipy.org/doc/scipy-${v}/`,
+                version: v
+            }),
+            'matplotlib': (v) => ({
+                name: 'matplotlib',
+                inventoryUrl: `https://matplotlib.org/${v}/objects.inv`,
+                baseUrl: `https://matplotlib.org/${v}/`,
+                version: v
+            }),
+            'requests': (v) => ({
+                name: 'requests',
+                inventoryUrl: `https://docs.python-requests.org/en/v${v}/objects.inv`,
+                baseUrl: `https://docs.python-requests.org/en/v${v}/`,
+                version: v
+            }),
+            'sklearn': (v) => ({
+                name: 'sklearn',
+                inventoryUrl: `https://scikit-learn.org/${v}/objects.inv`,
+                baseUrl: `https://scikit-learn.org/${v}/`,
+                version: v
+            }),
+            'torch': (v) => ({
+                name: 'torch',
+                inventoryUrl: `https://pytorch.org/docs/${v}/objects.inv`,
+                baseUrl: `https://pytorch.org/docs/${v}/`,
+                version: v
+            }),
+        };
+
+        const pattern = versionPatterns[libraryName];
+        if (pattern) {
+            // Try full version first (e.g., "2.1.0")
+            return pattern(version);
+        }
+
+        return null;
+    }
+
+    /**
+     * Test if an inventory URL is accessible
+     */
+    private async testInventoryUrl(url: string): Promise<boolean> {
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+
+            const response = await fetch(url, {
+                method: 'HEAD',
+                signal: controller.signal,
+                headers: { 'User-Agent': 'VSCode-Python-Hover-Extension' }
+            });
+
+            clearTimeout(timeoutId);
+            return response.ok;
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * Find closest available version if exact match not found
+     */
+    private async findClosestVersion(libraryName: string, installedVersion: string): Promise<LibraryInventoryConfig | null> {
+        const [major, minor] = installedVersion.split('.').map(Number);
+
+        // Try minor version variations (downgrade patch version)
+        const tryVersions = [
+            `${major}.${minor}.0`,
+            `${major}.${minor}`,
+            installedVersion.split('.').slice(0, 2).join('.'), // Major.Minor only
+        ];
+
+        // Also try "stable" or "latest" endpoints
+        const fallbackPatterns: Record<string, LibraryInventoryConfig> = {
+            'numpy': {
+                name: 'numpy',
+                inventoryUrl: 'https://numpy.org/doc/stable/objects.inv',
+                baseUrl: 'https://numpy.org/doc/stable/',
+                version: 'stable'
+            },
+            'pandas': {
+                name: 'pandas',
+                inventoryUrl: 'https://pandas.pydata.org/docs/objects.inv',
+                baseUrl: 'https://pandas.pydata.org/docs/',
+                version: 'latest'
+            },
+            'scipy': {
+                name: 'scipy',
+                inventoryUrl: 'https://docs.scipy.org/doc/scipy/objects.inv',
+                baseUrl: 'https://docs.scipy.org/doc/scipy/',
+                version: 'stable'
+            },
+            'torch': {
+                name: 'torch',
+                inventoryUrl: 'https://pytorch.org/docs/stable/objects.inv',
+                baseUrl: 'https://pytorch.org/docs/stable/',
+                version: 'stable'
+            },
+        };
+
+        // Try specific versions first
+        for (const tryVersion of tryVersions) {
+            const config = this.buildVersionedConfig(libraryName, tryVersion);
+            if (config && await this.testInventoryUrl(config.inventoryUrl)) {
+                console.log(`[PythonHover] Found fallback version ${tryVersion} for ${libraryName}`);
+                return config;
+            }
+        }
+
+        // Fall back to stable/latest
+        const fallback = fallbackPatterns[libraryName];
+        if (fallback && await this.testInventoryUrl(fallback.inventoryUrl)) {
+            console.log(`[PythonHover] Using fallback '${fallback.version}' docs for ${libraryName}`);
+            return fallback;
+        }
+
+        return null;
+    }
+
+    /**
+     * Fetch inventory for versioned configuration
+     */
+    private async fetchVersionedInventory(config: VersionedInventoryConfig): Promise<Map<string, InventoryEntry> | null> {
+        const cacheKey = `inventory-${config.name}-${config.version}-v1`;
+        const maxAge = CacheManager.hoursToMs(24 * 7); // 7 days
+
+        try {
+            // Check cache first
+            const cached = await this.cacheManager.get<Record<string, InventoryEntry>>(cacheKey);
+
+            if (cached) {
+                const isExpired = await this.cacheManager.isExpired(cacheKey, maxAge);
+
+                if (!isExpired) {
+                    console.log(`[PythonHover] Using cached versioned inventory for ${config.name} ${config.version}`);
+                    return new Map(Object.entries(cached.data));
+                }
+            }
+
+            console.log(`[PythonHover] Fetching versioned inventory for ${config.name} ${config.version}`);
+            const inventory = await this.fetchThirdPartyInventory(config);
+
+            // Convert Map to Object for storage
+            const inventoryObj: Record<string, InventoryEntry> = {};
+            inventory.forEach((value, key) => {
+                inventoryObj[key] = value;
+            });
+
+            await this.cacheManager.set(cacheKey, inventoryObj);
+            return inventory;
+        } catch (error) {
+            console.error(`[PythonHover] Failed to fetch versioned inventory for ${config.name}:`, error);
+            // Fall back to cached data if available
+            const cached = await this.cacheManager.get<Record<string, InventoryEntry>>(cacheKey);
+            if (cached) {
+                console.log(`[PythonHover] Using stale cached inventory`);
+                return new Map(Object.entries(cached.data));
+            }
+            return null;
+        }
+    }
+
+    /**
+     * Get all supported libraries (built-in + custom)
+     */
+    public getAllSupportedLibraries(): LibraryInventoryConfig[] {
+        const builtIn = InventoryManager.THIRD_PARTY_LIBRARIES;
+        const customLibs = this.configManager?.customLibraries ?? [];
+        const custom = customLibs.map(lib => ({
+            name: lib.name,
+            inventoryUrl: lib.inventoryUrl,
+            baseUrl: lib.baseUrl
+        }));
+
+        // Combine and deduplicate by name
+        const allLibs = [...builtIn];
+        const existingNames = new Set(builtIn.map(lib => lib.name));
+
+        for (const lib of custom) {
+            if (!existingNames.has(lib.name)) {
+                allLibs.push(lib);
+            }
+        }
+
+        return allLibs.sort((a, b) => a.name.localeCompare(b.name));
+    }
+
+    /**
+     * Get count of supported libraries
+     */
+    public getSupportedLibrariesCount(): { builtIn: number; custom: number; total: number } {
+        const builtIn = InventoryManager.THIRD_PARTY_LIBRARIES.length;
+        const customLibs = this.configManager?.customLibraries ?? [];
+        const custom = customLibs.length;
+
+        // Check for duplicates
+        const builtInNames = new Set(InventoryManager.THIRD_PARTY_LIBRARIES.map(lib => lib.name));
+        const uniqueCustom = customLibs.filter(lib => !builtInNames.has(lib.name)).length;
+
+        return {
+            builtIn,
+            custom: customLibs.length,
+            total: builtIn + uniqueCustom
+        };
     }
 }

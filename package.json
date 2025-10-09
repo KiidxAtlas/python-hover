@@ -3,7 +3,7 @@
     "icon": "media/icon.png",
     "displayName": "🐍 Python Hover - Enhanced Documentation",
     "description": "Instant Python documentation with 300+ constructs, 19+ libraries (NumPy, Pandas, FastAPI, Django, PyTorch, aiohttp, Click), practical examples, and smart context detection. Zero context switching!",
-    "version": "0.3.2",
+    "version": "0.4.1",
     "publisher": "KiidxAtlas",
     "license": "MIT",
     "repository": {
@@ -101,6 +101,11 @@
             {
                 "command": "pythonHover.decreaseFontSize",
                 "title": "Decrease Hover Font Size",
+                "category": "Python Hover"
+            },
+            {
+                "command": "pythonHover.showSupportedLibraries",
+                "title": "Show Supported Libraries",
                 "category": "Python Hover"
             }
         ],
@@ -202,6 +207,53 @@
                     "type": "boolean",
                     "default": false,
                     "description": "Enable telemetry data collection."
+                },
+                "pythonHover.debounceDelay": {
+                    "type": "number",
+                    "default": 150,
+                    "minimum": 0,
+                    "maximum": 1000,
+                    "description": "Delay in milliseconds before showing hover documentation (reduces flicker when moving cursor quickly)."
+                },
+                "pythonHover.versionCacheTTL": {
+                    "type": "number",
+                    "default": 30,
+                    "minimum": 5,
+                    "maximum": 300,
+                    "description": "How long to cache Python version detection (in seconds). Lower values detect environment changes faster, higher values improve performance."
+                },
+                "pythonHover.customLibraries": {
+                    "type": "array",
+                    "default": [],
+                    "description": "Custom library documentation sources. Add your own libraries with Intersphinx inventory URLs.",
+                    "items": {
+                        "type": "object",
+                        "required": [
+                            "name",
+                            "inventoryUrl",
+                            "baseUrl"
+                        ],
+                        "properties": {
+                            "name": {
+                                "type": "string",
+                                "description": "Library name (e.g., 'mylib')"
+                            },
+                            "inventoryUrl": {
+                                "type": "string",
+                                "description": "URL to the Intersphinx objects.inv file"
+                            },
+                            "baseUrl": {
+                                "type": "string",
+                                "description": "Base URL for documentation (e.g., 'https://mylib.readthedocs.io/en/latest/')"
+                            }
+                        }
+                    },
+                    "markdownDescription": "Add custom library documentation sources. Each entry should have:\n\n- `name`: Library name (e.g., 'mylib')\n- `inventoryUrl`: URL to objects.inv file\n- `baseUrl`: Documentation base URL\n\nExample:\n```json\n[\n  {\n    \"name\": \"mylib\",\n    \"inventoryUrl\": \"https://mylib.readthedocs.io/en/latest/objects.inv\",\n    \"baseUrl\": \"https://mylib.readthedocs.io/en/latest/\"\n  }\n]\n```"
+                },
+                "pythonHover.experimental.autoDetectLibraries": {
+                    "type": "boolean",
+                    "default": false,
+                    "markdownDescription": "**⚠️ Experimental**: Automatically detect and fetch documentation for third-party libraries imported in your code. When enabled, the extension will:\n\n- Detect imports from third-party packages\n- Automatically download and parse their Intersphinx inventory files\n- Provide hover documentation for imported symbols\n\nThis feature requires:\n- Libraries to have published `objects.inv` files\n- Python environment with the packages installed (for version detection)\n\n**Note:** This feature is experimental and may impact performance when working with many third-party libraries. Disable if you experience slowdowns."
                 }
             }
         }

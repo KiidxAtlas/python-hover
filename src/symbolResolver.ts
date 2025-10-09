@@ -85,6 +85,13 @@ export class SymbolResolver {
         console.log(`[SymbolResolver] Raw line: ${text}`);
         console.log(`[SymbolResolver] Cursor position: ${position.character}`);
 
+        // Skip if we're inside a comment
+        const commentStart = text.indexOf('#');
+        if (commentStart !== -1 && position.character > commentStart) {
+            console.log(`[SymbolResolver] Inside comment, skipping`);
+            return [];
+        }
+
         // Detect if inside an f-string (simple heuristic: quote before cursor with an 'f' prefix)
         const cursorIndex = position.character;
         const rawLine = text; // preserve original spacing for index calculations
@@ -212,7 +219,9 @@ export class SymbolResolver {
 
         // Check for module imports
         const moduleMatch = this.findModuleContext(document, position, word);
+        console.log(`[SymbolResolver] findModuleContext for "${word}" returned:`, moduleMatch);
         if (moduleMatch) {
+            console.log(`[SymbolResolver] Adding as module: ${moduleMatch}`);
             results.push({
                 symbol: moduleMatch,
                 type: 'module'
@@ -228,9 +237,34 @@ export class SymbolResolver {
             });
         }
 
-        // If no specific type found, return nothing — avoid querying docs for arbitrary words
+        // Only return as a generic symbol if it might be a third-party import
+        // Check if the word is likely to be an imported symbol (not a local variable)
         if (results.length === 0) {
-            return [];
+            // Only treat as potential imported symbol if:
+            // 1. It's in an import statement (definitely an import)
+            // 2. It's a class-like name (PascalCase) followed by () or . (likely class instantiation/access)
+            // 3. It's on the LEFT side of a dot (module/object access like "np.array" or "paths.something")
+            const isInImportContext = /\b(import|from)\b/.test(lineText);
+            const isLikelyClassName = /^[A-Z]/.test(word);
+            const isFollowedByDotOrParen = wordRange && (
+                text.charAt(wordRange.end.character) === '(' ||
+                text.charAt(wordRange.end.character) === '.'
+            );
+
+            // Check if this word is followed by a dot (left side of attribute access)
+            const isLeftOfDot = wordRange && text.charAt(wordRange.end.character) === '.';
+
+            // Only proceed if it looks like an imported symbol
+            if (isInImportContext || (isLikelyClassName && isFollowedByDotOrParen) || isLeftOfDot) {
+                console.log(`[SymbolResolver] Word "${word}" might be an imported symbol (import: ${isInImportContext}, class+call: ${isLikelyClassName && isFollowedByDotOrParen}, leftOfDot: ${isLeftOfDot})`);
+                results.push({
+                    symbol: word,
+                    type: 'class'
+                });
+            } else {
+                console.log(`[SymbolResolver] Word "${word}" doesn't look like an imported symbol, skipping`);
+                return [];
+            }
         }
 
         return results;
@@ -352,15 +386,20 @@ export class SymbolResolver {
         const lines = text.split('\n');
 
         for (const line of lines) {
-            // Check for "import module" or "from module import ..."
-            const importMatch = line.match(/^(?:from\s+(\S+)\s+)?import\s+(.+)$/);
-            if (importMatch) {
-                const fromModule = importMatch[1];
-                const importedItems = importMatch[2];
+            // Check for "from module import ..."
+            const fromImportMatch = line.match(/^from\s+(\S+)\s+import\s+(.+)$/);
+            if (fromImportMatch) {
+                const moduleName = fromImportMatch[1];
 
-                if (importedItems.includes(word)) {
-                    return fromModule ? `${fromModule}.${word}` : word;
+                // Check if we're hovering over the module name itself (e.g., 'jupyter_client' in 'from jupyter_client import ...')
+                if (word === moduleName || moduleName.endsWith('.' + word)) {
+                    console.log(`[SymbolResolver] Detected module name in from statement: ${moduleName}`);
+                    return moduleName;
                 }
+
+                // Otherwise, skip - don't treat "Y" in "from X import Y" as a module
+                // Let the hover provider handle it with the import tracking
+                continue;
             }
 
             // Check for "import module as alias"

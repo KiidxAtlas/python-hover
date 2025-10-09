@@ -3,37 +3,104 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { ConfigurationManager } from './config';
 
+export interface PythonVersionInfo {
+    version: string;
+    pythonPath?: string;
+}
+
 export class VersionDetector {
     constructor(private configManager: ConfigurationManager) { }
 
     public async detectPythonVersion(): Promise<string> {
+        const info = await this.detectPythonVersionInfo();
+        return info.version;
+    }
+
+    public async detectPythonVersionInfo(): Promise<PythonVersionInfo> {
         const configVersion = this.configManager.docsVersion;
 
-        // If explicitly set, use it
+        // If explicitly set, use it (but still try to get Python path)
         if (configVersion !== 'auto') {
-            return configVersion;
+            const pythonPath = await this.getPythonPath();
+            return {
+                version: configVersion,
+                pythonPath: pythonPath || undefined
+            };
         }
 
         // Try different detection strategies
+        const pythonPath = await this.getPythonPath();
         const version =
             await this.getFromPythonExtension() ||
             await this.getFromProjectFiles() ||
             this.getDefaultVersion();
 
-        return this.normalizePythonVersion(version);
+        return {
+            version: this.normalizePythonVersion(version),
+            pythonPath: pythonPath || undefined
+        };
+    }
+
+    /**
+     * Get the Python executable path
+     */
+    private async getPythonPath(): Promise<string | null> {
+        try {
+            const pythonExt = vscode.extensions.getExtension('ms-python.python');
+            if (pythonExt) {
+                if (!pythonExt.isActive) {
+                    await pythonExt.activate();
+                }
+
+                const pythonPath = vscode.workspace.getConfiguration('python').get<string>('defaultInterpreterPath');
+                if (pythonPath) {
+                    return pythonPath;
+                }
+            }
+        } catch (error) {
+            console.error('[VersionDetector] Error getting Python path:', error);
+        }
+        return null;
     }
 
     private async getFromPythonExtension(): Promise<string | null> {
         try {
             // Try to get the active Python interpreter from the Python extension
             const pythonExt = vscode.extensions.getExtension('ms-python.python');
-            if (pythonExt && pythonExt.isActive) {
-                // This would require the Python extension API
-                // For now, we'll return null and implement this later
-                return null;
+            if (pythonExt) {
+                if (!pythonExt.isActive) {
+                    await pythonExt.activate();
+                }
+
+                // Try to get the environment path from the Python extension
+                const pythonPath = vscode.workspace.getConfiguration('python').get<string>('defaultInterpreterPath');
+
+                if (pythonPath) {
+                    console.log(`[PythonHover] Found Python interpreter path: ${pythonPath}`);
+                    // Extract version from path (e.g., python3.11, python3.12)
+                    const versionMatch = pythonPath.match(/python(\d+)\.(\d+)/i);
+                    if (versionMatch) {
+                        return `${versionMatch[1]}.${versionMatch[2]}`;
+                    }
+                }
+
+                // Try getting from the Python extension API (if available)
+                const pythonApi = pythonExt.exports;
+                if (pythonApi && pythonApi.settings) {
+                    const activeEnv = await pythonApi.settings.getExecutionDetails?.();
+                    if (activeEnv?.execCommand) {
+                        const cmd = Array.isArray(activeEnv.execCommand)
+                            ? activeEnv.execCommand[0]
+                            : activeEnv.execCommand;
+                        const versionMatch = cmd.match(/python(\d+)\.(\d+)/i);
+                        if (versionMatch) {
+                            return `${versionMatch[1]}.${versionMatch[2]}`;
+                        }
+                    }
+                }
             }
         } catch (error) {
-            // Python extension not available
+            console.log('[PythonHover] Could not get version from Python extension:', error);
         }
         return null;
     }

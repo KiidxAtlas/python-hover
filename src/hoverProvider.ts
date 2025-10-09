@@ -24,6 +24,8 @@ export class PythonHoverProvider implements vscode.HoverProvider {
     private customDocsLoader: CustomDocumentationLoader;
     private pendingHoverRequests: Map<string, Promise<vscode.Hover | null>>;
     private theme: HoverTheme;
+    private debounceTimers: Map<string, NodeJS.Timeout>;
+    private versionCache: Map<string, { version: string; timestamp: number }>;
 
     constructor(
         private configManager: ConfigurationManager,
@@ -38,9 +40,26 @@ export class PythonHoverProvider implements vscode.HoverProvider {
         this.customDocsLoader = new CustomDocumentationLoader();
         this.pendingHoverRequests = new Map();
         this.theme = new HoverTheme();
+        this.debounceTimers = new Map();
+        this.versionCache = new Map();
 
         // Load custom docs when initialized
         this.loadCustomDocs();
+    }
+
+    /**
+     * Get debounce delay from configuration
+     */
+    private getDebounceDelay(): number {
+        return this.configManager.getValue<number>('debounceDelay', 150);
+    }
+
+    /**
+     * Get version cache TTL from configuration (in milliseconds)
+     */
+    private getVersionCacheTTL(): number {
+        const seconds = this.configManager.getValue<number>('versionCacheTTL', 30);
+        return seconds * 1000; // Convert to milliseconds
     }
 
     /**
@@ -71,6 +90,44 @@ export class PythonHoverProvider implements vscode.HoverProvider {
         await this.loadCustomDocs();
     }
 
+    /**
+     * Get cached Python version for a document
+     * Caches version detection results to avoid repeated file system operations
+     */
+    private async getCachedPythonVersion(document: vscode.TextDocument): Promise<{ version: string; pythonPath?: string }> {
+        const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
+        const cacheKey = workspaceFolder?.uri.toString() || 'default';
+
+        // Check if we have a cached version that's still valid
+        const cached = this.versionCache.get(cacheKey);
+        const now = Date.now();
+
+        if (cached && (now - cached.timestamp) < this.getVersionCacheTTL()) {
+            console.log(`[PythonHover] Using cached Python version: ${cached.version}`);
+            return { version: cached.version, pythonPath: (cached as any).pythonPath };
+        }
+
+        // Detect version and cache it
+        console.log(`[PythonHover] Detecting Python version for workspace: ${cacheKey}`);
+        const versionInfo = await this.versionDetector.detectPythonVersionInfo();
+
+        this.versionCache.set(cacheKey, {
+            version: versionInfo.version,
+            timestamp: now,
+            pythonPath: versionInfo.pythonPath
+        } as any);
+
+        return versionInfo;
+    }
+
+    /**
+     * Clear version cache (useful when Python environment changes)
+     */
+    public clearVersionCache(): void {
+        this.versionCache.clear();
+        console.log('[PythonHover] Version cache cleared');
+    }
+
     public async provideHover(
         document: vscode.TextDocument,
         position: vscode.Position,
@@ -90,14 +147,34 @@ export class PythonHoverProvider implements vscode.HoverProvider {
             return this.pendingHoverRequests.get(requestKey)!;
         }
 
-        // Create the promise for this request
-        const hoverPromise = this.provideHoverImpl(document, position, token);
+        // Debounce: Cancel any existing timer for this position
+        const existingTimer = this.debounceTimers.get(requestKey);
+        if (existingTimer) {
+            clearTimeout(existingTimer);
+        }
+
+        // Create debounced promise
+        const debouncedPromise = new Promise<vscode.Hover | null>((resolve) => {
+            const timer = setTimeout(async () => {
+                this.debounceTimers.delete(requestKey);
+
+                try {
+                    const result = await this.provideHoverImpl(document, position, token);
+                    resolve(result);
+                } catch (error) {
+                    console.error('[PythonHover] Error in hover provider:', error);
+                    resolve(null);
+                }
+            }, this.getDebounceDelay());
+
+            this.debounceTimers.set(requestKey, timer);
+        });
 
         // Store it to deduplicate concurrent requests
-        this.pendingHoverRequests.set(requestKey, hoverPromise);
+        this.pendingHoverRequests.set(requestKey, debouncedPromise);
 
         try {
-            return await hoverPromise;
+            return await debouncedPromise;
         } finally {
             // Clean up after request completes
             this.pendingHoverRequests.delete(requestKey);
@@ -110,9 +187,11 @@ export class PythonHoverProvider implements vscode.HoverProvider {
         token: vscode.CancellationToken
     ): Promise<vscode.Hover | null> {
         try {
-            // Detect Python version for this document
-            const pythonVersion = await this.versionDetector.detectPythonVersion();
-            console.log(`[PythonHover] Detected Python version: ${pythonVersion}`);
+            // Detect Python version for this document (with caching)
+            const versionInfo = await this.getCachedPythonVersion(document);
+            const pythonVersion = versionInfo.version;
+            const pythonPath = versionInfo.pythonPath;
+            console.log(`[PythonHover] Using Python version: ${pythonVersion}${pythonPath ? ` (${pythonPath})` : ''}`);
 
             // Resolve symbols at the current position
             const symbols = this.symbolResolver.resolveSymbolAtPosition(document, position);
@@ -129,19 +208,61 @@ export class PythonHoverProvider implements vscode.HoverProvider {
             const customDoc = this.customDocsLoader.getCustomDoc(primarySymbol.symbol);
             if (customDoc) {
                 console.log(`[PythonHover] Found custom documentation for ${primarySymbol.symbol}`);
-                return this.createCustomDocHover(customDoc, primarySymbol);
+                return this.createCustomDocHover(customDoc, primarySymbol, versionInfo);
             }
 
-            // NEW: Check for third-party library documentation
+            // Get imported libraries for later use (even if auto-detect is disabled, we still need this for context)
             const documentText = document.getText();
-            const importedLibsMap = getImportedLibraries(documentText);
+            const importedLibsMap = getImportedLibraries(documentText, this.configManager);
             const importedLibsSet = new Set(importedLibsMap.values());
 
-            // Check if we're hovering over a module import (like 'numpy')
-            if (importedLibsSet.has(primarySymbol.symbol) || importedLibsMap.has(primarySymbol.symbol)) {
-                // Create module-level docs
-                const actualLibrary = importedLibsMap.get(primarySymbol.symbol) || primarySymbol.symbol;
-                return this.createModuleHover(actualLibrary);
+            // NEW: Check for third-party library documentation (if auto-detect is enabled)
+            if (this.configManager.autoDetectLibrariesEnabled) {
+                // Check if we're hovering over a module import (like 'numpy')
+                // Only show module hover if the symbol IS the library itself, not an imported symbol FROM the library
+                if (importedLibsSet.has(primarySymbol.symbol)) {
+                    // This is the library itself (e.g., hovering over 'numpy' in 'import numpy')
+                    const { version, pythonPath } = await this.getCachedPythonVersion(document);
+                    return await this.createModuleHover(primarySymbol.symbol, version, pythonPath);
+                }
+
+                // Check if this symbol was imported FROM a library (e.g., 'KernelManager' from 'jupyter_client')
+                const sourceLibrary = importedLibsMap.get(primarySymbol.symbol);
+                if (sourceLibrary && sourceLibrary !== primarySymbol.symbol) {
+                    // This symbol was imported from a library, look it up in that library's inventory
+                    console.log(`[PythonHover] Symbol '${primarySymbol.symbol}' imported from library '${sourceLibrary}', looking up in inventory`);
+
+                    const { version, pythonPath } = await this.getCachedPythonVersion(document);
+
+                    // Try to find the full qualified name in the inventory
+                    // For example: KernelManager -> jupyter_client.manager.KernelManager
+                    const entry = await this.inventoryManager.resolveSymbol(
+                        primarySymbol.symbol,
+                        version,
+                        sourceLibrary,  // Pass the source library as context
+                        pythonPath
+                    );
+
+                    if (entry) {
+                        console.log(`[PythonHover] Found inventory entry for ${primarySymbol.symbol} from ${sourceLibrary}: ${entry.uri}#${entry.anchor}`);
+
+                        // Fetch and create rich hover for this inventory entry
+                        const maxLines = this.configManager.maxSnippetLines;
+                        const docSnippet = await this.documentationFetcher.fetchDocumentationForSymbol(
+                            primarySymbol.symbol,
+                            entry,
+                            maxLines,
+                            sourceLibrary
+                        );
+
+                        return this.createRichHover(docSnippet, entry, primarySymbol, versionInfo);
+                    }
+
+                    console.log(`[PythonHover] No inventory entry found for ${primarySymbol.symbol} from ${sourceLibrary}, continuing with other lookups`);
+                    // Fall through to other lookups if not found
+                }
+            } else {
+                console.log(`[PythonHover] Auto-detect libraries is disabled, skipping third-party library auto-detection`);
             }
 
             // Check if this is a method call on a third-party library (e.g., np.array, pd.DataFrame)
@@ -156,7 +277,7 @@ export class PythonHoverProvider implements vscode.HoverProvider {
                 const thirdPartyDoc = getThirdPartyDoc(primarySymbol.context, methodName);
                 if (thirdPartyDoc) {
                     console.log(`[PythonHover] Found third-party docs for ${primarySymbol.context}.${methodName}`);
-                    return this.createThirdPartyHover(thirdPartyDoc, primarySymbol);
+                    return this.createThirdPartyHover(thirdPartyDoc, primarySymbol, versionInfo);
                 }
             }
 
@@ -165,42 +286,59 @@ export class PythonHoverProvider implements vscode.HoverProvider {
                 const thirdPartyDoc = getThirdPartyDoc(lib, methodName);
                 if (thirdPartyDoc) {
                     console.log(`[PythonHover] Found third-party docs for ${lib}.${methodName}`);
-                    return this.createThirdPartyHover(thirdPartyDoc, primarySymbol);
+                    return this.createThirdPartyHover(thirdPartyDoc, primarySymbol, versionInfo);
                 }
             }
 
             // ENHANCEMENT: Check for method context
             if (primarySymbol.type === 'method') {
-                // If symbol contains a dot (like "my_list.append"), extract just the method name
+                // If symbol contains a dot (like "paths.jupyter_data_dir"), check if the base is an import
                 let methodName = primarySymbol.symbol;
                 let receiverType = primarySymbol.context;
 
                 if (methodName.includes('.')) {
                     const parts = methodName.split('.');
-                    methodName = parts[parts.length - 1]; // Get just "append"
+                    const baseSymbol = parts[0]; // e.g., "paths" from "paths.jupyter_data_dir"
+                    methodName = parts[parts.length - 1]; // Get just "jupyter_data_dir"
                     console.log(`[PythonHover] Extracted method name: ${methodName}`);
+                    console.log(`[PythonHover] Checking if base symbol "${baseSymbol}" is an imported module...`);
+
+                    // Check if the base symbol is an imported third-party module
+                    if (importedLibsMap.has(baseSymbol)) {
+                        const library = importedLibsMap.get(baseSymbol);
+                        console.log(`[PythonHover] Base symbol "${baseSymbol}" is imported from: ${library}`);
+                        receiverType = library; // Use the actual library name
+                        primarySymbol.context = library; // Update the context immediately
+                        primarySymbol.symbol = methodName; // Update symbol to just the method name
+                    }
                 }
 
                 // Detect the method's object type for better context if not already provided
-                if (!receiverType) {
+                // Skip if we already determined it's from an imported library
+                if (!receiverType && !importedLibsMap.has(methodName.split('.')[0])) {
                     receiverType = this.contextDetector.detectMethodContext(document, position, methodName);
                 }
 
                 if (receiverType) {
                     console.log(`[PythonHover] Detected method context: ${receiverType}.${methodName}`);
 
-                    // Resolve method with context
-                    const methodInfo = this.methodResolver.resolveMethodInfo(document, position, methodName, receiverType);
-                    if (methodInfo) {
-                        primarySymbol.context = receiverType;
-                        // Store as "type.method" for display, but we'll look up just the method
-                        primarySymbol.symbol = methodName;
-                    } else {
-                        primarySymbol.symbol = methodName;
+                    // Only resolve method info if we haven't already set context from imports
+                    if (!primarySymbol.context) {
+                        // Resolve method with context
+                        const methodInfo = this.methodResolver.resolveMethodInfo(document, position, methodName, receiverType);
+                        if (methodInfo) {
+                            primarySymbol.context = receiverType;
+                            // Store as "type.method" for display, but we'll look up just the method
+                            primarySymbol.symbol = methodName;
+                        } else {
+                            primarySymbol.symbol = methodName;
+                        }
                     }
                 } else {
                     // No context found, just use the method name
-                    primarySymbol.symbol = methodName;
+                    if (!primarySymbol.context) {
+                        primarySymbol.symbol = methodName;
+                    }
                 }
             }
 
@@ -243,7 +381,8 @@ export class PythonHoverProvider implements vscode.HoverProvider {
             const inventoryEntry = await this.inventoryManager.resolveSymbol(
                 lookupSymbol,
                 pythonVersion,
-                primarySymbol.context // Pass context for third-party library support
+                primarySymbol.context, // Pass context for third-party library support
+                pythonPath // Pass Python path for version-aware inventory
             );
 
             console.log(`[PythonHover] Inventory entry result: ${inventoryEntry ? `${inventoryEntry.name} -> ${inventoryEntry.uri}#${inventoryEntry.anchor}` : 'not found'}`);
@@ -293,7 +432,7 @@ export class PythonHoverProvider implements vscode.HoverProvider {
 
             console.log(`[PythonHover] Generated documentation URL: ${docSnippet.url}`);
 
-            return this.createRichHover(docSnippet, inventoryEntry, primarySymbol);
+            return this.createRichHover(docSnippet, inventoryEntry, primarySymbol, versionInfo);
 
         } catch (error: any) {
             // Better error handling with user feedback
@@ -318,11 +457,22 @@ export class PythonHoverProvider implements vscode.HoverProvider {
      * Dispose resources
      */
     public dispose(): void {
+        // Clear all pending timers
+        for (const timer of this.debounceTimers.values()) {
+            clearTimeout(timer);
+        }
+        this.debounceTimers.clear();
+
+        // Clear pending requests
         this.pendingHoverRequests.clear();
-        // Could add more cleanup here if needed
+
+        // Clear caches
+        this.versionCache.clear();
+
+        console.log('[PythonHover] Hover provider disposed');
     }
 
-    private createCustomDocHover(customDoc: any, symbolInfo: { symbol: string; type: string }): vscode.Hover {
+    private createCustomDocHover(customDoc: any, symbolInfo: { symbol: string; type: string }, pythonVersionInfo?: { version: string; pythonPath?: string }): vscode.Hover {
         const md = new vscode.MarkdownString();
         md.isTrusted = true;
         md.supportHtml = true;
@@ -331,16 +481,68 @@ export class PythonHoverProvider implements vscode.HoverProvider {
         // Format custom documentation
         md.appendMarkdown(formatCustomDoc(customDoc));
 
+        // Add Python version at the bottom
+        if (pythonVersionInfo) {
+            md.appendMarkdown('\n\n---\n\n');
+            md.appendMarkdown(`<div style="text-align: right; font-size: 0.85em; color: #888;">Python ${pythonVersionInfo.version}</div>`);
+        }
+
         return new vscode.Hover(md);
     }
 
-    private createModuleHover(moduleName: string): vscode.Hover {
+    private async createModuleHover(moduleName: string, pythonVersion: string, pythonPath?: string): Promise<vscode.Hover> {
         const md = this.theme.createMarkdown();
 
         // Header
         md.appendMarkdown(this.theme.formatHeader(`${moduleName} module`, 'module'));
 
-        // Module info database
+        // Try to fetch module documentation from inventory
+        const entry = await this.inventoryManager.resolveSymbol(
+            moduleName,
+            pythonVersion,
+            moduleName,  // Use the module name as context to search in its own inventory
+            pythonPath
+        );
+
+        if (entry) {
+            console.log(`[PythonHover] Found inventory entry for module ${moduleName}: ${entry.uri}#${entry.anchor}`);
+
+            // Fetch documentation snippet
+            const maxLines = this.configManager.maxSnippetLines;
+            const docSnippet = await this.documentationFetcher.fetchDocumentationForSymbol(
+                moduleName,
+                entry,
+                maxLines,
+                moduleName
+            );
+
+            if (docSnippet) {
+                // Add badge for third-party library
+                const badges = [{ text: 'Third-party Library', type: 'info' as const }];
+                md.appendMarkdown(this.theme.formatBadgeGroup(badges));
+
+                // Add description from documentation
+                if (docSnippet.content) {
+                    md.appendMarkdown(this.theme.formatContent(docSnippet.content));
+                }
+
+                // Add helpful tip
+                md.appendMarkdown(this.theme.formatTip(`Hover over functions from \`${moduleName}\` for detailed help`));
+
+                md.appendMarkdown(this.theme.formatDivider());
+
+                // Add documentation link
+                const fullUrl = `${entry.uri}#${entry.anchor}`;
+                const links = [
+                    { text: 'View Documentation', url: fullUrl, icon: 'book' }
+                ];
+                md.appendMarkdown(this.theme.formatActionLinks(links));
+
+                return new vscode.Hover(md);
+            }
+        }
+
+        // Fallback: Use hardcoded module info database for common libraries
         const moduleInfo: { [key: string]: { description: string; docs: string; badge?: string } } = {
             'numpy': {
                 description: 'Fundamental package for scientific computing with Python',
@@ -398,10 +600,14 @@ export class PythonHoverProvider implements vscode.HoverProvider {
             md.appendMarkdown(this.theme.formatTip('Hover over functions for detailed help'));
         }
 
+        // Add Python version at the bottom
+        md.appendMarkdown('\n\n---\n\n');
+        md.appendMarkdown(`<div style="text-align: right; font-size: 0.85em; color: #888;">Python ${pythonVersion}</div>`);
+
         return new vscode.Hover(md);
     }
 
-    private createThirdPartyHover(libDoc: any, symbolInfo: { symbol: string; type: string }): vscode.Hover {
+    private createThirdPartyHover(libDoc: any, symbolInfo: { symbol: string; type: string }, pythonVersionInfo?: { version: string; pythonPath?: string }): vscode.Hover {
         const md = this.theme.createMarkdown();
 
         // Header with theme - use 'function' for third-party methods
@@ -429,6 +635,12 @@ export class PythonHoverProvider implements vscode.HoverProvider {
                 { text: 'Official Documentation', url: libDoc.url, icon: 'book' }
             ];
             md.appendMarkdown(this.theme.formatActionLinks(links));
+        }
+
+        // Add Python version at the bottom
+        if (pythonVersionInfo) {
+            md.appendMarkdown('\n\n---\n\n');
+            md.appendMarkdown(`<div style="text-align: right; font-size: 0.85em; color: #888;">Python ${pythonVersionInfo.version}</div>`);
         }
 
         return new vscode.Hover(md);
@@ -552,7 +764,8 @@ export class PythonHoverProvider implements vscode.HoverProvider {
     private createRichHover(
         docSnippet: any,
         inventoryEntry: InventoryEntry | null,
-        symbolInfo: { symbol: string; type: string; context?: string }
+        symbolInfo: { symbol: string; type: string; context?: string },
+        pythonVersionInfo?: { version: string; pythonPath?: string }
     ): vscode.Hover {
         const md = this.theme.createMarkdown();
 
@@ -610,6 +823,12 @@ export class PythonHoverProvider implements vscode.HoverProvider {
 
         // Source line with clickable action links
         this.appendActionLinks(md, docSnippet, inventoryEntry);
+
+        // Add Python version at the bottom
+        if (pythonVersionInfo) {
+            md.appendMarkdown('\n\n---\n\n');
+            md.appendMarkdown(`<div style="text-align: right; font-size: 0.85em; color: #888;">Python ${pythonVersionInfo.version}</div>`);
+        }
 
         return new vscode.Hover(md);
     }

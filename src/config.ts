@@ -1,5 +1,11 @@
 import * as vscode from 'vscode';
 
+export interface CustomLibraryConfig {
+    name: string;
+    inventoryUrl: string;
+    baseUrl: string;
+}
+
 export interface PythonHoverConfig {
     docsVersion: string;
     maxSnippetLines: number;
@@ -9,6 +15,10 @@ export interface PythonHoverConfig {
     };
     enableKeywordDocs: boolean;
     telemetry: boolean;
+    customLibraries: CustomLibraryConfig[];
+    experimental: {
+        autoDetectLibraries: boolean;
+    };
 }
 
 export class ConfigurationManager {
@@ -29,7 +39,11 @@ export class ConfigurationManager {
                 snippetHours: vscodeConfig.get('cacheTTL.snippetHours', 48)
             },
             enableKeywordDocs: vscodeConfig.get('enableKeywordDocs', true),
-            telemetry: vscodeConfig.get('telemetry', false)
+            telemetry: vscodeConfig.get('telemetry', false),
+            customLibraries: vscodeConfig.get('customLibraries', []),
+            experimental: {
+                autoDetectLibraries: vscodeConfig.get('experimental.autoDetectLibraries', false)
+            }
         };
     }
 
@@ -63,6 +77,14 @@ export class ConfigurationManager {
 
     public get telemetryEnabled(): boolean {
         return this.config.telemetry;
+    }
+
+    public get customLibraries(): CustomLibraryConfig[] {
+        return this.config.customLibraries;
+    }
+
+    public get autoDetectLibrariesEnabled(): boolean {
+        return this.config.experimental.autoDetectLibraries;
     }
 
     /**

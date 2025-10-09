@@ -4,6 +4,7 @@ import { ConfigurationManager } from './config';
 import { PythonHoverProvider } from './hoverProvider';
 import { InventoryManager } from './inventory';
 import { Logger } from './logger';
+import { PackageDetector } from './packageDetector';
 import { VersionDetector } from './versionDetector';
 
 export function activate(context: vscode.ExtensionContext) {
@@ -16,7 +17,8 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Initialize managers
     const cacheManager = new CacheManager(context.globalStorageUri);
-    const inventoryManager = new InventoryManager(cacheManager);
+    const packageDetector = new PackageDetector();
+    const inventoryManager = new InventoryManager(cacheManager, configManager, packageDetector);
     const versionDetector = new VersionDetector(configManager);
 
     // Register hover provider
@@ -202,6 +204,97 @@ export function activate(context: vscode.ExtensionContext) {
             } else {
                 vscode.window.showInformationMessage('Already at minimum font size');
             }
+        })
+    );
+
+    // Register show supported libraries command
+    context.subscriptions.push(
+        vscode.commands.registerCommand('pythonHover.showSupportedLibraries', async () => {
+            const allLibraries = inventoryManager.getAllSupportedLibraries();
+            const counts = inventoryManager.getSupportedLibrariesCount();
+            const autoDetectEnabled = configManager.autoDetectLibrariesEnabled;
+
+            // Group libraries by category
+            const dataScience = ['numpy', 'pandas', 'scipy', 'matplotlib', 'sklearn', 'torch', 'pytorch'];
+            const webFrameworks = ['flask', 'django', 'fastapi', 'aiohttp', 'requests'];
+            const testing = ['pytest', 'selenium'];
+            const database = ['sqlalchemy', 'pydantic'];
+            const utilities = ['beautifulsoup4', 'bs4', 'pillow', 'click', 'sphinx'];
+
+            const categorized: { [key: string]: string[] } = {
+                'Data Science & ML': [],
+                'Web Development': [],
+                'Testing & Automation': [],
+                'Database & Validation': [],
+                'Utilities': [],
+                'Custom Libraries': [],
+                'Other': []
+            };
+
+            // Categorize libraries
+            const customLibNames = new Set((configManager.customLibraries ?? []).map(l => l.name));
+
+            for (const lib of allLibraries) {
+                const name = lib.name;
+                if (customLibNames.has(name)) {
+                    categorized['Custom Libraries'].push(name);
+                } else if (dataScience.includes(name)) {
+                    categorized['Data Science & ML'].push(name);
+                } else if (webFrameworks.includes(name)) {
+                    categorized['Web Development'].push(name);
+                } else if (testing.includes(name)) {
+                    categorized['Testing & Automation'].push(name);
+                } else if (database.includes(name)) {
+                    categorized['Database & Validation'].push(name);
+                } else if (utilities.includes(name)) {
+                    categorized['Utilities'].push(name);
+                } else {
+                    categorized['Other'].push(name);
+                }
+            }
+
+            // Build markdown content
+            let content = `# 📚 Supported Python Libraries\n\n`;
+            content += `**Total Libraries:** ${counts.total}\n`;
+            content += `- Built-in: ${counts.builtIn}\n`;
+            content += `- Custom: ${counts.custom}\n\n`;
+
+            if (autoDetectEnabled) {
+                content += `🧪 **Auto-detect:** ✅ Enabled - Any library with Intersphinx docs is supported!\n\n`;
+            } else {
+                content += `🧪 **Auto-detect:** ❌ Disabled - Only pre-configured libraries shown\n\n`;
+            }
+
+            content += `---\n\n`;
+
+            // Add categorized libraries
+            for (const [category, libs] of Object.entries(categorized)) {
+                if (libs.length > 0) {
+                    content += `## ${category}\n\n`;
+                    // Sort alphabetically within each category
+                    const sortedLibs = libs.sort();
+                    content += sortedLibs.map(lib => `- \`${lib}\``).join('\n');
+                    content += `\n\n`;
+                }
+            }
+
+            content += `---\n\n`;
+            content += `💡 **Tip:** Add your own libraries in settings:\n`;
+            content += `\`pythonHover.customLibraries\`\n\n`;
+            content += `🧪 **Auto-detect:** Toggle in settings:\n`;
+            content += `\`pythonHover.experimental.autoDetectLibraries\`\n\n`;
+            content += `📖 [Learn more about custom libraries](command:vscode.open?${encodeURIComponent(JSON.stringify('https://github.com/KiidxAtlas/python-hover/blob/main/CUSTOM_LIBRARIES.md'))})\n`;
+
+            // Create and show in new editor
+            const doc = await vscode.workspace.openTextDocument({
+                content,
+                language: 'markdown'
+            });
+
+            await vscode.window.showTextDocument(doc, {
+                preview: true,
+                viewColumn: vscode.ViewColumn.Beside
+            });
         })
     );
 

@@ -6,6 +6,104 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.4.0] - 2025-10-08
+
+### 🎉 Major Features
+
+- **Custom Library Support**: Add documentation for any Python library with Intersphinx inventory
+  - New configuration: `pythonHover.customLibraries` (array of library configs)
+  - Each library requires: `name`, `inventoryUrl`, `baseUrl`
+  - Works with any Sphinx-documented library (ReadTheDocs, GitHub Pages, self-hosted)
+  - Automatic caching and version detection
+  - See [CUSTOM_LIBRARIES.md](CUSTOM_LIBRARIES.md) for complete guide
+
+- **🧪 Experimental: Auto-Detect Libraries**: Automatically discover and document third-party imports
+  - New setting: `pythonHover.experimental.autoDetectLibraries` (default: false)
+  - Detects imports like `from jupyter_client import KernelManager`
+  - Automatically fetches Intersphinx inventories from documentation sites
+  - Provides hover docs for any library with published `objects.inv` files
+  - Works with installed packages in your Python environment
+  - Supports thousands of libraries (jupyter, black, mypy, httpx, etc.)
+  - **Note:** Disabled by default to avoid performance impact; enable if needed
+
+- **Package Detection System**: Automatic version detection for installed libraries
+  - Uses pip metadata to find installed package versions
+  - Matches documentation versions to installed versions when available
+  - Falls back gracefully to latest/stable docs
+  - Caches version info for performance
+
+### ✨ New Features
+
+- **Python Version Display**: Shows detected Python version at bottom-right of hover tooltips
+  - Displays version from active Python environment
+  - Updates automatically when switching Python interpreters
+  - Helps identify which Python version documentation is being used
+
+- **Module Hover Support**: Hover over module names in import statements
+  - Example: Hover over `jupyter_client` in `from jupyter_client import KernelManager`
+  - Shows module description and documentation links
+  - Works with all third-party libraries (auto-detect or custom)
+
+- **Enhanced Symbol Resolution**: Improved detection for imported symbols
+  - Better handling of `from X import Y` statements
+  - Fixed method context detection for dotted access (e.g., `paths.jupyter_data_dir()`)
+  - Added heuristics to prevent hover spam on comments and variables
+  - Smart detection of PascalCase classes vs regular words
+
+- **Show Supported Libraries Command**: New command to view all supported libraries
+  - Access via Command Palette: `Python Hover: Show Supported Libraries`
+  - Displays organized list by category (Data Science, Web, Testing, etc.)
+  - Shows built-in vs custom library counts
+  - Indicates auto-detect status
+  - Provides quick links to configuration
+
+### 🔧 Configuration
+
+- **Version Cache TTL**: New setting `pythonHover.versionCacheTTL` (default: 30 seconds)
+  - Controls how long Python version detection is cached
+  - Lower values detect environment changes faster
+  - Higher values improve performance
+
+- **Debounce Delay**: New setting `pythonHover.debounceDelay` (default: 150ms)
+  - Delays hover display to reduce flicker when moving cursor quickly
+  - Configurable from 0-1000ms
+
+### 🐛 Bug Fixes
+
+- Fixed duplicate library entries in import tracking
+- Fixed symbol resolver treating imported symbols as modules
+- Fixed method context detection for third-party library methods
+- Improved comment detection to skip hover in comment blocks
+- Fixed webpack output path configuration for proper compilation
+
+### 📈 Improvements
+
+- Hover provider now checks auto-detect setting before scanning imports
+- Import map is always built for method context detection (even when auto-detect is off)
+- Better error handling for missing or invalid inventory files
+- Improved logging with context tags for debugging
+- More efficient caching strategy with version-aware keys
+
+### 📚 Documentation
+
+- Added comprehensive [CUSTOM_LIBRARIES.md](CUSTOM_LIBRARIES.md) guide
+  - How to find Intersphinx URLs
+  - Configuration examples
+  - Testing tips
+  - Common patterns for ReadTheDocs, GitHub Pages, etc.
+- Updated README with experimental features section
+- Added comparison table: Auto-Detect vs Custom Libraries
+- Updated commands list with new "Show Supported Libraries" command
+
+### 🏗️ Development
+
+- Improved TypeScript strict null checks
+- Better error handling for optional chaining
+- Updated webpack configuration for production builds
+- Added null safety for config manager properties
+
+---
+
 ## [0.3.2] - 2025-10-06
 
 ### ✨ Added

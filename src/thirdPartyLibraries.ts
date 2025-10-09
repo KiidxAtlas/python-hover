@@ -767,7 +767,25 @@ new_img = Image.new('RGB', (100, 100), color='red')`,
  * Detect imported libraries and their aliases
  * Returns a Map of alias -> library name
  */
-export function getImportedLibraries(documentText: string): Map<string, string> {
+/**
+ * Check if a library is known (either has hardcoded docs or custom inventory)
+ */
+function isKnownLibrary(libraryName: string, configManager?: any): boolean {
+    // Check hardcoded libraries
+    if (THIRD_PARTY_LIBRARIES[libraryName]) {
+        return true;
+    }
+
+    // Check custom libraries from config (if available)
+    if (configManager && typeof configManager.customLibraries !== 'undefined') {
+        const customLibs = configManager.customLibraries || [];
+        return customLibs.some((lib: any) => lib.name === libraryName);
+    }
+
+    return false;
+}
+
+export function getImportedLibraries(documentText: string, configManager?: any): Map<string, string> {
     const imports = new Map<string, string>(); // alias -> library name
     const lines = documentText.split('\n');
 
@@ -779,18 +797,43 @@ export function getImportedLibraries(documentText: string): Map<string, string> 
         if (importAsMatch) {
             const library = importAsMatch[1];
             const alias = importAsMatch[2] || library;
-            if (THIRD_PARTY_LIBRARIES[library]) {
+            if (isKnownLibrary(library, configManager)) {
                 imports.set(alias, library);
             }
             continue;
         }
 
         // Match: from numpy import array, zeros
-        const fromMatch = trimmed.match(/^from\s+(\w+)\s+import\s+/);
+        // Also match: from jupyter_core import paths
+        const fromMatch = trimmed.match(/^from\s+([\w.]+)\s+import\s+(.+)$/);
         if (fromMatch) {
-            const library = fromMatch[1];
-            if (THIRD_PARTY_LIBRARIES[library]) {
-                imports.set(library, library);
+            const library = fromMatch[1].split('.')[0]; // Get base module (e.g., "jupyter_core" from "jupyter_core.paths")
+            const fullModule = fromMatch[1]; // Keep full module path (e.g., "jupyter_core.paths")
+            const importedItems = fromMatch[2]; // Everything after "import"
+
+            // Check if this is a library we track
+            if (isKnownLibrary(library, configManager)) {
+                // DON'T add imports.set(library, library) here!
+                // We're importing symbols FROM the library, not the library itself.
+                // Only map the individual imported symbols.
+
+                // Parse imported items (handle: name, name as alias, name1, name2, etc.)
+                const items = importedItems.split(',').map(item => item.trim());
+                for (const item of items) {
+                    // Skip parentheses and handle "as" aliases
+                    const cleanItem = item.replace(/[()]/g, '').trim();
+                    if (!cleanItem || cleanItem === '(' || cleanItem === ')') continue;
+
+                    const asMatch = cleanItem.match(/^(\w+)(?:\s+as\s+(\w+))?$/);
+                    if (asMatch) {
+                        const name = asMatch[1];
+                        const alias = asMatch[2] || name;
+                        // Map the imported symbol to the library
+                        // e.g., "paths" -> "jupyter_core" or "KernelManager" -> "jupyter_client"
+                        imports.set(alias, library);
+                        console.log(`[PythonHover] Mapped import: ${alias} -> ${library} (from ${fullModule})`);
+                    }
+                }
             }
             continue;
         }
@@ -799,7 +842,7 @@ export function getImportedLibraries(documentText: string): Map<string, string> 
         const simpleImportMatch = trimmed.match(/^import\s+(\w+)$/);
         if (simpleImportMatch) {
             const library = simpleImportMatch[1];
-            if (THIRD_PARTY_LIBRARIES[library]) {
+            if (isKnownLibrary(library, configManager)) {
                 imports.set(library, library);
             }
         }
@@ -811,8 +854,8 @@ export function getImportedLibraries(documentText: string): Map<string, string> 
 /**
  * Check if a library is imported (legacy function for backward compatibility)
  */
-export function getImportedLibrariesSet(documentText: string): Set<string> {
-    const importMap = getImportedLibraries(documentText);
+export function getImportedLibrariesSet(documentText: string, configManager?: any): Set<string> {
+    const importMap = getImportedLibraries(documentText, configManager);
     return new Set(importMap.values());
 }
 
