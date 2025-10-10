@@ -1,7 +1,8 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { ConfigurationManager } from './config';
+import { ConfigurationManager } from '../services/config';
+import { Logger } from '../services/logger';
 
 export interface PythonVersionInfo {
     version: string;
@@ -9,7 +10,11 @@ export interface PythonVersionInfo {
 }
 
 export class VersionDetector {
-    constructor(private configManager: ConfigurationManager) { }
+    private logger: Logger;
+
+    constructor(private configManager: ConfigurationManager) {
+        this.logger = Logger.getInstance();
+    }
 
     public async detectPythonVersion(): Promise<string> {
         const info = await this.detectPythonVersionInfo();
@@ -58,7 +63,7 @@ export class VersionDetector {
                 }
             }
         } catch (error) {
-            console.error('[VersionDetector] Error getting Python path:', error);
+            this.logger.error(`Error getting Python path`, error as Error);
         }
         return null;
     }
@@ -76,7 +81,7 @@ export class VersionDetector {
                 const pythonPath = vscode.workspace.getConfiguration('python').get<string>('defaultInterpreterPath');
 
                 if (pythonPath) {
-                    console.log(`[PythonHover] Found Python interpreter path: ${pythonPath}`);
+                    this.logger.debug(`Found Python interpreter path: ${pythonPath}`);
                     // Extract version from path (e.g., python3.11, python3.12)
                     const versionMatch = pythonPath.match(/python(\d+)\.(\d+)/i);
                     if (versionMatch) {
@@ -100,7 +105,7 @@ export class VersionDetector {
                 }
             }
         } catch (error) {
-            console.log('[PythonHover] Could not get version from Python extension:', error);
+            this.logger.debug(`Could not get version from Python extension`, error);
         }
         return null;
     }

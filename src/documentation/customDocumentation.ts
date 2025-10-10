@@ -6,6 +6,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { Logger } from '../services/logger';
 
 export interface CustomDoc {
     symbol: string;
@@ -51,12 +52,12 @@ export class CustomDocumentationLoader {
                         for (const doc of config.docs) {
                             this.customDocs.set(doc.symbol.toLowerCase(), doc);
                         }
-                        console.log(`[PythonHover] Loaded ${config.docs.length} custom docs from ${configFile}`);
+                        Logger.getInstance().debug(`Loaded ${config.docs.length} custom docs from ${configFile}`);
                         return; // Found config, stop searching
                     }
                 }
             } catch (error) {
-                console.error(`[PythonHover] Error loading custom docs from ${configFile}:`, error);
+                Logger.getInstance().error(`Error loading custom docs from ${configFile}:`, error as Error);
             }
         }
     }

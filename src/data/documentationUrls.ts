@@ -1,7 +1,7 @@
 // This file contains documentation URLs for Python keywords and built-in functions.
 // It is used for reference in the VSCode Python hover feature.
 
-import { Info } from './types';
+import { Info } from '../types';
 
 export const MAP: Record<string, Info> = {
     class: { title: 'class — Class Definitions', url: 'reference/compound_stmts.html', anchor: 'class-definitions' },

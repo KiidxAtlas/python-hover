@@ -3,6 +3,8 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { promisify } from 'util';
 import * as vscode from 'vscode';
+import { Logger } from './logger';
+import { ErrorNotifier } from './errorNotifier';
 
 const execAsync = promisify(exec);
 
@@ -19,10 +21,13 @@ export interface PythonEnvironment {
 }
 
 export class PackageDetector {
+    private logger: Logger;
     private packageCache: Map<string, { packages: InstalledPackage[]; timestamp: number }>;
     private readonly CACHE_TTL = 60000; // 1 minute cache
+    private hasShownErrorNotification = false; // Track if we've shown an error to avoid spam
 
     constructor() {
+        this.logger = Logger.getInstance();
         this.packageCache = new Map();
     }
 
@@ -45,7 +50,7 @@ export class PackageDetector {
                     const envType = this.detectEnvironmentType(pythonPath);
                     const version = await this.getPythonVersion(pythonPath);
 
-                    console.log(`[PackageDetector] Detected environment: ${pythonPath} (${envType}) - Python ${version}`);
+                    this.logger.debug(`Detected environment: ${pythonPath} (${envType}) - Python ${version}`);
 
                     return {
                         path: pythonPath,
@@ -58,7 +63,7 @@ export class PackageDetector {
             // Fallback: try to find Python in workspace
             return await this.detectFromWorkspace();
         } catch (error) {
-            console.error('[PackageDetector] Error detecting Python environment:', error);
+            this.logger.error(`Error detecting Python environment`, error as Error);
             return null;
         }
     }
@@ -96,7 +101,7 @@ export class PackageDetector {
                 return versionMatch[1];
             }
         } catch (error) {
-            console.error('[PackageDetector] Error getting Python version:', error);
+            this.logger.error(`Error getting Python version`, error as Error);
         }
         return '3.12'; // fallback
     }
@@ -147,11 +152,11 @@ export class PackageDetector {
         // Check cache first
         const cached = this.packageCache.get(cacheKey);
         if (cached && (Date.now() - cached.timestamp) < this.CACHE_TTL) {
-            console.log(`[PackageDetector] Using cached package list (${cached.packages.length} packages)`);
+            this.logger.debug(`Using cached package list (${cached.packages.length} packages)`);
             return cached.packages;
         }
 
-        console.log(`[PackageDetector] Fetching installed packages from: ${pythonPath}`);
+        this.logger.debug(`Fetching installed packages from: ${pythonPath}`);
 
         try {
             // Use pip list --format json for reliable parsing
@@ -165,7 +170,7 @@ export class PackageDetector {
                 location: pkg.location
             }));
 
-            console.log(`[PackageDetector] Found ${packages.length} installed packages`);
+            this.logger.debug(`Found ${packages.length} installed packages`);
 
             // Cache the results
             this.packageCache.set(cacheKey, {
@@ -174,8 +179,37 @@ export class PackageDetector {
             });
 
             return packages;
-        } catch (error) {
-            console.error('[PackageDetector] Error fetching installed packages:', error);
+        } catch (error: any) {
+            this.logger.error(`Error fetching installed packages`, error as Error);
+
+            // Show user-friendly error notification (only once per session)
+            if (!this.hasShownErrorNotification) {
+                this.hasShownErrorNotification = true;
+
+                let errorMessage = 'Python Hover: Package detection failed. ';
+                let helpMessage = '';
+
+                // Provide specific guidance based on the error
+                if (error.message && error.message.includes('pip')) {
+                    errorMessage += 'pip may not be available in this Python environment.';
+                    helpMessage = 'Install pip or use a Python environment with pip installed.';
+                } else if (error.message && error.message.includes('timeout')) {
+                    errorMessage += 'Package detection timed out.';
+                    helpMessage = 'Try again later or check your Python environment.';
+                } else {
+                    errorMessage += 'Unable to detect installed packages.';
+                    helpMessage = 'Check Python extension settings and ensure Python is configured correctly.';
+                }
+
+                ErrorNotifier.showWarningWithRetry(
+                    `${errorMessage} ${helpMessage}`,
+                    () => {
+                        this.hasShownErrorNotification = false;
+                        this.clearCache();
+                    },
+                    'python.defaultInterpreterPath'
+                );
+            }
 
             // Try alternative method: read site-packages directly
             return await this.getPackagesFromSitePackages(pythonPath);
@@ -217,10 +251,10 @@ export class PackageDetector {
                 }
             }
 
-            console.log(`[PackageDetector] Found ${packages.length} packages from site-packages`);
+            this.logger.debug(`Found ${packages.length} packages from site-packages`);
             return packages;
         } catch (error) {
-            console.error('[PackageDetector] Error reading site-packages:', error);
+            this.logger.error(`Error reading site-packages`, error as Error);
             return [];
         }
     }
@@ -246,7 +280,7 @@ export class PackageDetector {
      */
     public clearCache(): void {
         this.packageCache.clear();
-        console.log('[PackageDetector] Package cache cleared');
+        this.logger.info('Package cache cleared');
     }
 
     /**

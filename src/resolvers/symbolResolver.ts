@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
-import { OPERATORS } from './documentationUrls';
-import { TYPING_CONSTRUCTS } from './typingConstructs';
+import { OPERATORS } from '../data/documentationUrls';
+import { Logger } from '../services/logger';
+import { TYPING_CONSTRUCTS } from '../data/typingConstructs';
 
 export interface SymbolInfo {
     symbol: string;
@@ -63,17 +64,8 @@ export class SymbolResolver {
         // Get the full line for context
         const lineText = text.trim();
 
-        // Quick heuristics to avoid running resolution for irrelevant hovers
-        //  - empty or very short identifiers (single-letter loop vars)
-        //  - numeric literals
-        //  - not an identifier (contains punctuation)
-        // We'll still allow Python keywords/builtins/exceptions later.
-        if (!word || word.length < 2) {
-            return [];
-        }
-
-        // Avoid numeric literals
-        if (/^[0-9]+(?:\.[0-9]+)?$/.test(word)) {
+        // Early exit for empty or non-identifier words
+        if (!word) {
             return [];
         }
 
@@ -82,13 +74,61 @@ export class SymbolResolver {
             return [];
         }
 
-        console.log(`[SymbolResolver] Raw line: ${text}`);
-        console.log(`[SymbolResolver] Cursor position: ${position.character}`);
+        // Avoid numeric literals
+        if (/^[0-9]+(?:\.[0-9]+)?$/.test(word)) {
+            return [];
+        }
+
+        Logger.getInstance().debug(`Raw line: ${text}`);
+        Logger.getInstance().debug(`Cursor position: ${position.character}`);
 
         // Skip if we're inside a comment
         const commentStart = text.indexOf('#');
         if (commentStart !== -1 && position.character > commentStart) {
-            console.log(`[SymbolResolver] Inside comment, skipping`);
+            Logger.getInstance().debug(`Inside comment, skipping`);
+            return [];
+        }
+
+        // CHECK KEYWORDS FIRST (before filtering by length)
+        // This ensures short keywords like 'if', 'or', 'as', 'in', 'is' are not skipped
+        if (SymbolResolver.PYTHON_KEYWORDS.has(word)) {
+            Logger.getInstance().debug(`Detected Python keyword: ${word}`);
+            results.push({
+                symbol: word,
+                type: 'keyword'
+            });
+            // For keywords, don't continue looking for other interpretations
+            return results;
+        }
+
+        // CHECK BUILTINS EARLY (before filtering by length)
+        // This ensures short builtins are not skipped
+        if (SymbolResolver.PYTHON_BUILTINS.has(word)) {
+            Logger.getInstance().debug(`Detected Python builtin: ${word}`);
+            results.push({
+                symbol: word,
+                type: 'builtin'
+            });
+        }
+
+        // CHECK EXCEPTIONS EARLY
+        if (SymbolResolver.PYTHON_EXCEPTIONS.has(word)) {
+            Logger.getInstance().debug(`Detected Python exception: ${word}`);
+            results.push({
+                symbol: word,
+                type: 'exception'
+            });
+        }
+
+        // Now apply heuristic filtering for other symbols
+        // Skip very short identifiers UNLESS they're already identified above
+        if (results.length === 0 && word.length < 2) {
+            return [];
+        }
+
+        // Skip common English stopwords only if not already identified
+        const stopwords = new Set(['the', 'a', 'an', 'and', 'or', 'but', 'if', 'else', 'for', 'to', 'of', 'in', 'on', 'with', 'by', 'as', 'is', 'it', 'this', 'that', 'these', 'those']);
+        if (results.length === 0 && stopwords.has(word.toLowerCase())) {
             return [];
         }
 
@@ -106,7 +146,7 @@ export class SymbolResolver {
             const hasF = prefix.indexOf('f') !== -1;
             const closingQuote = rawLine.indexOf(quoteChar, cursorIndex);
             if (hasF && closingQuote !== -1) {
-                console.log(`[SymbolResolver] Detected f-string at position: ${quotePos}`);
+                Logger.getInstance().debug(`Detected f-string at position: ${quotePos}`);
                 results.push({ symbol: 'f-string', type: 'f-string' });
                 return results;
             }
@@ -138,7 +178,7 @@ export class SymbolResolver {
             while (idx !== -1) {
                 const absIdx = winStart + idx;
                 if (position.character >= absIdx && position.character < absIdx + op.length) {
-                    console.log(`[SymbolResolver] Detected operator: ${op} at position: ${absIdx}`);
+                    Logger.getInstance().debug(`Detected operator: ${op} at position: ${absIdx}`);
                     results.push({ symbol: op, type: 'operator' });
                     return results;
                 }
@@ -154,40 +194,6 @@ export class SymbolResolver {
             });
         }
 
-        // If this word is a very common English stopword (and we haven't matched it as a Python keyword/builtin/exception), skip further resolution.
-        const stopwords = new Set(['the', 'a', 'an', 'and', 'or', 'but', 'if', 'else', 'for', 'to', 'of', 'in', 'on', 'with', 'by', 'as', 'is', 'it', 'this', 'that', 'these', 'those']);
-
-        // Check if it's a keyword
-        if (SymbolResolver.PYTHON_KEYWORDS.has(word)) {
-            results.push({
-                symbol: word,
-                type: 'keyword'
-            });
-            // For keywords, don't continue looking for other interpretations
-            return results;
-        }
-
-        // Early stop: common stopwords should not trigger documentation lookups
-        if (stopwords.has(word.toLowerCase())) {
-            return [];
-        }
-
-        // Check if it's a builtin
-        if (SymbolResolver.PYTHON_BUILTINS.has(word)) {
-            results.push({
-                symbol: word,
-                type: 'builtin'
-            });
-        }
-
-        // Check if it's an exception
-        if (SymbolResolver.PYTHON_EXCEPTIONS.has(word)) {
-            results.push({
-                symbol: word,
-                type: 'exception'
-            });
-        }
-
         // Check if it's a typing construct
         if (word in TYPING_CONSTRUCTS) {
             results.push({
@@ -199,7 +205,7 @@ export class SymbolResolver {
 
         // Check if it's a dunder method
         if (word.startsWith('__') && word.endsWith('__')) {
-            console.log(`[SymbolResolver] Detected potential dunder method: ${word}`);
+            Logger.getInstance().debug(`Detected potential dunder method: ${word}`);
             results.push({
                 symbol: word,
                 type: 'method' // Keep as 'method' type - the hover provider will handle it
@@ -209,7 +215,7 @@ export class SymbolResolver {
         // Check for dotted access (method calls)
         const dottedMatch = wordRange ? this.findDottedAccess(text, wordRange) : null;
         if (dottedMatch) {
-            console.log(`[SymbolResolver] Detected dotted access: ${dottedMatch.fullPath}`);
+            Logger.getInstance().debug(`Detected dotted access: ${dottedMatch.fullPath}`);
             results.push({
                 symbol: dottedMatch.fullPath,
                 type: 'method',
@@ -219,9 +225,9 @@ export class SymbolResolver {
 
         // Check for module imports
         const moduleMatch = this.findModuleContext(document, position, word);
-        console.log(`[SymbolResolver] findModuleContext for "${word}" returned:`, moduleMatch);
+        Logger.getInstance().debug(`findModuleContext for "${word}" returned: ${moduleMatch || 'null'}`);
         if (moduleMatch) {
-            console.log(`[SymbolResolver] Adding as module: ${moduleMatch}`);
+            Logger.getInstance().debug(`Adding as module: ${moduleMatch}`);
             results.push({
                 symbol: moduleMatch,
                 type: 'module'
@@ -256,13 +262,13 @@ export class SymbolResolver {
 
             // Only proceed if it looks like an imported symbol
             if (isInImportContext || (isLikelyClassName && isFollowedByDotOrParen) || isLeftOfDot) {
-                console.log(`[SymbolResolver] Word "${word}" might be an imported symbol (import: ${isInImportContext}, class+call: ${isLikelyClassName && isFollowedByDotOrParen}, leftOfDot: ${isLeftOfDot})`);
+                Logger.getInstance().debug(`Word "${word}" might be an imported symbol (import: ${isInImportContext}, class+call: ${isLikelyClassName && isFollowedByDotOrParen}, leftOfDot: ${isLeftOfDot})`);
                 results.push({
                     symbol: word,
                     type: 'class'
                 });
             } else {
-                console.log(`[SymbolResolver] Word "${word}" doesn't look like an imported symbol, skipping`);
+                Logger.getInstance().debug(`Word "${word}" doesn't look like an imported symbol, skipping`);
                 return [];
             }
         }
@@ -378,7 +384,7 @@ export class SymbolResolver {
 
     private findModuleContext(
         document: vscode.TextDocument,
-        position: vscode.Position,
+        _position: vscode.Position,
         word: string
     ): string | null {
         // Look for import statements in the document to see if this word is a module
@@ -393,7 +399,7 @@ export class SymbolResolver {
 
                 // Check if we're hovering over the module name itself (e.g., 'jupyter_client' in 'from jupyter_client import ...')
                 if (word === moduleName || moduleName.endsWith('.' + word)) {
-                    console.log(`[SymbolResolver] Detected module name in from statement: ${moduleName}`);
+                    Logger.getInstance().debug(`Detected module name in from statement: ${moduleName}`);
                     return moduleName;
                 }
 

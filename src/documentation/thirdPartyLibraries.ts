@@ -3,6 +3,8 @@
  * Provides hover documentation for popular Python libraries
  */
 
+import { Logger } from '../services/logger';
+
 export interface LibraryDoc {
     name: string;
     description: string;
@@ -831,7 +833,7 @@ export function getImportedLibraries(documentText: string, configManager?: any):
                         // Map the imported symbol to the library
                         // e.g., "paths" -> "jupyter_core" or "KernelManager" -> "jupyter_client"
                         imports.set(alias, library);
-                        console.log(`[PythonHover] Mapped import: ${alias} -> ${library} (from ${fullModule})`);
+                        Logger.getInstance().debug(`Mapped import: ${alias} -> ${library} (from ${fullModule})`);
                     }
                 }
             }

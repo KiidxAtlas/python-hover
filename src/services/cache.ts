@@ -1,6 +1,8 @@
+import * as crypto from 'crypto';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { Logger } from './logger';
 
 export interface CacheEntry<T> {
     data: T;
@@ -10,9 +12,11 @@ export interface CacheEntry<T> {
 }
 
 export class CacheManager {
+    private logger: Logger;
     private cacheDir: string;
 
     constructor(globalStorageUri: vscode.Uri) {
+        this.logger = Logger.getInstance();
         this.cacheDir = path.join(globalStorageUri.fsPath, 'python-hover-cache');
     }
 
@@ -24,10 +28,16 @@ export class CacheManager {
         }
     }
 
+    /**
+     * Generate a safe, unique cache file path using SHA256 hash
+     * This prevents collisions from similar keys (e.g., 'foo/bar' vs 'foo:bar')
+     */
     private getCacheFilePath(key: string): string {
-        // Sanitize key for file system
-        const sanitized = key.replace(/[^a-zA-Z0-9.-]/g, '_');
-        return path.join(this.cacheDir, `${sanitized}.json`);
+        // Use SHA256 to create a unique, safe filename
+        const hash = crypto.createHash('sha256').update(key, 'utf8').digest('hex');
+        // Keep first 16 chars of hash for human readability during debugging
+        const shortHash = hash.substring(0, 16);
+        return path.join(this.cacheDir, `${shortHash}.json`);
     }
 
     public async get<T>(key: string): Promise<CacheEntry<T> | null> {
@@ -79,29 +89,29 @@ export class CacheManager {
 
     public async clear(): Promise<{ filesDeleted: number; success: boolean }> {
         try {
-            console.log(`[PythonHover] Clearing cache directory: ${this.cacheDir}`);
+            this.logger.debug(`Clearing cache directory: ${this.cacheDir}`);
             const files = await fs.readdir(this.cacheDir);
-            console.log(`[PythonHover] Found ${files.length} cache files to delete:`, files);
+            this.logger.debug(`Found ${files.length} cache files to delete`, files);
 
             if (files.length === 0) {
-                console.log(`[PythonHover] No cache files to delete`);
+                this.logger.debug(`No cache files to delete`);
                 return { filesDeleted: 0, success: true };
             }
 
             await Promise.all(
                 files.map(async file => {
                     const filePath = path.join(this.cacheDir, file);
-                    console.log(`[PythonHover] Deleting cache file: ${filePath}`);
+                    this.logger.debug(`Deleting cache file: ${filePath}`);
                     return fs.unlink(filePath);
                 })
             );
-            console.log(`[PythonHover] Successfully deleted ${files.length} cache files`);
+            this.logger.debug(`Successfully deleted ${files.length} cache files`);
             return { filesDeleted: files.length, success: true };
         } catch (error) {
-            console.error(`[PythonHover] Error clearing cache:`, error);
+            this.logger.error(`Error clearing cache:`, error as Error);
             // Directory might not exist - this is not necessarily an error
             if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
-                console.log(`[PythonHover] Cache directory does not exist, nothing to clear`);
+                this.logger.debug(`Cache directory does not exist, nothing to clear`);
                 return { filesDeleted: 0, success: true };
             }
             return { filesDeleted: 0, success: false };

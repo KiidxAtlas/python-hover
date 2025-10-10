@@ -1,11 +1,14 @@
 import * as assert from 'assert';
-import { CacheManager } from '../../cache';
-import { InventoryManager } from '../../inventory';
+import { CacheManager } from '../../services/cache';
+import { InventoryManager } from '../../services/inventory';
+import { Logger } from '../../services/logger';
 
 suite('InventoryManager Test Suite', () => {
+    const logger = Logger.getInstance();
+
     test('Should resolve torch.zeros correctly', async () => {
         const cache = new CacheManager({ fsPath: '/tmp/test-cache' } as any);
-        const inventory = new InventoryManager(cache);
+        const inventory = new InventoryManager(cache, logger);
 
         // This tests the fix we made - torch should map to torch, not pytorch
         const entry = await inventory.resolveSymbol('zeros', '3.11', 'torch');
@@ -16,7 +19,7 @@ suite('InventoryManager Test Suite', () => {
 
     test('Should resolve numpy.array correctly', async () => {
         const cache = new CacheManager({ fsPath: '/tmp/test-cache' } as any);
-        const inventory = new InventoryManager(cache);
+        const inventory = new InventoryManager(cache, logger);
 
         const entry = await inventory.resolveSymbol('array', '3.11', 'numpy');
 
@@ -26,7 +29,7 @@ suite('InventoryManager Test Suite', () => {
 
     test('Should fallback to stdlib for unknown libraries', async () => {
         const cache = new CacheManager({ fsPath: '/tmp/test-cache' } as any);
-        const inventory = new InventoryManager(cache);
+        const inventory = new InventoryManager(cache, logger);
 
         const entry = await inventory.resolveSymbol('open', '3.11', 'unknown_lib');
 
@@ -36,7 +39,7 @@ suite('InventoryManager Test Suite', () => {
 
     test('Should handle special methods', async () => {
         const cache = new CacheManager({ fsPath: '/tmp/test-cache' } as any);
-        const inventory = new InventoryManager(cache);
+        const inventory = new InventoryManager(cache, logger);
 
         const entry = await inventory.resolveSymbol('__init__', '3.11');
 

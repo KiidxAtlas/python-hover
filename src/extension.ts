@@ -1,11 +1,12 @@
 import * as vscode from 'vscode';
-import { CacheManager } from './cache';
-import { ConfigurationManager } from './config';
-import { PythonHoverProvider } from './hoverProvider';
-import { InventoryManager } from './inventory';
-import { Logger } from './logger';
-import { PackageDetector } from './packageDetector';
-import { VersionDetector } from './versionDetector';
+import { CacheManager } from './services/cache';
+import { ConfigurationManager } from './services/config';
+import { PythonHoverProvider } from './ui/hoverProvider';
+import { InventoryManager } from './services/inventory';
+import { Logger } from './services/logger';
+import { PackageDetector } from './services/packageDetector';
+import { ErrorNotifier } from './services/errorNotifier';
+import { VersionDetector } from './ui/versionDetector';
 
 export function activate(context: vscode.ExtensionContext) {
     // Initialize configuration first
@@ -18,7 +19,7 @@ export function activate(context: vscode.ExtensionContext) {
     // Initialize managers
     const cacheManager = new CacheManager(context.globalStorageUri);
     const packageDetector = new PackageDetector();
-    const inventoryManager = new InventoryManager(cacheManager, configManager, packageDetector);
+    const inventoryManager = new InventoryManager(cacheManager, logger, configManager, packageDetector);
     const versionDetector = new VersionDetector(configManager);
 
     // Register hover provider
@@ -78,6 +79,50 @@ export function activate(context: vscode.ExtensionContext) {
     // Initial update
     updateStatusBar();
 
+    // Listen for Python environment changes
+    // Watch for changes to Python interpreter setting
+    context.subscriptions.push(
+        vscode.workspace.onDidChangeConfiguration(event => {
+            if (event.affectsConfiguration('python.defaultInterpreterPath')) {
+                logger.info('Python interpreter changed, clearing version cache');
+                hoverProvider.clearVersionCache();
+            }
+        })
+    );
+
+    // Listen for Python extension environment changes
+    // The Python extension activates and exposes an API that includes environment change events
+    async function setupPythonExtensionListener() {
+        try {
+            const pythonExt = vscode.extensions.getExtension('ms-python.python');
+            if (pythonExt) {
+                if (!pythonExt.isActive) {
+                    await pythonExt.activate();
+                }
+
+                const pythonApi = pythonExt.exports;
+                // The Python extension API exposes an onDidChangePythonInterpreter event
+                if (pythonApi && pythonApi.environments && pythonApi.environments.onDidChangeActiveEnvironmentPath) {
+                    const disposable = pythonApi.environments.onDidChangeActiveEnvironmentPath(() => {
+                        logger.info('Active Python environment changed, clearing version cache');
+                        hoverProvider.clearVersionCache();
+                    });
+                    context.subscriptions.push(disposable);
+                    logger.info('Python environment change listener registered');
+                } else {
+                    logger.debug('Python extension API does not expose environment change events');
+                }
+            } else {
+                logger.debug('Python extension not found, skipping environment change listener');
+            }
+        } catch (error) {
+            logger.error('Failed to setup Python extension listener:', error);
+        }
+    }
+
+    // Setup listener after a short delay to ensure Python extension is ready
+    setTimeout(setupPythonExtensionListener, 1000);
+
     // Register command to show cache info
     context.subscriptions.push(
         vscode.commands.registerCommand('pythonHover.showCacheInfo', async () => {
@@ -92,7 +137,7 @@ export function activate(context: vscode.ExtensionContext) {
                     `📍 Location: ${stats.cacheDir || 'Global storage'}\n\n` +
                     `Cache includes documentation snippets and Intersphinx inventories for faster hover responses.`;
 
-                const action = await vscode.window.showInformationMessage(
+                const action = await ErrorNotifier.showInfo(
                     message,
                     'Clear Cache',
                     'Open Location',
@@ -107,7 +152,7 @@ export function activate(context: vscode.ExtensionContext) {
                 }
             } catch (error) {
                 logger.error('Failed to show cache info:', error);
-                vscode.window.showErrorMessage('Failed to retrieve cache information');
+                await ErrorNotifier.showError('Failed to retrieve cache information');
             }
         })
     );
@@ -119,11 +164,11 @@ export function activate(context: vscode.ExtensionContext) {
                 const stats = await cacheManager.clear();
                 await inventoryManager.invalidateCache();
                 updateStatusBar(); // Update status bar after clearing cache
-                vscode.window.showInformationMessage(
+                await ErrorNotifier.showInfo(
                     `✅ Cache cleared! Deleted ${stats.filesDeleted} files.`
                 );
             } catch (error) {
-                vscode.window.showErrorMessage(`❌ Failed to clear cache: ${error}`);
+                await ErrorNotifier.showError(`Failed to clear cache: ${error}`);
                 logger.error('Cache clear error:', error);
             }
         })
@@ -152,7 +197,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand('pythonHover.copyUrl', (url: string) => {
             if (url) {
                 vscode.env.clipboard.writeText(url);
-                vscode.window.showInformationMessage('📋 URL copied to clipboard!');
+                ErrorNotifier.showInfo('📋 URL copied to clipboard!');
             }
         })
     );
@@ -164,7 +209,7 @@ export function activate(context: vscode.ExtensionContext) {
             if (editor && code) {
                 const snippet = new vscode.SnippetString(code);
                 editor.insertSnippet(snippet);
-                vscode.window.showInformationMessage('✅ Example inserted!');
+                ErrorNotifier.showInfo('✅ Example inserted!');
             }
         })
     );
@@ -181,9 +226,9 @@ export function activate(context: vscode.ExtensionContext) {
                 const newSize = sizes[currentIndex + 1];
                 await config.update('fontSize', newSize, vscode.ConfigurationTarget.Global);
                 hoverProvider.refreshTheme();
-                vscode.window.showInformationMessage(`🔤 Font size: ${newSize}`);
+                ErrorNotifier.showInfo(`🔤 Font size: ${newSize}`);
             } else {
-                vscode.window.showInformationMessage('Already at maximum font size');
+                ErrorNotifier.showInfo('Already at maximum font size');
             }
         })
     );
@@ -200,9 +245,9 @@ export function activate(context: vscode.ExtensionContext) {
                 const newSize = sizes[currentIndex - 1];
                 await config.update('fontSize', newSize, vscode.ConfigurationTarget.Global);
                 hoverProvider.refreshTheme();
-                vscode.window.showInformationMessage(`🔤 Font size: ${newSize}`);
+                ErrorNotifier.showInfo(`🔤 Font size: ${newSize}`);
             } else {
-                vscode.window.showInformationMessage('Already at minimum font size');
+                ErrorNotifier.showInfo('Already at minimum font size');
             }
         })
     );
@@ -304,13 +349,30 @@ export function activate(context: vscode.ExtensionContext) {
             if (event.affectsConfiguration('pythonHover')) {
                 configManager.refresh();
                 hoverProvider.refreshTheme();
+
+                // Invalidate inventories when library-related settings change
+                if (event.affectsConfiguration('pythonHover.customLibraries') ||
+                    event.affectsConfiguration('pythonHover.experimental.autoDetectLibraries')) {
+                    logger.info('Library configuration changed, invalidating inventory cache');
+                    inventoryManager.invalidateCache().catch(error => {
+                        logger.error('Failed to invalidate inventory cache:', error);
+                    });
+                }
+
+                // Clear version cache when docs version setting changes
+                if (event.affectsConfiguration('pythonHover.docsVersion')) {
+                    logger.info('Documentation version setting changed, clearing version cache');
+                    hoverProvider.clearVersionCache();
+                }
+
+                logger.info('Configuration reloaded successfully');
             }
         })
     );
 
-    console.log('[PythonHover] ✅ Extension activated successfully');
+    logger.info('✅ Extension activated successfully');
 }
 
 export function deactivate() {
-    console.log('[PythonHover] Extension deactivated');
+    Logger.getInstance().info('Extension deactivated');
 }

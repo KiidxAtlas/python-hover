@@ -1,6 +1,6 @@
 import { DocumentationSnippet } from './documentationFetcher';
-import { ENHANCED_EXAMPLES } from './enhancedExamples';
-import { STATIC_EXAMPLES } from './staticExamples';
+import { ENHANCED_EXAMPLES } from '../data/enhancedExamples';
+import { STATIC_EXAMPLES } from '../data/staticExamples';
 
 /**
  * Enriches documentation snippets with examples from staticExamples and enhancedExamples

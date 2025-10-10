@@ -163,7 +163,7 @@ export function getMethodComparison(method: string): ComparisonInfo | null {
     }
 
     // Try to find comparison that includes this method
-    for (const [key, comparison] of Object.entries(METHOD_COMPARISONS)) {
+    for (const [_key, comparison] of Object.entries(METHOD_COMPARISONS)) {
         if (comparison.similar.includes(method)) {
             return comparison;
         }

@@ -1,6 +1,6 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
-import { SymbolResolver } from '../../symbolResolver';
+import { SymbolResolver } from '../../resolvers/symbolResolver';
 
 suite('SymbolResolver Test Suite', () => {
     let resolver: SymbolResolver;

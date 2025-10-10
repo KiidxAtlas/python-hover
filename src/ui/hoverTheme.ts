@@ -109,7 +109,7 @@ export class HoverTheme {
     }    /**
      * Format section header
      */
-    public formatSectionHeader(title: string, icon?: string): string {
+    public formatSectionHeader(title: string, _icon?: string): string {
         // Map section types to VS Code theme icons
         const iconMap: Record<string, string> = {
             'Parameters': '$(symbol-parameter)',

@@ -3,9 +3,13 @@ import * as nodeFetch from 'node-fetch';
 const fetch = nodeFetch.default || nodeFetch;
 
 import * as pako from 'pako';
+import * as vscode from 'vscode';
 import { CacheManager } from './cache';
 import { ConfigurationManager } from './config';
+import { Logger } from './logger';
 import { PackageDetector } from './packageDetector';
+import { ErrorNotifier } from './errorNotifier';
+import { URLValidator } from '../utils/urlValidator';
 
 export interface InventoryEntry {
     name: string;
@@ -150,6 +154,7 @@ export class InventoryManager {
 
     constructor(
         private cacheManager: CacheManager,
+        private logger: Logger,
         private configManager?: ConfigurationManager,
         private packageDetector?: PackageDetector
     ) { }
@@ -165,11 +170,24 @@ export class InventoryManager {
         // Merge custom libraries with hardcoded ones
         // Custom libraries take precedence if there's a name collision
         const allLibs = [...InventoryManager.THIRD_PARTY_LIBRARIES];
+        const validationErrors: string[] = [];
 
         for (const customLib of customLibs) {
-            // Validate custom library config
-            if (!customLib.name || !customLib.inventoryUrl || !customLib.baseUrl) {
-                console.warn(`[PythonHover] Invalid custom library config, skipping:`, customLib);
+            // Comprehensive validation of custom library config
+            const errors = this.validateCustomLibrary(customLib);
+
+            if (errors.length > 0) {
+                const errorMsg = `Invalid custom library config for "${customLib.name || 'unknown'}": ${errors.join(', ')}`;
+                this.logger.error(errorMsg);
+                validationErrors.push(errorMsg);
+                // Show user-friendly error notification
+                if (typeof vscode !== 'undefined' && vscode.window) {
+                    ErrorNotifier.showConfigError(
+                        `custom library "${customLib.name || 'unknown'}"`,
+                        errors[0],
+                        'pythonHover.customLibraries'
+                    );
+                }
                 continue;
             }
 
@@ -177,42 +195,95 @@ export class InventoryManager {
             const existingIndex = allLibs.findIndex(lib => lib.name === customLib.name);
             if (existingIndex !== -1) {
                 // Replace existing with custom
-                console.log(`[PythonHover] Overriding built-in config for library: ${customLib.name}`);
+                this.logger.info(`Overriding built-in config for library: ${customLib.name}`);
                 allLibs[existingIndex] = customLib;
             } else {
                 // Add new custom library
-                console.log(`[PythonHover] Adding custom library: ${customLib.name}`);
+                this.logger.info(`Adding custom library: ${customLib.name}`);
                 allLibs.push(customLib);
             }
         }
 
+        // Log summary if there were validation errors
+        if (validationErrors.length > 0) {
+            this.logger.warn(`${validationErrors.length} custom library config(s) had validation errors and were skipped`);
+        }
+
         return allLibs;
+    }
+
+    /**
+     * Validate a custom library configuration
+     * Returns array of error messages (empty if valid)
+     */
+    private validateCustomLibrary(lib: any): string[] {
+        const errors: string[] = [];
+
+        // Validate name
+        const nameValidation = URLValidator.validateName(lib.name);
+        if (!nameValidation.isValid) {
+            errors.push(...nameValidation.errors);
+        }
+        // Log name warnings
+        nameValidation.warnings.forEach(warning => {
+            this.logger.warn(warning);
+        });
+
+        // Validate inventoryUrl
+        if (!lib.inventoryUrl || typeof lib.inventoryUrl !== 'string' || lib.inventoryUrl.trim() === '') {
+            errors.push('Missing or invalid "inventoryUrl" field');
+        } else {
+            const invValidation = URLValidator.validateInventoryURL(lib.inventoryUrl);
+            if (!invValidation.isValid) {
+                errors.push(...invValidation.errors);
+            }
+            // Log inventory URL warnings
+            invValidation.warnings.forEach(warning => {
+                this.logger.warn(`inventoryUrl "${lib.inventoryUrl}" - ${warning}`);
+            });
+        }
+
+        // Validate baseUrl
+        if (!lib.baseUrl || typeof lib.baseUrl !== 'string' || lib.baseUrl.trim() === '') {
+            errors.push('Missing or invalid "baseUrl" field');
+        } else {
+            const baseValidation = URLValidator.validateBaseURL(lib.baseUrl);
+            if (!baseValidation.isValid) {
+                errors.push(...baseValidation.errors);
+            }
+            // Log base URL warnings
+            baseValidation.warnings.forEach(warning => {
+                this.logger.warn(`baseUrl "${lib.baseUrl}" - ${warning}`);
+            });
+        }
+
+        return errors;
     }
 
     public async getInventory(version: string): Promise<Map<string, InventoryEntry>> {
         const cacheKey = `inventory-${version}-v8`; // v8 for enhanced cache invalidation support
         const maxAge = CacheManager.hoursToMs(24); // 24 hours
 
-        console.log(`[PythonHover] Getting inventory for version ${version}, cache key: ${cacheKey}`);
+        this.logger.debug(`Getting inventory for version ${version}, cache key: ${cacheKey}`);
 
         try {
             // Check cache first
             const cached = await this.cacheManager.get<Record<string, InventoryEntry>>(cacheKey);
-            console.log(`[PythonHover] Cache lookup result: ${cached ? 'found' : 'not found'}`);
+            this.logger.debug(`Cache lookup result: ${cached ? 'found' : 'not found'}`);
 
             if (cached) {
                 const isExpired = await this.cacheManager.isExpired(cacheKey, maxAge);
-                console.log(`[PythonHover] Cache expired check: ${isExpired ? 'expired' : 'not expired'}`);
-                console.log(`[PythonHover] Cache timestamp: ${new Date(cached.timestamp)}`);
-                console.log(`[PythonHover] Max age: ${maxAge}ms (${maxAge / (1000 * 60 * 60)}h)`);
+                this.logger.debug(`Cache expired check: ${isExpired ? 'expired' : 'not expired'}`);
+                this.logger.debug(`Cache timestamp: ${new Date(cached.timestamp)}`);
+                this.logger.debug(`Max age: ${maxAge}ms (${maxAge / (1000 * 60 * 60)}h)`);
 
                 if (!isExpired) {
-                    console.log(`[PythonHover] Using cached inventory for version ${version}`);
+                    this.logger.debug(`Using cached inventory for version ${version}`);
                     return new Map(Object.entries(cached.data));
                 }
             }
 
-            console.log(`[PythonHover] Fetching fresh inventory for version ${version}`);
+            this.logger.debug(`Fetching fresh inventory for version ${version}`);
             const inventory = await this.fetchInventory(version);
 
             // Convert Map to Object for storage
@@ -224,11 +295,11 @@ export class InventoryManager {
             await this.cacheManager.set(cacheKey, inventoryObj);
             return inventory;
         } catch (error) {
-            console.error(`[PythonHover] Failed to get inventory for ${version}:`, error);
+            this.logger.error(`Failed to get inventory for ${version}`, error as Error);
             // If fetch fails but we have cached data, use it
             const cached = await this.cacheManager.get<Record<string, InventoryEntry>>(cacheKey);
             if (cached) {
-                console.log(`[PythonHover] Using stale cached inventory due to fetch error`);
+                this.logger.debug(`Using stale cached inventory due to fetch error`);
                 return new Map(Object.entries(cached.data));
             }
             throw error;
@@ -236,18 +307,12 @@ export class InventoryManager {
     }
 
     public async invalidateCache(): Promise<void> {
-        console.log('[PythonHover] Invalidating inventory cache by incrementing version');
+        this.logger.info('Invalidating inventory cache by incrementing version');
 
         // This forces cache refresh by incrementing the version number
-        // Update the current cache key version to force refresh on next access
-        const currentVersion = '3.12'; // Could be made dynamic if needed
-        const newCacheKey = `inventory-${currentVersion}-v8`; // Increment from v7 to v8
-
-        // Update the class constant to use the new version
-        console.log(`[PythonHover] Inventory cache will use new version: v8`);
-
         // Note: The actual cache key increment is handled by changing the version
-        // in the getInventory method's cacheKey generation
+        // in the getInventory method's cacheKey generation (currently at v8)
+        this.logger.info(`Inventory cache will use new version: v8`);
     }
 
     /**
@@ -262,7 +327,7 @@ export class InventoryManager {
         if (this.packageDetector && pythonPath) {
             const versionedConfig = await this.getVersionedLibraryConfig(libraryName, pythonPath);
             if (versionedConfig) {
-                console.log(`[PythonHover] Using ${versionedConfig.isExactMatch ? 'exact' : 'fallback'} version ${versionedConfig.version} for ${libraryName}`);
+                this.logger.debug(`Using ${versionedConfig.isExactMatch ? 'exact' : 'fallback'} version ${versionedConfig.version} for ${libraryName}`);
                 return await this.fetchVersionedInventory(versionedConfig);
             }
         }
@@ -272,14 +337,14 @@ export class InventoryManager {
         const config = allLibs.find(lib => lib.name === libraryName);
 
         if (!config) {
-            console.log(`[PythonHover] No inventory configuration for library: ${libraryName}`);
+            this.logger.debug(`No inventory configuration for library: ${libraryName}`);
             return null;
         }
 
         const cacheKey = `inventory-${libraryName}-v1`;
         const maxAge = CacheManager.hoursToMs(24 * 7); // 7 days for third-party (more stable)
 
-        console.log(`[PythonHover] Getting third-party inventory for ${libraryName}`);
+        this.logger.debug(`Getting third-party inventory for ${libraryName}`);
 
         try {
             // Check cache first
@@ -289,12 +354,12 @@ export class InventoryManager {
                 const isExpired = await this.cacheManager.isExpired(cacheKey, maxAge);
 
                 if (!isExpired) {
-                    console.log(`[PythonHover] Using cached inventory for ${libraryName}`);
+                    this.logger.debug(`Using cached inventory for ${libraryName}`);
                     return new Map(Object.entries(cached.data));
                 }
             }
 
-            console.log(`[PythonHover] Fetching fresh inventory for ${libraryName}`);
+            this.logger.debug(`Fetching fresh inventory for ${libraryName}`);
             const inventory = await this.fetchThirdPartyInventory(config);
 
             // Convert Map to Object for storage
@@ -306,11 +371,11 @@ export class InventoryManager {
             await this.cacheManager.set(cacheKey, inventoryObj);
             return inventory;
         } catch (error) {
-            console.error(`[PythonHover] Failed to get inventory for ${libraryName}:`, error);
+            this.logger.error(`Failed to get inventory for ${libraryName}:`, error as Error);
             // If fetch fails but we have cached data, use it
             const cached = await this.cacheManager.get<Record<string, InventoryEntry>>(cacheKey);
             if (cached) {
-                console.log(`[PythonHover] Using stale cached inventory due to fetch error`);
+                this.logger.debug(`Using stale cached inventory due to fetch error`);
                 return new Map(Object.entries(cached.data));
             }
             return null; // Return null instead of throwing for third-party libraries
@@ -402,7 +467,7 @@ export class InventoryManager {
                 if (entry) {
                     // Debug: Log entries we're storing to see if anchor replacement worked
                     if (entry.name === 'len' || entry.name === 'class' || entry.name === 'min') {
-                        console.log(`[PythonHover] Storing entry: ${entry.name} -> ${entry.uri}#${entry.anchor}`);
+                        this.logger.debug(`Storing entry: ${entry.name} -> ${entry.uri}#${entry.anchor}`);
                     }
 
                     // Store with both simple name and domain:role qualified name
@@ -464,7 +529,7 @@ export class InventoryManager {
                 }
             }
 
-            console.log(`[PythonHover] Loaded ${entryCount} entries from ${config.name} inventory`);
+            this.logger.debug(`Loaded ${entryCount} entries from ${config.name} inventory`);
         } catch (error) {
             throw new Error(`Failed to parse third-party inventory for ${config.name}: ${error}`);
         }
@@ -590,8 +655,8 @@ export class InventoryManager {
 
         // Debug: Log the raw line and parsed anchor for specific items
         if (name === 'for' || name === 'class' || name === 'len') {
-            console.log(`[PythonHover] Raw line: "${line}"`);
-            console.log(`[PythonHover] Parsed - name: "${name}", uri: "${uri}", anchor: "${anchor}"`);
+            this.logger.debug(`Raw line: "${line}"`);
+            this.logger.debug(`Parsed - name: "${name}", uri: "${uri}", anchor: "${anchor}"`);
         }
 
         // Skip if invalid
@@ -602,11 +667,11 @@ export class InventoryManager {
         // Handle special placeholders in intersphinx inventory
         // '$' is a placeholder for the object name in anchors
         if (name === 'for' || name === 'class' || name === 'len') {
-            console.log(`[PythonHover] Processing anchor for ${name}: "${anchor}"`);
+            this.logger.debug(`Processing anchor for ${name}: "${anchor}"`);
         }
         if (anchor.includes('$')) {
             if (name === 'for' || name === 'class' || name === 'len') {
-                console.log(`[PythonHover] Anchor contains $, replacing...`);
+                this.logger.debug(`Anchor contains $, replacing...`);
             }
             // For some entries, we need to transform the name
             let replacementName = name;
@@ -636,7 +701,7 @@ export class InventoryManager {
                         anchor = parts[0]; // Keep only the part before #
                     }
                     if (name === 'for' || name === 'class' || name === 'len') {
-                        console.log(`[PythonHover] Special std:label processing: ${anchor}`);
+                        this.logger.debug(`Special std:label processing: ${anchor}`);
                     }
                     // Skip the general replacement below
                 } else {
@@ -647,7 +712,7 @@ export class InventoryManager {
             }
 
             if (name === 'for' || name === 'class' || name === 'len') {
-                console.log(`[PythonHover] Final processed anchor: "${anchor}"`);
+                this.logger.debug(`Final processed anchor: "${anchor}"`);
             }
         }
 
@@ -675,7 +740,7 @@ export class InventoryManager {
         // If we have a context (e.g., 'numpy'), check third-party library inventories first
         if (context) {
             const baseModule = context.split('.')[0];
-            console.log(`[PythonHover] Checking third-party library: ${baseModule} for symbol: ${symbol}`);
+            this.logger.debug(`Checking third-party library: ${baseModule} for symbol: ${symbol}`);
 
             const thirdPartyInventory = await this.getThirdPartyInventory(baseModule, pythonPath);
             if (thirdPartyInventory) {
@@ -698,7 +763,7 @@ export class InventoryManager {
                 for (const pattern of searchPatterns) {
                     const entry = thirdPartyInventory.get(pattern);
                     if (entry) {
-                        console.log(`[PythonHover] Found third-party entry: ${pattern} -> ${entry.uri}#${entry.anchor}`);
+                        this.logger.debug(`Found third-party entry: ${pattern} -> ${entry.uri}#${entry.anchor}`);
                         return entry;
                     }
                 }
@@ -710,12 +775,12 @@ export class InventoryManager {
 
                     // Check if the entry name ends with the symbol we're looking for
                     if (entry.name.endsWith(`.${methodName}`) || entry.name === methodName) {
-                        console.log(`[PythonHover] Found third-party entry via partial match: ${entry.name} -> ${entry.uri}#${entry.anchor}`);
+                        this.logger.debug(`Found third-party entry via partial match: ${entry.name} -> ${entry.uri}#${entry.anchor}`);
                         return entry;
                     }
                 }
 
-                console.log(`[PythonHover] Symbol '${symbol}' not found in ${baseModule} inventory, falling back to stdlib`);
+                this.logger.debug(`Symbol '${symbol}' not found in ${baseModule} inventory, falling back to stdlib`);
             }
         }
 
@@ -729,7 +794,7 @@ export class InventoryManager {
         for (const [key, inventoryEntry] of inventory) {
             if (key === symbol || (key.includes(':') && key.startsWith(`${symbol}:`))) {
                 candidates.push(inventoryEntry);
-                console.log(`[PythonHover] Found entry: ${inventoryEntry.name} (${inventoryEntry.domain}:${inventoryEntry.role})`);
+                this.logger.debug(`Found entry: ${inventoryEntry.name} (${inventoryEntry.domain}:${inventoryEntry.role})`);
             }
         }
 
@@ -750,13 +815,13 @@ export class InventoryManager {
 
         // Special handling for dunder methods (like __str__, __init__, __len__, etc.)
         if (symbol.startsWith('__') && symbol.endsWith('__')) {
-            console.log(`[PythonHover] Looking for special method: ${symbol}`);
+            this.logger.debug(`Looking for special method: ${symbol}`);
 
             // Try on object (base class for all Python objects)
             const objectEntry = inventory.get(`object.${symbol}`);
             if (objectEntry) {
                 candidates.push(objectEntry);
-                console.log(`[PythonHover] Found ${symbol} on object`);
+                this.logger.debug(`Found ${symbol} on object`);
             }
 
             // Try without the prefix/suffix in case it's documented differently
@@ -764,7 +829,7 @@ export class InventoryManager {
             const baseEntry = inventory.get(baseMethodName);
             if (baseEntry) {
                 candidates.push(baseEntry);
-                console.log(`[PythonHover] Found base method: ${baseMethodName}`);
+                this.logger.debug(`Found base method: ${baseMethodName}`);
             }
 
             // Look for it in the data model documentation
@@ -779,7 +844,7 @@ export class InventoryManager {
                 const entry = inventory.get(key);
                 if (entry) {
                     candidates.push(entry);
-                    console.log(`[PythonHover] Found ${symbol} via ${key}`);
+                    this.logger.debug(`Found ${symbol} via ${key}`);
                 }
             }
 
@@ -787,7 +852,7 @@ export class InventoryManager {
             for (const [key, inventoryEntry] of inventory) {
                 if (key.endsWith(`.${symbol}`) && !candidates.includes(inventoryEntry)) {
                     candidates.push(inventoryEntry);
-                    console.log(`[PythonHover] Found ${symbol} on ${key.split('.')[0]}`);
+                    this.logger.debug(`Found ${symbol} on ${key.split('.')[0]}`);
                 }
             }
         }
@@ -800,22 +865,21 @@ export class InventoryManager {
 
         // If we have candidates, pick the best one based on priority
         if (candidates.length > 0) {
-            console.log(`[PythonHover] Found ${candidates.length} candidates for "${symbol}":`,
-                candidates.map(c => `${c.name} (${c.domain}:${c.role}) -> ${c.uri}#${c.anchor}`));
+            this.logger.debug(`Found ${candidates.length} candidates for "${symbol}": ${candidates.map(c => `${c.name} (${c.domain}:${c.role}) -> ${c.uri}#${c.anchor}`).join(', ')}`);
             const selected = this.selectBestCandidate(candidates, symbol);
-            console.log(`[PythonHover] Selected: ${selected.name} (${selected.domain}:${selected.role})`);
+            this.logger.debug(`Selected: ${selected.name} (${selected.domain}:${selected.role})`);
             return selected;
         }
 
         // Fallback: create synthetic entries for common Python keywords
         if (this.isPythonKeyword(symbol)) {
-            console.log(`[PythonHover] Creating fallback entry for keyword: ${symbol}`);
+            this.logger.debug(`Creating fallback entry for keyword: ${symbol}`);
             return this.createKeywordFallback(symbol, version);
         }
 
         // Fallback: create synthetic entries for common special methods
         if (symbol.startsWith('__') && symbol.endsWith('__')) {
-            console.log(`[PythonHover] Creating fallback entry for special method: ${symbol}`);
+            this.logger.debug(`Creating fallback entry for special method: ${symbol}`);
             return this.createSpecialMethodFallback(symbol, version);
         }
 
@@ -1029,11 +1093,11 @@ export class InventoryManager {
             const installedVersion = await this.packageDetector.getPackageVersion(pythonPath, libraryName);
 
             if (!installedVersion) {
-                console.log(`[PythonHover] Package ${libraryName} not installed in environment`);
+                this.logger.debug(`Package ${libraryName} not installed in environment`);
                 return null;
             }
 
-            console.log(`[PythonHover] Found ${libraryName} version ${installedVersion} in environment`);
+            this.logger.debug(`Found ${libraryName} version ${installedVersion} in environment`);
 
             // Try to build version-specific URL
             const versionedConfig = this.buildVersionedConfig(libraryName, installedVersion);
@@ -1064,7 +1128,7 @@ export class InventoryManager {
                 }
             }
         } catch (error) {
-            console.error(`[PythonHover] Error getting versioned config for ${libraryName}:`, error);
+            this.logger.error(`Error getting versioned config for ${libraryName}:`, error as Error);
         }
 
         return null;
@@ -1195,7 +1259,7 @@ export class InventoryManager {
         for (const tryVersion of tryVersions) {
             const config = this.buildVersionedConfig(libraryName, tryVersion);
             if (config && await this.testInventoryUrl(config.inventoryUrl)) {
-                console.log(`[PythonHover] Found fallback version ${tryVersion} for ${libraryName}`);
+                this.logger.debug(`Found fallback version ${tryVersion} for ${libraryName}`);
                 return config;
             }
         }
@@ -1203,7 +1267,7 @@ export class InventoryManager {
         // Fall back to stable/latest
         const fallback = fallbackPatterns[libraryName];
         if (fallback && await this.testInventoryUrl(fallback.inventoryUrl)) {
-            console.log(`[PythonHover] Using fallback '${fallback.version}' docs for ${libraryName}`);
+            this.logger.debug(`Using fallback '${fallback.version}' docs for ${libraryName}`);
             return fallback;
         }
 
@@ -1225,12 +1289,12 @@ export class InventoryManager {
                 const isExpired = await this.cacheManager.isExpired(cacheKey, maxAge);
 
                 if (!isExpired) {
-                    console.log(`[PythonHover] Using cached versioned inventory for ${config.name} ${config.version}`);
+                    this.logger.debug(`Using cached versioned inventory for ${config.name} ${config.version}`);
                     return new Map(Object.entries(cached.data));
                 }
             }
 
-            console.log(`[PythonHover] Fetching versioned inventory for ${config.name} ${config.version}`);
+            this.logger.debug(`Fetching versioned inventory for ${config.name} ${config.version}`);
             const inventory = await this.fetchThirdPartyInventory(config);
 
             // Convert Map to Object for storage
@@ -1242,11 +1306,11 @@ export class InventoryManager {
             await this.cacheManager.set(cacheKey, inventoryObj);
             return inventory;
         } catch (error) {
-            console.error(`[PythonHover] Failed to fetch versioned inventory for ${config.name}:`, error);
+            this.logger.error(`Failed to fetch versioned inventory for ${config.name}:`, error as Error);
             // Fall back to cached data if available
             const cached = await this.cacheManager.get<Record<string, InventoryEntry>>(cacheKey);
             if (cached) {
-                console.log(`[PythonHover] Using stale cached inventory`);
+                this.logger.debug(`Using stale cached inventory`);
                 return new Map(Object.entries(cached.data));
             }
             return null;
@@ -1284,7 +1348,6 @@ export class InventoryManager {
     public getSupportedLibrariesCount(): { builtIn: number; custom: number; total: number } {
         const builtIn = InventoryManager.THIRD_PARTY_LIBRARIES.length;
         const customLibs = this.configManager?.customLibraries ?? [];
-        const custom = customLibs.length;
 
         // Check for duplicates
         const builtInNames = new Set(InventoryManager.THIRD_PARTY_LIBRARIES.map(lib => lib.name));

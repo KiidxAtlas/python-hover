@@ -1,12 +1,10 @@
-// CommonJS import for node-fetch
-import * as nodeFetch from 'node-fetch';
-const fetch = nodeFetch.default || nodeFetch;
-
-import { CacheManager } from './cache';
-import { getDunderInfo, IMPORT_INFO, MAP, MODULES, OPERATORS } from './documentationUrls';
+import { CacheManager } from '../services/cache';
+import { getDunderInfo, IMPORT_INFO, MAP, MODULES, OPERATORS } from '../data/documentationUrls';
 import { ExampleEnricher } from './exampleEnricher';
-import { InventoryEntry } from './inventory';
-import { Info } from './types';
+import { InventoryEntry } from '../services/inventory';
+import { Logger } from '../services/logger';
+import { Info } from '../types';
+import { FetchWithTimeout } from '../utils/fetchWithTimeout';
 
 export interface DocumentationSnippet {
     title: string;
@@ -95,9 +93,11 @@ function buildFullUrlFromInfo(info: Info): string {
 }
 
 export class DocumentationFetcher {
+    private logger: Logger;
     private exampleEnricher: ExampleEnricher;
 
     constructor(private cacheManager: CacheManager) {
+        this.logger = Logger.getInstance();
         this.exampleEnricher = new ExampleEnricher();
     }
 
@@ -110,23 +110,23 @@ export class DocumentationFetcher {
         maxLines: number = 25,
         context?: string
     ): Promise<DocumentationSnippet> {
-        console.log(`[PythonHover] Fetching documentation for symbol: ${symbol}`);
+        this.logger.debug(`Fetching documentation for symbol: ${symbol}`);
 
         // First, try the direct URL mapping system
         let docSnippet: DocumentationSnippet;
 
         if (hasDocumentationMapping(symbol)) {
-            console.log(`[PythonHover] Using direct URL mapping for symbol: ${symbol}`);
+            this.logger.debug(`Using direct URL mapping for symbol: ${symbol}`);
             docSnippet = await this.fetchFromDirectMapping(symbol, maxLines);
         }
         // Fall back to intersphinx inventory entry if provided
         else if (entry) {
-            console.log(`[PythonHover] Using intersphinx inventory for symbol: ${symbol}`);
+            this.logger.debug(`Using intersphinx inventory for symbol: ${symbol}`);
             docSnippet = await this.fetchDocumentation(entry, maxLines);
         }
         // No documentation source available
         else {
-            console.log(`[PythonHover] No documentation source found for symbol: ${symbol}`);
+            this.logger.debug(`No documentation source found for symbol: ${symbol}`);
 
             // Determine the appropriate fallback URL based on context
             let fallbackUrl = 'https://docs.python.org/3/';
@@ -172,43 +172,27 @@ export class DocumentationFetcher {
         // Check cache first
         const cached = await this.cacheManager.get<DocumentationSnippet>(cacheKey);
         if (cached && !await this.cacheManager.isExpired(cacheKey, maxAge)) {
-            console.log(`[PythonHover] Returning cached direct mapping for symbol: ${symbol}`);
+            this.logger.debug(`Returning cached direct mapping for symbol: ${symbol}`);
             return cached.data;
         }
 
         try {
             const baseUrl = 'https://docs.python.org/3/' + mapping.url;
-            console.log(`[PythonHover] Fetching from direct URL: ${baseUrl}`);
+            this.logger.debug(`Fetching from direct URL: ${baseUrl}`);
 
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 10000);
+            const response = await FetchWithTimeout.fetch(baseUrl);
 
-            try {
-                const response = await fetch(baseUrl, {
-                    signal: controller.signal,
-                    headers: { 'User-Agent': 'VSCode-Python-Hover-Extension' }
-                });
-
-                clearTimeout(timeoutId);
-
-                if (!response.ok) {
-                    throw new Error(`Failed to fetch documentation: ${response.status}`);
-                }
-
-                const html = await response.text();
-                const snippet = await this.extractDirectMappingContent(html, mapping, symbol, maxLines);
-
-                await this.cacheManager.set(cacheKey, snippet);
-                return snippet;
-            } catch (fetchError: any) {
-                clearTimeout(timeoutId);
-                if (fetchError.name === 'AbortError') {
-                    throw new Error(`Documentation fetch timed out after 10 seconds: ${baseUrl}`);
-                }
-                throw fetchError;
+            if (!response.ok) {
+                throw new Error(`Failed to fetch documentation: ${response.status}`);
             }
+
+            const html = await response.text();
+            const snippet = await this.extractDirectMappingContent(html, mapping, symbol, maxLines);
+
+            await this.cacheManager.set(cacheKey, snippet);
+            return snippet;
         } catch (error) {
-            console.error(`[PythonHover] Error fetching direct mapping for ${symbol}:`, error);
+            this.logger.error(`Error fetching direct mapping for ${symbol}:`, error as Error);
 
             // Return cached data if available
             if (cached) {
@@ -251,7 +235,7 @@ export class DocumentationFetcher {
                 return cached.data;
             }
 
-            console.error(`[PythonHover] Failed to fetch or extract documentation for ${entry.name}:`, error);
+            this.logger.error(`Failed to fetch or extract documentation for ${entry.name}:`, error as Error);
 
             // Return a snippet that indicates documentation is available but extraction failed
             return {
@@ -268,45 +252,27 @@ export class DocumentationFetcher {
         maxLines: number
     ): Promise<DocumentationSnippet> {
         const url = this.buildFullUrl(entry);
-        console.log(`[PythonHover] Fetching documentation from: ${url}`);
+        this.logger.debug(`Fetching documentation from: ${url}`);
 
-        // Add timeout to prevent hanging
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+        const response = await FetchWithTimeout.fetch(url);
 
-        try {
-            const response = await fetch(url, {
-                signal: controller.signal,
-                headers: { 'User-Agent': 'VSCode-Python-Hover-Extension' }
-            });
-
-            clearTimeout(timeoutId);
-
-            if (!response.ok) {
-                throw new Error(`Failed to fetch documentation: ${response.status}`);
-            }
-
-            const html = await response.text();
-            console.log(`[PythonHover] Fetched HTML length: ${html.length} characters`);
-
-            const snippet = this.extractRelevantSection(html, entry.anchor, maxLines, url, entry.name);
-            console.log(`[PythonHover] Extracted snippet length: ${snippet.length} characters`);
-            console.log(`[PythonHover] Snippet preview: ${snippet.substring(0, 200)}...`);
-
-            return {
-                title: entry.name,
-                content: snippet,
-                url: url,
-                anchor: entry.anchor
-            };
-        } catch (error: any) {
-            clearTimeout(timeoutId);
-
-            if (error.name === 'AbortError') {
-                throw new Error(`Documentation fetch timed out after 10 seconds: ${url}`);
-            }
-            throw error;
+        if (!response.ok) {
+            throw new Error(`Failed to fetch documentation: ${response.status}`);
         }
+
+        const html = await response.text();
+        this.logger.debug(`Fetched HTML length: ${html.length} characters`);
+
+        const snippet = this.extractRelevantSection(html, entry.anchor, maxLines, url, entry.name);
+        this.logger.debug(`Extracted snippet length: ${snippet.length} characters`);
+        this.logger.debug(`Snippet preview: ${snippet.substring(0, 200)}...`);
+
+        return {
+            title: entry.name,
+            content: snippet,
+            url: url,
+            anchor: entry.anchor
+        };
     }
 
     private buildFullUrl(entry: InventoryEntry): string {
@@ -325,7 +291,7 @@ export class DocumentationFetcher {
                     const md = this.htmlToMarkdown(section, maxLines, baseUrl, symbolName);
                     // If the extracted markdown is very short (e.g. only a heading), try a paragraph fallback
                     if (md.trim().length < 40) {
-                        console.log(`[PythonHover] Extracted markdown very short (${md.trim().length} chars), attempting paragraph fallback for anchor: ${anchor}`);
+                        this.logger.debug(`Extracted markdown very short (${md.trim().length} chars), attempting paragraph fallback for anchor: ${anchor}`);
                         const paraFallback = this.extractParagraphsAfterAnchor(html, anchor, 2);
                         if (paraFallback) {
                             return this.htmlToMarkdown(paraFallback, maxLines, baseUrl, symbolName);
@@ -339,7 +305,7 @@ export class DocumentationFetcher {
             const extracted = this.extractMainContent(html);
             return this.htmlToMarkdown(extracted, maxLines, baseUrl, symbolName);
         } catch (error) {
-            console.error(`[PythonHover] Error extracting section:`, error);
+            this.logger.error(`Error extracting section:`, error as Error);
             return '';
         }
     }
@@ -367,7 +333,7 @@ export class DocumentationFetcher {
             }
 
             if (startPos === -1) {
-                console.log(`[PythonHover] Paragraph fallback: anchor '${anchor}' not found by id or href`);
+                this.logger.debug(`Paragraph fallback: anchor '${anchor}' not found by id or href`);
                 return null;
             }
 
@@ -381,15 +347,15 @@ export class DocumentationFetcher {
             }
 
             if (paragraphs.length === 0) {
-                console.log(`[PythonHover] Paragraph fallback: no <p> found after anchor '${anchor}'`);
+                this.logger.debug(`Paragraph fallback: no <p> found after anchor '${anchor}'`);
                 return null;
             }
 
             const combined = paragraphs.join('\n\n');
-            console.log(`[PythonHover] Paragraph fallback: extracted ${paragraphs.length} paragraphs for anchor '${anchor}'`);
+            this.logger.debug(`Paragraph fallback: extracted ${paragraphs.length} paragraphs for anchor '${anchor}'`);
             return combined;
         } catch (error) {
-            console.error(`[PythonHover] Error in paragraph fallback for anchor '${anchor}':`, error);
+            this.logger.error(`Error in paragraph fallback for anchor '${anchor}':`, error as Error);
             return null;
         }
     }
@@ -438,7 +404,7 @@ export class DocumentationFetcher {
                     content = this.htmlToMarkdown(section, maxLines, baseUrl, symbol);
                 } else {
                     // Fallback to main content if anchor not found
-                    console.log(`[PythonHover] Anchor ${mapping.anchor} not found, using main content`);
+                    this.logger.debug(`Anchor ${mapping.anchor} not found, using main content`);
                     const extracted = this.extractMainContent(html);
                     const baseUrl = 'https://docs.python.org/3/' + mapping.url;
                     content = this.htmlToMarkdown(extracted, maxLines, baseUrl, symbol);
@@ -457,7 +423,7 @@ export class DocumentationFetcher {
                 anchor: mapping.anchor || ''
             };
         } catch (error) {
-            console.error(`[PythonHover] Error extracting direct mapping content for ${symbol}:`, error);
+            this.logger.error(`Error extracting direct mapping content for ${symbol}:`, error as Error);
             return {
                 title: symbol,
                 content: `Documentation for '${symbol}' - ${mapping.title}`,
@@ -468,19 +434,19 @@ export class DocumentationFetcher {
     }
 
     private extractAnchoredSection(html: string, anchor: string): string | null {
-        console.log(`[PythonHover] Looking for anchor: ${anchor}`);
+        this.logger.debug(`Looking for anchor: ${anchor}`);
 
         // Look for the anchored element
         const anchorRegex = new RegExp(`<[^>]+id=["']${this.escapeRegex(anchor)}["'][^>]*>`, 'i');
         const match = html.match(anchorRegex);
 
         if (!match) {
-            console.log(`[PythonHover] Anchor ${anchor} not found in HTML`);
+            this.logger.debug(`Anchor ${anchor} not found in HTML`);
             // Try to find the anchor in href attributes as well
             const hrefRegex = new RegExp(`<a[^>]+href=["'][^"']*#${this.escapeRegex(anchor)}["'][^>]*>`, 'i');
             const hrefMatch = html.match(hrefRegex);
             if (hrefMatch) {
-                console.log(`[PythonHover] Found anchor in href, but not as id`);
+                this.logger.debug(`Found anchor in href, but not as id`);
             }
 
             // Fallback: try to find a header that matches a readable form of the anchor
@@ -491,7 +457,7 @@ export class DocumentationFetcher {
                     const headerSearch = new RegExp(`<h[1-6][^>]*>[^<]*${this.escapeRegex(readable)}[^<]*<\/h[1-6]>`, 'i');
                     const headerMatch = html.match(headerSearch);
                     if (headerMatch) {
-                        console.log(`[PythonHover] Found header by readable anchor fallback: ${readable}`);
+                        this.logger.debug(`Found header by readable anchor fallback: ${readable}`);
                         const headerIndex = headerMatch.index!;
                         const startIndex = headerIndex;
 
@@ -506,13 +472,13 @@ export class DocumentationFetcher {
                     }
                 }
             } catch (e) {
-                console.log(`[PythonHover] Readable anchor fallback failed for '${anchor}':`, e);
+                this.logger.debug(`Readable anchor fallback failed for '${anchor}'`, e);
             }
 
             return null;
         }
 
-        console.log(`[PythonHover] Found anchor at position ${match.index}`);
+        this.logger.debug(`Found anchor at position ${match.index}`);
         const startIndex = match.index!;
 
         // For data model special methods, we need a very precise approach
@@ -530,18 +496,18 @@ export class DocumentationFetcher {
         let sectionStart = this.findSectionStart(html, startIndex, anchor);
         let sectionEnd = this.findSectionEnd(html, startIndex);
 
-        console.log(`[PythonHover] Section from ${sectionStart} to ${sectionEnd} (length: ${sectionEnd - sectionStart})`);
-        console.log(`[PythonHover] Section start preview: ${html.substring(sectionStart, sectionStart + 200)}...`);
+        this.logger.debug(`Section from ${sectionStart} to ${sectionEnd} (length: ${sectionEnd - sectionStart})`);
+        this.logger.debug(`Section start preview: ${html.substring(sectionStart, sectionStart + 200)}...`);
 
         const extractedHtml = html.substring(sectionStart, sectionEnd);
-        console.log(`[PythonHover] Extracted HTML length: ${extractedHtml.length}`);
-        console.log(`[PythonHover] Extracted HTML preview: ${extractedHtml.substring(0, 500)}...`);
+        this.logger.debug(`Extracted HTML length: ${extractedHtml.length}`);
+        this.logger.debug(`Extracted HTML preview: ${extractedHtml.substring(0, 500)}...`);
 
         return extractedHtml;
     }
 
     private extractDataModelMethod(html: string, anchor: string, anchorPosition: number): string | null {
-        console.log(`[PythonHover] Using specialized data model extraction for: ${anchor}`);
+        this.logger.debug(`Using specialized data model extraction for: ${anchor}`);
 
         // Look backwards from the anchor to find the <dt> tag that defines this method
         let searchStart = Math.max(0, anchorPosition - 2000);
@@ -560,7 +526,7 @@ export class DocumentationFetcher {
             // Check if this dt contains our anchor or if the anchor is shortly after
             if (dtPosition <= anchorPosition && anchorPosition <= dtEndPosition + 200) {
                 methodStart = dtPosition;
-                console.log(`[PythonHover] Found method definition dt at position: ${methodStart}`);
+                this.logger.debug(`Found method definition dt at position: ${methodStart}`);
                 break;
             }
         }
@@ -584,15 +550,15 @@ export class DocumentationFetcher {
             }
         }
 
-        console.log(`[PythonHover] Data model method section from ${methodStart} to ${methodEnd} (length: ${methodEnd - methodStart})`);
-        console.log(`[PythonHover] Data model section start preview: ${html.substring(methodStart, methodStart + 200)}...`);
+        this.logger.debug(`Data model method section from ${methodStart} to ${methodEnd} (length: ${methodEnd - methodStart})`);
+        this.logger.debug(`Data model section start preview: ${html.substring(methodStart, methodStart + 200)}...`);
 
         const extractedHtml = html.substring(methodStart, methodEnd);
         return extractedHtml;
     }
 
     private extractCompoundStatementKeyword(html: string, anchor: string, anchorPosition: number): string | null {
-        console.log(`[PythonHover] Using specialized compound statement extraction for: ${anchor}`);
+        this.logger.debug(`Using specialized compound statement extraction for: ${anchor}`);
 
         // Look ONLY forward from the anchor position to find content specifically about this keyword
         const searchArea = html.substring(anchorPosition, anchorPosition + 20000);
@@ -603,7 +569,7 @@ export class DocumentationFetcher {
         const headerMatch = sectionHeaderRegex.exec(searchArea);
 
         if (headerMatch) {
-            console.log(`[PythonHover] Found section header for ${anchor}: ${headerMatch[1]}`);
+            this.logger.debug(`Found section header for ${anchor}: ${headerMatch[1]}`);
 
             // Extract content ONLY from this header forward until the next section
             const headerStartPos = anchorPosition + headerMatch.index!;
@@ -620,8 +586,8 @@ export class DocumentationFetcher {
 
             const sectionContent = headerMatch[0] + html.substring(headerEndPos, sectionEndPos);
 
-            console.log(`[PythonHover] Extracted section content length: ${sectionContent.length}`);
-            console.log(`[PythonHover] Section content preview: ${sectionContent.substring(0, 200)}...`);
+            this.logger.debug(`Extracted section content length: ${sectionContent.length}`);
+            this.logger.debug(`Section content preview: ${sectionContent.substring(0, 200)}...`);
             return sectionContent;
         }
 
@@ -630,7 +596,7 @@ export class DocumentationFetcher {
         const altHeaderMatch = alternativeHeaderRegex.exec(searchArea);
 
         if (altHeaderMatch) {
-            console.log(`[PythonHover] Found alternative header for ${anchor}: ${altHeaderMatch[1]}`);
+            this.logger.debug(`Found alternative header for ${anchor}: ${altHeaderMatch[1]}`);
 
             const headerStartPos = anchorPosition + altHeaderMatch.index!;
             const headerEndPos = headerStartPos + altHeaderMatch[0].length;
@@ -647,19 +613,19 @@ export class DocumentationFetcher {
 
             const sectionContent = altHeaderMatch[0] + html.substring(headerEndPos, sectionEndPos);
 
-            console.log(`[PythonHover] Extracted alternative section content length: ${sectionContent.length}`);
+            this.logger.debug(`Extracted alternative section content length: ${sectionContent.length}`);
             return sectionContent;
         }
 
         // Last resort: Look for specific content patterns
-        console.log(`[PythonHover] No header found, looking for specific content patterns for ${anchor}`);
+        this.logger.debug(`No header found, looking for specific content patterns for ${anchor}`);
         const relevantContent: string[] = [];
 
         // Look for the syntax definition first
         const syntaxRegex = new RegExp(`${anchor}_stmt\\s*::=`, 'i');
         const syntaxMatch = searchArea.match(syntaxRegex);
         if (syntaxMatch) {
-            console.log(`[PythonHover] Found syntax definition for ${anchor}`);
+            this.logger.debug(`Found syntax definition for ${anchor}`);
             const syntaxPos = syntaxMatch.index!;
             const syntaxArea = searchArea.substring(Math.max(0, syntaxPos - 100), syntaxPos + 800);
             const syntaxBlockRegex = /<(?:p|pre|div)[^>]*>[\s\S]*?<\/(?:p|pre|div)>/gi;
@@ -694,25 +660,25 @@ export class DocumentationFetcher {
 
                 relevantContent.push(paragraph);
                 paragraphCount++;
-                console.log(`[PythonHover] Found relevant paragraph for ${anchor}: ${paragraphText.substring(0, 100)}...`);
+                this.logger.debug(`Found relevant paragraph for ${anchor}: ${paragraphText.substring(0, 100)}...`);
             }
         }
 
         if (relevantContent.length === 0) {
-            console.log(`[PythonHover] No specific content found for ${anchor}, falling back to null`);
+            this.logger.debug(`No specific content found for ${anchor}, falling back to null`);
             return null;
         }
 
         // Combine relevant content
         const combinedContent = relevantContent.join('\n\n');
-        console.log(`[PythonHover] Final fallback content length: ${combinedContent.length}`);
+        this.logger.debug(`Final fallback content length: ${combinedContent.length}`);
         return combinedContent;
     }
 
-    private findSectionStart(html: string, anchorPosition: number, anchor: string): number {
+    private findSectionStart(_html: string, anchorPosition: number, _anchor: string): number {
         // Always start from the anchor position - never look backwards
         // The anchor marks where the content for this symbol begins
-        console.log(`[PythonHover] Starting section from anchor position: ${anchorPosition} (forward-only)`);
+        this.logger.debug(`Starting section from anchor position: ${anchorPosition} (forward-only)`);
         return anchorPosition;
     }
 
@@ -823,7 +789,7 @@ export class DocumentationFetcher {
         return bodyMatch ? bodyMatch[1] : html;
     }
 
-    private htmlToMarkdown(html: string, maxLines: number, baseUrl: string, symbolName: string): string {
+    private htmlToMarkdown(html: string, maxLines: number, baseUrl: string, _symbolName: string): string {
         // Note: static example support was removed. We still convert HTML to Markdown
         // and return a substantive excerpt; hover rendering will include additional
         // contextual paragraphs to avoid barren tooltips.
@@ -833,14 +799,14 @@ export class DocumentationFetcher {
             // Remove script and style tags
             .replace(/<(?:script|style)[^>]*>.*?<\/(?:script|style)>/gis, '')
             // Convert links BEFORE removing other tags
-            .replace(/<a[^>]+href=["']([^"']+)["'][^>]*>(.*?)<\/a>/gi, (match, href, content) => {
+            .replace(/<a[^>]+href=["']([^"']+)["'][^>]*>(.*?)<\/a>/gi, (_match, href, content) => {
                 // Convert relative URLs to absolute URLs using baseUrl context
                 let resolvedUrl = href;
 
                 // Log specific examples we care about
                 const cleanContent = this.stripTags(content);
                 if (cleanContent === 'if' || cleanContent === 'else' || cleanContent === 'break' || cleanContent === 'continue') {
-                    console.log(`[PythonHover] IMPORTANT LINK - content: "${cleanContent}", href: "${href}", baseUrl: "${baseUrl}"`);
+                    this.logger.debug(`IMPORTANT LINK - content: "${cleanContent}", href: "${href}", baseUrl: "${baseUrl}"`);
                 }
 
                 if (href.startsWith('#')) {
@@ -849,7 +815,7 @@ export class DocumentationFetcher {
                     resolvedUrl = `${baseUrlWithoutFragment}${href}`;
 
                     if (cleanContent === 'if' || cleanContent === 'else' || cleanContent === 'break' || cleanContent === 'continue') {
-                        console.log(`[PythonHover] IMPORTANT LINK RESOLVED - "${cleanContent}": ${resolvedUrl}`);
+                        this.logger.debug(`IMPORTANT LINK RESOLVED - "${cleanContent}": ${resolvedUrl}`);
                     }
                 } else if (href.startsWith('/')) {
                     // Root-relative URLs - make absolute to docs.python.org

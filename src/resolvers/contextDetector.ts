@@ -1,8 +1,10 @@
 import * as vscode from 'vscode';
+import { Logger } from '../services/logger';
+import { TypeDetectionService } from '../services/typeDetectionService';
 
 /**
  * Provides context-aware type detection for Python variables and expressions
- * Based on the implementation from the deprecated version
+ * Uses TypeDetectionService for the actual type inference logic
  */
 export class ContextDetector {
     // Cache for compiled regex patterns to improve performance
@@ -17,7 +19,7 @@ export class ContextDetector {
             try {
                 this.regexCache.set(key, new RegExp(pattern, flags));
             } catch (error) {
-                console.error('Invalid regex pattern:', pattern, error);
+                Logger.getInstance().error(`Invalid regex pattern: ${pattern}`, error as Error);
                 // Return a safe fallback regex that never matches
                 return /(?!)/;
             }
@@ -45,56 +47,21 @@ export class ContextDetector {
 
             if (assignmentMatch) {
                 const value = assignmentMatch[1].trim();
-
-                // Check for string literals
-                if (value.startsWith('"') || value.startsWith("'") ||
-                    value.startsWith('r"') || value.startsWith("r'") ||
-                    value.startsWith('f"') || value.startsWith("f'")) {
-                    return 'str';
+                const detectedType = TypeDetectionService.detectTypeFromValue(value);
+                if (detectedType) {
+                    return detectedType;
                 }
+            }
 
-                // Check for list literals
-                if (value.startsWith('[')) {
-                    return 'list';
-                }
+            // Check for walrus operator assignments (var := value)
+            const walrusRegex = this.getCachedRegex(`${variableName}\\s*:=\\s*(.+)$`);
+            const walrusMatch = line.match(walrusRegex);
 
-                // Check for dict literals
-                if (value.startsWith('{') && value.includes(':')) {
-                    return 'dict';
-                }
-
-                // Check for set literals
-                if (value.startsWith('{') && !value.includes(':')) {
-                    return 'set';
-                }
-
-                // Check for tuple literals
-                if (value.startsWith('(')) {
-                    return 'tuple';
-                }
-
-                // Check for numeric literals
-                if (/^-?\d+$/.test(value)) {
-                    return 'int';
-                }
-
-                // Check for float literals
-                if (/^-?\d+\.\d+$/.test(value)) {
-                    return 'float';
-                }
-
-                // Check for bool literals
-                if (value === 'True' || value === 'False') {
-                    return 'bool';
-                }
-
-                // Check for constructor calls (e.g., str(), list(), etc.)
-                const constructorMatch = value.match(/^(\w+)\(/);
-                if (constructorMatch) {
-                    const constructorName = constructorMatch[1];
-                    if (['str', 'int', 'float', 'list', 'dict', 'set', 'tuple', 'bool'].includes(constructorName)) {
-                        return constructorName;
-                    }
+            if (walrusMatch) {
+                const value = walrusMatch[1].trim();
+                const detectedType = TypeDetectionService.detectTypeFromValue(value);
+                if (detectedType) {
+                    return detectedType;
                 }
             }
 
@@ -104,7 +71,48 @@ export class ContextDetector {
 
             if (annotationMatch) {
                 const typeName = annotationMatch[1];
-                if (['str', 'int', 'float', 'list', 'dict', 'set', 'tuple', 'bool'].includes(typeName)) {
+                if (TypeDetectionService.isBuiltinType(typeName)) {
+                    return typeName;
+                }
+            }
+        }
+
+        // If backward search didn't find anything, search forward a few lines
+        // This helps when cursor is at the start of a variable name before assignment
+        for (let i = position.line + 1; i <= endLine; i++) {
+            const line = document.lineAt(i).text;
+
+            // Check for variable assignments (var = value)
+            const assignmentRegex = this.getCachedRegex(`${variableName}\\s*=\\s*(.+)$`);
+            const assignmentMatch = line.match(assignmentRegex);
+
+            if (assignmentMatch) {
+                const value = assignmentMatch[1].trim();
+                const detectedType = TypeDetectionService.detectTypeFromValue(value);
+                if (detectedType) {
+                    return detectedType;
+                }
+            }
+
+            // Check for walrus operator in forward search too
+            const walrusRegex = this.getCachedRegex(`${variableName}\\s*:=\\s*(.+)$`);
+            const walrusMatch = line.match(walrusRegex);
+
+            if (walrusMatch) {
+                const value = walrusMatch[1].trim();
+                const detectedType = TypeDetectionService.detectTypeFromValue(value);
+                if (detectedType) {
+                    return detectedType;
+                }
+            }
+
+            // Check for type annotations in forward search
+            const annotationRegex = this.getCachedRegex(`${variableName}\\s*:\\s*(\\w+)`);
+            const annotationMatch = line.match(annotationRegex);
+
+            if (annotationMatch) {
+                const typeName = annotationMatch[1];
+                if (TypeDetectionService.isBuiltinType(typeName)) {
                     return typeName;
                 }
             }
