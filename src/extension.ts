@@ -1,11 +1,11 @@
 import * as vscode from 'vscode';
 import { CacheManager } from './services/cache';
 import { ConfigurationManager } from './services/config';
-import { PythonHoverProvider } from './ui/hoverProvider';
+import { ErrorNotifier } from './services/errorNotifier';
 import { InventoryManager } from './services/inventory';
 import { Logger } from './services/logger';
 import { PackageDetector } from './services/packageDetector';
-import { ErrorNotifier } from './services/errorNotifier';
+import { PythonHoverProvider } from './ui/hoverProvider';
 import { VersionDetector } from './ui/versionDetector';
 
 export function activate(context: vscode.ExtensionContext) {

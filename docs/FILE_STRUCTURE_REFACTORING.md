@@ -211,7 +211,7 @@ Combine `versionDetector.ts` and `versionComparison.ts`:
 export class VersionService {
     // From versionDetector.ts
     async detectPythonVersion(document): Promise<VersionInfo>
-    
+
     // From versionComparison.ts
     getVersionInfo(symbol: string): VersionInfo | null
     getMethodComparison(method: string): MethodComparison | null

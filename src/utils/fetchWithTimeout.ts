@@ -22,7 +22,7 @@ export class FetchWithTimeout {
     /**
      * Fetch a URL with automatic timeout handling
      * Ensures proper cleanup of timeout handlers in all code paths
-     * 
+     *
      * @param url - The URL to fetch
      * @param options - Fetch options including timeout
      * @returns Promise that resolves to the Response
@@ -60,7 +60,7 @@ export class FetchWithTimeout {
     /**
      * Fetch a URL and get the response text
      * Convenience method that handles both fetch and text parsing
-     * 
+     *
      * @param url - The URL to fetch
      * @param options - Fetch options including timeout
      * @returns Promise that resolves to the response text
@@ -82,7 +82,7 @@ export class FetchWithTimeout {
     /**
      * Fetch a URL and parse JSON response
      * Convenience method that handles both fetch and JSON parsing
-     * 
+     *
      * @param url - The URL to fetch
      * @param options - Fetch options including timeout
      * @returns Promise that resolves to the parsed JSON
@@ -104,7 +104,7 @@ export class FetchWithTimeout {
     /**
      * Check if a URL is reachable (HEAD request)
      * Useful for validation without downloading full content
-     * 
+     *
      * @param url - The URL to check
      * @param timeoutMs - Timeout in milliseconds (default: 5000)
      * @returns Promise that resolves to true if reachable, false otherwise

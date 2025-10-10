@@ -19,6 +19,17 @@ export interface PythonHoverConfig {
     experimental: {
         autoDetectLibraries: boolean;
     };
+    ui: {
+        showParameterTables: boolean;
+        showSignatures: boolean;
+        showDeprecationWarnings: boolean;
+        showReturnTypes: boolean;
+        showQuickActions: boolean;
+        showSeeAlso: boolean;
+        showPerformanceHints: boolean;
+        showKeyboardHints: boolean;
+        maxContentLength: number;
+    };
 }
 
 export class ConfigurationManager {
@@ -43,6 +54,17 @@ export class ConfigurationManager {
             customLibraries: vscodeConfig.get('customLibraries', []),
             experimental: {
                 autoDetectLibraries: vscodeConfig.get('experimental.autoDetectLibraries', false)
+            },
+            ui: {
+                showParameterTables: vscodeConfig.get('ui.showParameterTables', true),
+                showSignatures: vscodeConfig.get('ui.showSignatures', true),
+                showDeprecationWarnings: vscodeConfig.get('ui.showDeprecationWarnings', true),
+                showReturnTypes: vscodeConfig.get('ui.showReturnTypes', true),
+                showQuickActions: vscodeConfig.get('ui.showQuickActions', true),
+                showSeeAlso: vscodeConfig.get('ui.showSeeAlso', true),
+                showPerformanceHints: vscodeConfig.get('ui.showPerformanceHints', false),
+                showKeyboardHints: vscodeConfig.get('ui.showKeyboardHints', true),
+                maxContentLength: vscodeConfig.get('ui.maxContentLength', 800)
             }
         };
     }

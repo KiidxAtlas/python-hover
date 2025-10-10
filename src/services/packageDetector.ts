@@ -3,8 +3,8 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { promisify } from 'util';
 import * as vscode from 'vscode';
-import { Logger } from './logger';
 import { ErrorNotifier } from './errorNotifier';
+import { Logger } from './logger';
 
 const execAsync = promisify(exec);
 

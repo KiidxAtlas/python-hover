@@ -254,6 +254,53 @@
                     "type": "boolean",
                     "default": false,
                     "markdownDescription": "**⚠️ Experimental**: Automatically detect and fetch documentation for third-party libraries imported in your code. When enabled, the extension will:\n\n- Detect imports from third-party packages\n- Automatically download and parse their Intersphinx inventory files\n- Provide hover documentation for imported symbols\n\nThis feature requires:\n- Libraries to have published `objects.inv` files\n- Python environment with the packages installed (for version detection)\n\n**Note:** This feature is experimental and may impact performance when working with many third-party libraries. Disable if you experience slowdowns."
+                },
+                "pythonHover.ui.showParameterTables": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Display function parameters in formatted tables for easier reading."
+                },
+                "pythonHover.ui.showSignatures": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show function/method signatures prominently at the top of hovers."
+                },
+                "pythonHover.ui.showDeprecationWarnings": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show prominent warnings for deprecated APIs with suggested alternatives."
+                },
+                "pythonHover.ui.showReturnTypes": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Display return type information prominently in hover tooltips."
+                },
+                "pythonHover.ui.showQuickActions": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show quick action links (docs, copy, insert) at the top of hover tooltips."
+                },
+                "pythonHover.ui.showSeeAlso": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show 'See Also' section with related functions and methods."
+                },
+                "pythonHover.ui.showPerformanceHints": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Show time/space complexity information when available (experimental)."
+                },
+                "pythonHover.ui.showKeyboardHints": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show keyboard shortcut hints at the bottom of hover tooltips."
+                },
+                "pythonHover.ui.maxContentLength": {
+                    "type": "number",
+                    "default": 800,
+                    "minimum": 200,
+                    "maximum": 2000,
+                    "description": "Maximum character length for hover content before smart truncation with 'Read more...' link."
                 }
             }
         }

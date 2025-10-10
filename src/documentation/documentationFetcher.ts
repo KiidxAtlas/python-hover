@@ -1,10 +1,10 @@
-import { CacheManager } from '../services/cache';
 import { getDunderInfo, IMPORT_INFO, MAP, MODULES, OPERATORS } from '../data/documentationUrls';
-import { ExampleEnricher } from './exampleEnricher';
+import { CacheManager } from '../services/cache';
 import { InventoryEntry } from '../services/inventory';
 import { Logger } from '../services/logger';
 import { Info } from '../types';
 import { FetchWithTimeout } from '../utils/fetchWithTimeout';
+import { ExampleEnricher } from './exampleEnricher';
 
 export interface DocumentationSnippet {
     title: string;

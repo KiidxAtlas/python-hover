@@ -27,7 +27,7 @@ let filesUpdated = 0;
 
 FILES_TO_PROCESS.forEach(({ file, strategy }) => {
     const filePath = path.join(__dirname, '..', file);
-    
+
     if (!fs.existsSync(filePath)) {
         console.log(`⚠️  Skipping ${file} (not found)`);
         return;

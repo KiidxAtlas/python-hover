@@ -154,7 +154,7 @@ export class TypeDetectionService {
      */
     public static readonly BUILTIN_TYPES = [
         'str', 'int', 'float', 'list', 'dict', 'set', 'tuple', 'bool',
-        'bytes', 'bytearray', 'frozenset', 'complex', 'NoneType', 
+        'bytes', 'bytearray', 'frozenset', 'complex', 'NoneType',
         'generator', 'function'
     ];
 

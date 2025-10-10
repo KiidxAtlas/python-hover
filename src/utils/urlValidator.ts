@@ -124,8 +124,8 @@ export class URLValidator {
         try {
             const parsedUrl = new URL(url);
             // Basic checks: has protocol, has hostname
-            return ['http:', 'https:'].includes(parsedUrl.protocol) && 
-                   parsedUrl.hostname.length > 0;
+            return ['http:', 'https:'].includes(parsedUrl.protocol) &&
+                parsedUrl.hostname.length > 0;
         } catch {
             return false;
         }

@@ -32,7 +32,7 @@ Centralized all user-facing notification logic into a dedicated `ErrorNotifier` 
 // Show error notification
 ErrorNotifier.showError(message: string, ...actions: string[]): Promise<string | undefined>
 
-// Show warning notification  
+// Show warning notification
 ErrorNotifier.showWarning(message: string, ...actions: string[]): Promise<string | undefined>
 
 // Show info notification
@@ -43,7 +43,7 @@ ErrorNotifier.showInfo(message: string, ...actions: string[]): Promise<string | 
 ```typescript
 // Error with automatic "Open Settings" action
 ErrorNotifier.showErrorWithSettings(
-    message: string, 
+    message: string,
     settingKey: string
 ): Promise<void>
 
@@ -120,7 +120,7 @@ vscode.window.showErrorMessage(
     'Open Settings'
 ).then(action => {
     if (action === 'Open Settings') {
-        vscode.commands.executeCommand('workbench.action.openSettings', 
+        vscode.commands.executeCommand('workbench.action.openSettings',
             'pythonHover.customLibraries');
     }
 });
@@ -142,7 +142,7 @@ vscode.window.showWarningMessage(message, 'Retry', 'Open Settings')
         if (action === 'Retry') {
             await this.detectInstalledPackages();
         } else if (action === 'Open Settings') {
-            vscode.commands.executeCommand('workbench.action.openSettings', 
+            vscode.commands.executeCommand('workbench.action.openSettings',
                 'pythonHover.packageDetection');
         }
     });
@@ -163,7 +163,7 @@ ErrorNotifier.showWarningWithRetry(
 // Before
 vscode.window.showInformationMessage('Cache info...');
 
-// After  
+// After
 ErrorNotifier.showInfo('Cache info...');
 ```
 

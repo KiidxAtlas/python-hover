@@ -4,12 +4,12 @@ const fetch = nodeFetch.default || nodeFetch;
 
 import * as pako from 'pako';
 import * as vscode from 'vscode';
+import { URLValidator } from '../utils/urlValidator';
 import { CacheManager } from './cache';
 import { ConfigurationManager } from './config';
+import { ErrorNotifier } from './errorNotifier';
 import { Logger } from './logger';
 import { PackageDetector } from './packageDetector';
-import { ErrorNotifier } from './errorNotifier';
-import { URLValidator } from '../utils/urlValidator';
 
 export interface InventoryEntry {
     name: string;

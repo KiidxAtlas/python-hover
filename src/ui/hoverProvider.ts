@@ -16,6 +16,7 @@ import { SymbolResolver } from '../resolvers/symbolResolver';
 import { getImportedLibraries, getThirdPartyDoc } from '../documentation/thirdPartyLibraries';
 import { formatComparison, formatVersionInfo, getMethodComparison, getVersionInfo } from './versionComparison';
 import { VersionDetector } from './versionDetector';
+import { ParameterInfo, ReturnInfo, DeprecationInfo, RelatedSymbol } from '../types';
 
 export class PythonHoverProvider implements vscode.HoverProvider {
     private logger: Logger;
@@ -758,6 +759,7 @@ export class PythonHoverProvider implements vscode.HoverProvider {
         pythonVersionInfo?: { version: string; pythonPath?: string }
     ): vscode.Hover {
         const md = this.theme.createMarkdown();
+        const uiConfig = this.configManager.getConfig().ui;
 
         // Determine display name - for methods with context, show "type.method"
         let displayName: string;
@@ -781,16 +783,92 @@ export class PythonHoverProvider implements vscode.HoverProvider {
         }
         md.appendMarkdown(this.theme.formatBadgeGroup(badges));
 
+        // NEW: Check for deprecation and show warning prominently
+        if (uiConfig.showDeprecationWarnings && docSnippet && docSnippet.content) {
+            const deprecation = this.isDeprecated(docSnippet.content);
+            if (deprecation) {
+                md.appendMarkdown(this.theme.formatDeprecation(
+                    deprecation.version || '',
+                    deprecation.message,
+                    deprecation.alternative
+                ));
+            }
+        }
+
+        // NEW: Add quick actions bar at top
+        if (uiConfig.showQuickActions && (docSnippet || inventoryEntry)) {
+            const docUrl = inventoryEntry
+                ? `${inventoryEntry.uri}#${inventoryEntry.anchor}`
+                : (docSnippet?.url?.startsWith('http')
+                    ? docSnippet.url
+                    : `https://docs.python.org/3/${docSnippet?.url || ''}`);
+
+            if (docUrl) {
+                const encodedUrl = encodeURIComponent(JSON.stringify([docUrl]));
+                const actions = [
+                    { text: 'Docs', icon: 'book', command: `command:pythonHover.openDocs?${encodedUrl}` },
+                    { text: 'Copy URL', icon: 'link', command: `command:pythonHover.copyUrl?${encodedUrl}` }
+                ];
+                md.appendMarkdown(this.theme.formatQuickActions(actions));
+            }
+        }
+
         md.appendMarkdown(this.theme.formatDivider());
 
-        // Description section
+        // NEW: Extract and show signature prominently
+        if (uiConfig.showSignatures && docSnippet && docSnippet.content) {
+            const signature = this.extractSignature(docSnippet.content, bareSymbol);
+            if (signature) {
+                md.appendMarkdown(this.theme.formatSignatureBox(signature, bareSymbol));
+            }
+        }
+
+        // NEW: Extract and show parameters as table
+        if (uiConfig.showParameterTables && docSnippet && docSnippet.content) {
+            const params = this.extractParameters(docSnippet.content);
+            if (params.length > 0) {
+                md.appendMarkdown(this.theme.formatSectionHeader('Parameters'));
+                md.appendMarkdown(this.theme.formatParameterTable(params));
+            }
+        }
+
+        // NEW: Extract and show return type
+        if (uiConfig.showReturnTypes && docSnippet && docSnippet.content) {
+            const returnInfo = this.extractReturnInfo(docSnippet.content);
+            if (returnInfo) {
+                md.appendMarkdown(this.theme.formatReturnType(returnInfo.type, returnInfo.description));
+            }
+        }
+
+        // Description section (with smart truncation)
         if (docSnippet && docSnippet.content && docSnippet.content.trim()) {
+            const maxLength = uiConfig.maxContentLength || 800;
             const summary = this.extractBestParagraph(docSnippet.content);
+            
             if (summary) {
-                md.appendMarkdown(this.theme.formatContent(summary));
+                if (summary.length > maxLength) {
+                    const docUrl = inventoryEntry
+                        ? `${inventoryEntry.uri}#${inventoryEntry.anchor}`
+                        : docSnippet.url;
+                    const encodedUrl = docUrl ? encodeURIComponent(JSON.stringify([docUrl])) : undefined;
+                    const readMoreCmd = encodedUrl ? `command:pythonHover.openDocs?${encodedUrl}` : undefined;
+                    md.appendMarkdown(this.theme.formatContentWithTruncation(summary, maxLength, readMoreCmd));
+                } else {
+                    md.appendMarkdown(this.theme.formatContent(summary));
+                }
             } else {
-                // If extractBestParagraph returns nothing, show the raw content
-                md.appendMarkdown(this.theme.formatContent(docSnippet.content.trim()));
+                // If extractBestParagraph returns nothing, show the raw content with truncation
+                const content = docSnippet.content.trim();
+                if (content.length > maxLength) {
+                    const docUrl = inventoryEntry
+                        ? `${inventoryEntry.uri}#${inventoryEntry.anchor}`
+                        : docSnippet.url;
+                    const encodedUrl = docUrl ? encodeURIComponent(JSON.stringify([docUrl])) : undefined;
+                    const readMoreCmd = encodedUrl ? `command:pythonHover.openDocs?${encodedUrl}` : undefined;
+                    md.appendMarkdown(this.theme.formatContentWithTruncation(content, maxLength, readMoreCmd));
+                } else {
+                    md.appendMarkdown(this.theme.formatContent(content));
+                }
             }
         } else if (docSnippet && docSnippet.url) {
             // Fallback message when content extraction fails
@@ -806,13 +884,32 @@ export class PythonHoverProvider implements vscode.HoverProvider {
         // Add method comparison if available
         this.appendMethodComparison(md, bareSymbol);
 
-        // Add related methods (smart suggestions) for method calls
-        if (symbolInfo.type === 'method' && symbolInfo.context) {
+        // NEW: Add "See Also" section with related symbols
+        if (uiConfig.showSeeAlso) {
+            const related = this.findRelatedSymbols(bareSymbol, symbolInfo.context);
+            if (related.length > 0) {
+                md.appendMarkdown(this.theme.formatSeeAlso(related));
+            }
+        }
+
+        // Add related methods (smart suggestions) for method calls (fallback if See Also didn't cover it)
+        if (symbolInfo.type === 'method' && symbolInfo.context && !uiConfig.showSeeAlso) {
             this.appendRelatedMethodsSection(md, symbolInfo.context, bareSymbol);
         }
 
-        // Source line with clickable action links
-        this.appendActionLinks(md, docSnippet, inventoryEntry);
+        // Source line with clickable action links (only if quick actions not shown at top)
+        if (!uiConfig.showQuickActions) {
+            this.appendActionLinks(md, docSnippet, inventoryEntry);
+        }
+
+        // NEW: Add keyboard hints at bottom
+        if (uiConfig.showKeyboardHints) {
+            const shortcuts = [
+                { keys: 'F12', description: 'Go to definition' },
+                { keys: 'Ctrl+Space', description: 'IntelliSense' }
+            ];
+            md.appendMarkdown(this.theme.formatKeyboardHint(shortcuts));
+        }
 
         // Add Python version at the bottom
         this.appendVersionFooter(md, pythonVersionInfo);
@@ -1092,5 +1189,181 @@ export class PythonHoverProvider implements vscode.HoverProvider {
             md.appendMarkdown(this.theme.formatDivider());
             md.appendMarkdown(`<div style="text-align: right; font-size: 0.85em; color: #888;">Python ${pythonVersionInfo.version}</div>`);
         }
+    }
+
+    /**
+     * Extract parameters from documentation content
+     */
+    private extractParameters(docContent: string): ParameterInfo[] {
+        const params: ParameterInfo[] = [];
+
+        // Try to match Sphinx-style parameter lists
+        // Matches patterns like:
+        // :param name: description
+        // :param type name: description
+        const paramRegex = /:(?:param|parameter)(?:\s+(\w+))?\s+(\w+):\s*(.+?)(?=\n:|$)/gs;
+        let match;
+
+        while ((match = paramRegex.exec(docContent)) !== null) {
+            const type = match[1]; // Optional type
+            const name = match[2];
+            const description = match[3].trim();
+
+            params.push({
+                name,
+                type,
+                description,
+                required: true // Default to required unless we find otherwise
+            });
+        }
+
+        // Also try to match Google-style docstrings
+        // Args:
+        //     name (type): description
+        if (params.length === 0) {
+            const argsSection = docContent.match(/Args?:\s*\n((?:\s+.+\n?)+)/i);
+            if (argsSection) {
+                const argsText = argsSection[1];
+                const argLines = argsText.split('\n').filter(line => line.trim());
+
+                for (const line of argLines) {
+                    const googleMatch = line.match(/^\s*(\w+)\s*(?:\(([^)]+)\))?\s*:\s*(.+)/);
+                    if (googleMatch) {
+                        params.push({
+                            name: googleMatch[1],
+                            type: googleMatch[2],
+                            description: googleMatch[3].trim(),
+                            required: !googleMatch[3].includes('optional')
+                        });
+                    }
+                }
+            }
+        }
+
+        return params;
+    }
+
+    /**
+     * Extract function signature from documentation
+     */
+    private extractSignature(docContent: string, symbolName: string): string | null {
+        // Try to find a code block with the function signature
+        const codeBlockMatch = docContent.match(/```(?:python)?\s*\n([^\n]+\([\s\S]*?\)(?:\s*->\s*\w+)?)\n```/);
+        if (codeBlockMatch) {
+            return codeBlockMatch[1].trim();
+        }
+
+        // Try to find inline code with function signature
+        const inlineMatch = docContent.match(new RegExp(`\`${symbolName}\\([^)]*\\)(?:\\s*->\\s*\\w+)?\``));
+        if (inlineMatch) {
+            return inlineMatch[0].replace(/`/g, '').trim();
+        }
+
+        // Try to match signature-style patterns
+        const sigMatch = docContent.match(new RegExp(`${symbolName}\\s*\\([^)]*\\)(?:\\s*->\\s*[^\\n]+)?`));
+        if (sigMatch) {
+            return sigMatch[0].trim();
+        }
+
+        return null;
+    }
+
+    /**
+     * Detect if a symbol is deprecated
+     */
+    private isDeprecated(docContent: string): DeprecationInfo | null {
+        // Look for deprecation warnings
+        const deprecatedMatch = docContent.match(/(?:deprecated|DEPRECATED)(?:\s+(?:since|in)\s+(?:version\s+)?([0-9.]+))?[:\s]+(.+?)(?:\n|$)/i);
+
+        if (deprecatedMatch) {
+            const version = deprecatedMatch[1];
+            let message = deprecatedMatch[2].trim();
+
+            // Try to find alternative suggestion
+            const altMatch = message.match(/(?:use|try|replaced by|instead use)\s+[`']?(\w+(?:\.\w+)?(?:\(\))?)[`']?/i);
+            const alternative = altMatch ? altMatch[1] : undefined;
+
+            message = message.replace(/\.$/, '');
+
+            return {
+                version,
+                message,
+                alternative
+            };
+        }
+
+        // Check for .. deprecated:: directive (Sphinx)
+        const sphinxMatch = docContent.match(/\.\.\s+deprecated::\s*([0-9.]+)?\s*\n\s+(.+)/);
+        if (sphinxMatch) {
+            return {
+                version: sphinxMatch[1],
+                message: sphinxMatch[2].trim()
+            };
+        }
+
+        return null;
+    }
+
+    /**
+     * Extract return type information
+     */
+    private extractReturnInfo(docContent: string): ReturnInfo | null {
+        // Try Sphinx-style :returns: or :return:
+        const sphinxMatch = docContent.match(/:returns?:\s*(.+?)(?=\n:|$)/is);
+        if (sphinxMatch) {
+            const fullText = sphinxMatch[1].trim();
+            const typeMatch = fullText.match(/^([^-–]+?)\s*[-–]\s*(.+)/);
+            if (typeMatch) {
+                return {
+                    type: typeMatch[1].trim(),
+                    description: typeMatch[2].trim()
+                };
+            }
+            return { type: fullText };
+        }
+
+        // Try :rtype: for return type
+        const rtypeMatch = docContent.match(/:rtype:\s*(.+?)(?=\n:|$)/i);
+        if (rtypeMatch) {
+            return { type: rtypeMatch[1].trim() };
+        }
+
+        // Try Google-style Returns:
+        const googleMatch = docContent.match(/Returns:\s*\n\s+([^\n]+?):\s*(.+)/i);
+        if (googleMatch) {
+            return {
+                type: googleMatch[1].trim(),
+                description: googleMatch[2].trim()
+            };
+        }
+
+        // Try to extract from signature -> Type
+        const sigMatch = docContent.match(/->\s*([^:\n]+)(?::|$)/);
+        if (sigMatch) {
+            return { type: sigMatch[1].trim() };
+        }
+
+        return null;
+    }
+
+    /**
+     * Find related symbols for "See Also" section
+     */
+    private findRelatedSymbols(symbolName: string, context?: string): RelatedSymbol[] {
+        const related: RelatedSymbol[] = [];
+
+        // Use existing related methods functionality
+        if (context) {
+            const relatedMethods = getRelatedMethodsForMethod(context, symbolName);
+            for (const method of relatedMethods.slice(0, 5)) {
+                related.push({
+                    name: `${context}.${method.name}`,
+                    description: method.description,
+                    type: 'method'
+                });
+            }
+        }
+
+        return related;
     }
 }

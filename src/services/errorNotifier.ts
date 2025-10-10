@@ -7,12 +7,18 @@ import { Logger } from './logger';
  * with optional action buttons and rate limiting
  */
 export class ErrorNotifier {
-    private static logger = Logger.getInstance();
     private static readonly MESSAGE_PREFIX = 'Python Hover';
-    
+
     // Rate limiting to prevent notification spam
     private static lastNotificationTime = new Map<string, number>();
     private static readonly MIN_NOTIFICATION_INTERVAL = 5000; // 5 seconds
+
+    /**
+     * Get logger instance lazily to avoid initialization issues
+     */
+    private static getLogger(): Logger {
+        return Logger.getInstance();
+    }
 
     /**
      * Show an error message with optional action buttons
@@ -25,10 +31,10 @@ export class ErrorNotifier {
         ...actions: string[]
     ): Promise<string | undefined> {
         const fullMessage = this.formatMessage(message);
-        this.logger.error(message);
+        this.getLogger().error(message);
 
         if (this.shouldThrottle(fullMessage)) {
-            this.logger.debug(`Throttling error notification: ${message}`);
+            this.getLogger().debug(`Throttling error notification: ${message}`);
             return undefined;
         }
 
@@ -47,10 +53,10 @@ export class ErrorNotifier {
         ...actions: string[]
     ): Promise<string | undefined> {
         const fullMessage = this.formatMessage(message);
-        this.logger.warn(message);
+        this.getLogger().warn(message);
 
         if (this.shouldThrottle(fullMessage)) {
-            this.logger.debug(`Throttling warning notification: ${message}`);
+            this.getLogger().debug(`Throttling warning notification: ${message}`);
             return undefined;
         }
 
@@ -69,7 +75,7 @@ export class ErrorNotifier {
         ...actions: string[]
     ): Promise<string | undefined> {
         const fullMessage = this.formatMessage(message);
-        this.logger.info(message);
+        this.getLogger().info(message);
         return await vscode.window.showInformationMessage(fullMessage, ...actions);
     }
 
@@ -82,7 +88,7 @@ export class ErrorNotifier {
         settingKey?: string
     ): Promise<void> {
         const action = await this.showError(message, 'Open Settings');
-        
+
         if (action === 'Open Settings') {
             const settingToOpen = settingKey || 'pythonHover';
             vscode.commands.executeCommand('workbench.action.openSettings', settingToOpen);
@@ -99,7 +105,7 @@ export class ErrorNotifier {
         settingKey?: string
     ): Promise<void> {
         const action = await this.showWarning(message, 'Retry', 'Open Settings');
-        
+
         if (action === 'Retry' && onRetry) {
             onRetry();
         } else if (action === 'Open Settings') {
@@ -116,11 +122,11 @@ export class ErrorNotifier {
         error?: Error
     ): Promise<void> {
         const message = `Failed to ${operation}. Please check your internet connection.`;
-        
+
         if (error) {
-            this.logger.error(`Network error during ${operation}`, error);
+            this.getLogger().error(`Network error during ${operation}`, error);
         }
-        
+
         await this.showError(message);
     }
 
