@@ -3,7 +3,7 @@
     "icon": "media/icon.png",
     "displayName": "🐍 Python Hover - Enhanced Documentation",
     "description": "Instant Python documentation with 300+ constructs, 19+ libraries (NumPy, Pandas, FastAPI, Django, PyTorch, aiohttp, Click), practical examples, and smart context detection. Zero context switching!",
-    "version": "0.4.2",
+    "version": "0.4.3",
     "publisher": "KiidxAtlas",
     "author": {
         "name": "KiidxAtlas",

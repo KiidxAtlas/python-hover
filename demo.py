@@ -447,7 +447,7 @@ chained = itertools.chain([1, 2], [3, 4])
 combined = list(itertools.combinations([1, 2, 3], 2))
 permuted = list(itertools.permutations([1, 2, 3], 2))
 
-
+bvhfg\
 # ============================================================================
 # 19. DISCOVERING SUPPORTED LIBRARIES
 # ============================================================================
@@ -461,7 +461,7 @@ COMMAND PALETTE METHOD (Recommended):
 1. Press Ctrl+Shift+P (Cmd+Shift+P on Mac)
 2. Type: "Python Hover: Show Supported Libraries"
 3. Press Enter
-4. View organized list of all supported libraries by category
+4. View organized list of all supported libr78aries by category
 
 This shows:
 - Built-in libraries (always available)

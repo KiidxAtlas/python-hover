@@ -2,11 +2,11 @@
  * Python Hover Provider - Core hover implementation
  *
  * @author KiidxAtlas
- * @copyright 2025 KiidxAtlas. All rights reserved.
+ * @copyright 2025 KiidxAtlas
  * @license MIT
  *
  * This file contains the main hover provider logic for Python documentation.
- * Unauthorized reproduction or distribution is prohibited.
+ * Open source - feel free to contribute!
  */
 
 import * as vscode from 'vscode';

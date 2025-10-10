@@ -8,7 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [0.4.2] - 2025-10-10
 
-### 🐛 Bug Fixes
+### �️ Cleanup
+
+- Removed dumb author file
+
+### �🐛 Bug Fixes
 
 - **Method Hover Lookups**: Fixed critical bug where method hovers (e.g., `str.upper()`, `list.append()`, `dict.keys()`) were showing "no documentation found"
   - Issue: Symbol resolver returned qualified names like "text.upper" but documentation MAP used simple keys like "upper"
