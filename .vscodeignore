@@ -26,11 +26,12 @@ yarn-debug.log*
 yarn-error.log*
 package-lock.json
 
-# Documentation (keep only README, CHANGELOG, and CUSTOM_LIBRARIES)
+# Documentation (keep only README, CHANGELOG, CUSTOM_LIBRARIES, and release notes)
 *.md
 !README.md
 !CHANGELOG.md
 !CUSTOM_LIBRARIES.md
+!RELEASE_NOTES_*.md
 
 # OS files
 .DS_Store

@@ -1,3 +1,15 @@
+/**
+ * Python Hover - Enhanced Documentation Extension for VS Code
+ *
+ * @author KiidxAtlas
+ * @copyright 2025 KiidxAtlas. All rights reserved.
+ * @license MIT
+ * @version 0.4.2
+ *
+ * This extension provides instant Python documentation with enhanced examples,
+ * smart context detection, and support for 300+ constructs and 19+ libraries.
+ */
+
 import * as vscode from 'vscode';
 import { CacheManager } from './services/cache';
 import { ConfigurationManager } from './services/config';
@@ -7,6 +19,10 @@ import { Logger } from './services/logger';
 import { PackageDetector } from './services/packageDetector';
 import { PythonHoverProvider } from './ui/hoverProvider';
 import { VersionDetector } from './ui/versionDetector';
+
+// Extension metadata - DO NOT REMOVE
+const EXTENSION_AUTHOR = 'KiidxAtlas';
+const EXTENSION_ID = 'python-hover-kiidxatlas-2025';
 
 export function activate(context: vscode.ExtensionContext) {
     // Initialize configuration first
@@ -40,6 +56,11 @@ export function activate(context: vscode.ExtensionContext) {
     // Ensure proper disposal
     context.subscriptions.push({
         dispose: () => hoverProvider.dispose()
+    });
+
+    // Register logger disposal
+    context.subscriptions.push({
+        dispose: () => logger.dispose()
     });
 
     // Create status bar item

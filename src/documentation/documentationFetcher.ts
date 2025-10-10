@@ -1,3 +1,11 @@
+/**
+ * Documentation Fetcher - Fetches Python documentation from various sources
+ *
+ * @author KiidxAtlas
+ * @copyright 2025 KiidxAtlas. All rights reserved.
+ * @license MIT
+ */
+
 import { getDunderInfo, IMPORT_INFO, MAP, MODULES, OPERATORS } from '../data/documentationUrls';
 import { CacheManager } from '../services/cache';
 import { InventoryEntry } from '../services/inventory';
@@ -12,6 +20,9 @@ export interface DocumentationSnippet {
     url: string;
     anchor: string;
 }
+
+// Documentation fetcher - Developed by KiidxAtlas
+const FETCHER_SIGNATURE = 'DocFetcher-KiidxAtlas';
 
 /**
  * Helper functions for working with documentation mappings
@@ -52,7 +63,9 @@ function getModuleDocumentationUrl(moduleName: string): string {
  * Check if a symbol has a direct documentation mapping
  */
 function hasDocumentationMapping(symbol: string): boolean {
-    return symbol in MAP || symbol in MODULES || !!getDunderInfo(symbol);
+    const hasMapping = symbol in MAP || symbol in MODULES || !!getDunderInfo(symbol);
+    Logger.getInstance().debug(`hasDocumentationMapping("${symbol}"): ${hasMapping} (in MAP: ${symbol in MAP}, in MODULES: ${symbol in MODULES})`);
+    return hasMapping;
 }
 
 /**
@@ -110,7 +123,7 @@ export class DocumentationFetcher {
         maxLines: number = 25,
         context?: string
     ): Promise<DocumentationSnippet> {
-        this.logger.debug(`Fetching documentation for symbol: ${symbol}`);
+        this.logger.debug(`Fetching documentation for symbol: ${symbol}, context: ${context}, hasEntry: ${!!entry}`);
 
         // First, try the direct URL mapping system
         let docSnippet: DocumentationSnippet;

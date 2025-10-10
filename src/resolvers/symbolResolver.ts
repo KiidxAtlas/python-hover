@@ -1,7 +1,20 @@
+/**
+ * Symbol Resolver - Intelligent Python symbol resolution
+ *
+ * @author KiidxAtlas
+ * @copyright 2025 KiidxAtlas. All rights reserved.
+ * @license MIT
+ *
+ * Resolves Python symbols with context detection for accurate documentation.
+ */
+
 import * as vscode from 'vscode';
 import { OPERATORS } from '../data/documentationUrls';
-import { Logger } from '../services/logger';
 import { TYPING_CONSTRUCTS } from '../data/typingConstructs';
+import { Logger } from '../services/logger';
+
+// Symbol resolver watermark - KiidxAtlas 2025
+const RESOLVER_ID = 'SymbolResolver-KiidxAtlas';
 
 export interface SymbolInfo {
     symbol: string;

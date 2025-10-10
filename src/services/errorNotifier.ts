@@ -30,6 +30,12 @@ export class ErrorNotifier {
         message: string,
         ...actions: string[]
     ): Promise<string | undefined> {
+        // Ignore cancellation errors - these are user-initiated
+        if (message.includes('Canceled') || message === 'Canceled') {
+            this.getLogger().debug(`Ignoring cancellation error: ${message}`);
+            return undefined;
+        }
+
         const fullMessage = this.formatMessage(message);
         this.getLogger().error(message);
 
@@ -52,6 +58,12 @@ export class ErrorNotifier {
         message: string,
         ...actions: string[]
     ): Promise<string | undefined> {
+        // Ignore cancellation errors - these are user-initiated
+        if (message.includes('Canceled') || message === 'Canceled') {
+            this.getLogger().debug(`Ignoring cancellation warning: ${message}`);
+            return undefined;
+        }
+
         const fullMessage = this.formatMessage(message);
         this.getLogger().warn(message);
 

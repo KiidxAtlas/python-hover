@@ -6,6 +6,63 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.4.2] - 2025-10-10
+
+### 🐛 Bug Fixes
+
+- **Method Hover Lookups**: Fixed critical bug where method hovers (e.g., `str.upper()`, `list.append()`, `dict.keys()`) were showing "no documentation found"
+  - Issue: Symbol resolver returned qualified names like "text.upper" but documentation MAP used simple keys like "upper"
+  - Solution: Added symbol extraction logic to update `primarySymbol.symbol` after method name extraction
+  - Now correctly extracts method names from qualified symbols for MAP lookups
+  - Fixes all built-in method hovers for str, list, dict, set, and other types
+
+- **Cancellation Error Filtering**: Fixed annoying cancellation errors in status bar
+  - ErrorNotifier now filters out VS Code cancellation errors (error code -32800)
+  - Users no longer see "Canceled" messages when dismissing prompts
+  - Cleaner error handling throughout extension
+
+- **Generic Documentation Pages**: Fixed built-in functions showing generic "Built-in Functions" page
+  - Added detection for generic documentation pages in `createRichHover()`
+  - Now falls back to showing basic hover when generic page is detected
+  - Improves documentation quality for built-in functions like `range()`, `len()`, `print()`
+
+### ✨ Improvements
+
+- **Enhanced Logging with Output Channel**: Added proper VS Code Output Channel support
+  - Logger now creates "Python Hover" channel visible in Output panel dropdown
+  - All logs visible in VS Code's Output panel (View → Output → Python Hover)
+  - Dual logging to both Output Channel and console for debugging
+  - Added `show()`, `getOutputChannel()`, and `dispose()` methods to Logger
+  - Makes debugging and troubleshooting much easier for users
+
+- **Improved Hover Content Formatting**: Enhanced hover tooltip presentation
+  - Better code formatting with proper syntax highlighting
+  - Improved example presentation with clear section separation
+  - Enhanced visual styling for better readability
+  - Consistent formatting across all hover types
+
+- **Better Debug Capabilities**: Added comprehensive logging throughout hover pipeline
+  - Logs hover triggers, symbol resolution, context detection
+  - Tracks Python version detection and environment setup
+  - Shows documentation fetching and MAP lookups
+  - Method name extraction now fully logged
+  - Helps identify and fix issues faster
+
+### 🔧 Technical Improvements
+
+- **Symbol Resolution**: Improved method name extraction logic
+  - Handles qualified names like "obj.method" correctly
+  - Preserves context information (str, list, dict, etc.)
+  - Ensures MAP lookups use correct simple keys
+  - Better handling of third-party library methods
+
+- **Error Handling**: More robust error handling throughout extension
+  - Filters out user-cancelled operations
+  - Better error messages for debugging
+  - Graceful fallbacks when documentation not found
+
+---
+
 ## [0.4.1] - 2025-10-09
 
 ### ✨ New Features

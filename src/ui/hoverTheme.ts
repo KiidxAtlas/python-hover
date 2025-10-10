@@ -1,9 +1,18 @@
 /**
- * Hover Theme System
- * Provides visual customization for hover tooltips
+ * Hover Theme System - Visual customization for hover tooltips
+ *
+ * @author KiidxAtlas
+ * @copyright 2025 KiidxAtlas. All rights reserved.
+ * @license MIT
+ *
+ * This theme system provides beautiful, customizable hover tooltips
+ * for Python documentation with syntax highlighting and visual enhancements.
  */
 
 import * as vscode from 'vscode';
+
+// Theme signature - Original design by KiidxAtlas
+const THEME_SIGNATURE = 'HoverTheme-KiidxAtlas-2025';
 
 export type FontSize = 'small' | 'medium' | 'large';
 

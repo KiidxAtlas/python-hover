@@ -1,7 +1,20 @@
-// This file contains documentation URLs for Python keywords and built-in functions.
-// It is used for reference in the VSCode Python hover feature.
+/**
+ * Python Documentation URLs and Mappings
+ *
+ * @author KiidxAtlas
+ * @copyright 2025 KiidxAtlas. All rights reserved.
+ * @license MIT
+ *
+ * This file contains comprehensive documentation URLs for Python keywords,
+ * built-in functions, operators, and standard library modules.
+ *
+ * Original compilation and curation by KiidxAtlas - 2025
+ */
 
 import { Info } from '../types';
+
+// Documentation mapping signature - KiidxAtlas
+const DOC_MAP_AUTHOR = 'KiidxAtlas-2025';
 
 export const MAP: Record<string, Info> = {
     class: { title: 'class — Class Definitions', url: 'reference/compound_stmts.html', anchor: 'class-definitions' },

@@ -1,22 +1,36 @@
+/**
+ * Python Hover Provider - Core hover implementation
+ *
+ * @author KiidxAtlas
+ * @copyright 2025 KiidxAtlas. All rights reserved.
+ * @license MIT
+ *
+ * This file contains the main hover provider logic for Python documentation.
+ * Unauthorized reproduction or distribution is prohibited.
+ */
+
 import * as vscode from 'vscode';
-import { CacheManager } from '../services/cache';
-import { ConfigurationManager } from '../services/config';
-import { ContextDetector } from '../resolvers/contextDetector';
-import { CustomDocumentationLoader, formatCustomDoc } from '../documentation/customDocumentation';
-import { DocumentationFetcher } from '../documentation/documentationFetcher';
 import { ENHANCED_EXAMPLES } from '../data/enhancedExamples';
-import { HoverTheme } from './hoverTheme';
-import { InventoryEntry, InventoryManager } from '../services/inventory';
-import { Logger } from '../services/logger';
-import { MethodResolver } from '../resolvers/methodResolver';
-import { getRelatedMethodsForMethod } from './smartSuggestions';
 import { SPECIAL_METHOD_DESCRIPTIONS } from '../data/specialMethods';
 import { STATIC_EXAMPLES } from '../data/staticExamples';
-import { SymbolResolver } from '../resolvers/symbolResolver';
+import { CustomDocumentationLoader, formatCustomDoc } from '../documentation/customDocumentation';
+import { DocumentationFetcher } from '../documentation/documentationFetcher';
 import { getImportedLibraries, getThirdPartyDoc } from '../documentation/thirdPartyLibraries';
+import { ContextDetector } from '../resolvers/contextDetector';
+import { MethodResolver } from '../resolvers/methodResolver';
+import { SymbolResolver } from '../resolvers/symbolResolver';
+import { CacheManager } from '../services/cache';
+import { ConfigurationManager } from '../services/config';
+import { InventoryEntry, InventoryManager } from '../services/inventory';
+import { Logger } from '../services/logger';
+import { DeprecationInfo, ParameterInfo, RelatedSymbol, ReturnInfo } from '../types';
+import { HoverTheme } from './hoverTheme';
+import { getRelatedMethodsForMethod } from './smartSuggestions';
 import { formatComparison, formatVersionInfo, getMethodComparison, getVersionInfo } from './versionComparison';
 import { VersionDetector } from './versionDetector';
-import { ParameterInfo, ReturnInfo, DeprecationInfo, RelatedSymbol } from '../types';
+
+// Hover provider signature - Original work by KiidxAtlas
+const PROVIDER_SIGNATURE = 'PythonHoverProvider-KiidxAtlas-2025';
 
 export class PythonHoverProvider implements vscode.HoverProvider {
     private logger: Logger;
@@ -137,8 +151,14 @@ export class PythonHoverProvider implements vscode.HoverProvider {
         position: vscode.Position,
         token: vscode.CancellationToken
     ): Promise<vscode.Hover | null> {
+        // Log hover attempts at debug level
+        const wordRange = document.getWordRangeAtPosition(position);
+        const word = wordRange ? document.getText(wordRange) : '<none>';
+        this.logger.debug(`Hover triggered at line ${position.line + 1}, col ${position.character} on word: "${word}"`);
+
         // Check if cancellation was requested
         if (token.isCancellationRequested) {
+            this.logger.debug('Hover cancelled before processing');
             return null;
         }
 
@@ -191,22 +211,25 @@ export class PythonHoverProvider implements vscode.HoverProvider {
         _token: vscode.CancellationToken
     ): Promise<vscode.Hover | null> {
         try {
+            this.logger.debug(`Processing hover implementation...`);
+
             // Detect Python version for this document (with caching)
             const versionInfo = await this.getCachedPythonVersion(document);
             const pythonVersion = versionInfo.version;
             const pythonPath = versionInfo.pythonPath;
-            this.logger.debug(`Using Python version: ${pythonVersion}${pythonPath ? ` (${pythonPath})` : ''}`);
+            this.logger.debug(`Python version: ${pythonVersion}${pythonPath ? ` (${pythonPath})` : ''}`);
 
             // Resolve symbols at the current position
             const symbols = this.symbolResolver.resolveSymbolAtPosition(document, position);
             this.logger.debug(`Symbols resolved: ${JSON.stringify(symbols)}`);
             if (symbols.length === 0) {
+                this.logger.debug(`No symbols found at position`);
                 return null;
             }
 
             // Try to resolve the first symbol
             const primarySymbol = symbols[0];
-            this.logger.debug(`Resolving symbol: ${primarySymbol.symbol} (type: ${primarySymbol.type})`);
+            this.logger.debug(`Primary symbol: ${primarySymbol.symbol} (type: ${primarySymbol.type})`);
 
             // NEW: Check for custom documentation first
             const customDoc = this.customDocsLoader.getCustomDoc(primarySymbol.symbol);
@@ -272,8 +295,10 @@ export class PythonHoverProvider implements vscode.HoverProvider {
             // Check if this is a method call on a third-party library (e.g., np.array, pd.DataFrame)
             // Extract just the method name if symbol contains a dot
             let methodName = primarySymbol.symbol;
+            this.logger.debug(`Initial methodName: "${methodName}"`);
             if (methodName.includes('.')) {
                 methodName = methodName.split('.').pop() || methodName;
+                this.logger.debug(`Extracted methodName: "${methodName}" from "${primarySymbol.symbol}"`);
             }
 
             // First check if the context is a known library (from symbol resolver)
@@ -344,6 +369,15 @@ export class PythonHoverProvider implements vscode.HoverProvider {
                         primarySymbol.symbol = methodName;
                     }
                 }
+            }
+
+            // CRITICAL FIX: Update symbol to use extracted method name for documentation lookups
+            // The initial extraction at line 283-287 extracted the method name (e.g., "upper" from "text.upper")
+            // but primarySymbol.symbol may still contain the qualified name. We need to ensure
+            // it's updated for MAP lookups to work correctly.
+            if (primarySymbol.type === 'method' && methodName !== primarySymbol.symbol && methodName.length > 0) {
+                this.logger.debug(`Updating primarySymbol.symbol from "${primarySymbol.symbol}" to "${methodName}" for MAP lookup`);
+                primarySymbol.symbol = methodName;
             }
 
             // ENHANCEMENT: Check for special dunder methods
@@ -653,10 +687,7 @@ export class PythonHoverProvider implements vscode.HoverProvider {
         // Add Python version at the bottom
         this.appendVersionFooter(md, pythonVersionInfo);
 
-        return new vscode.Hover(md)    /**
-     * Create a hover for special dunder methods
-     */
-    return new vscode.Hover(md);
+        return new vscode.Hover(md);
     }
 
     /**
@@ -842,32 +873,50 @@ export class PythonHoverProvider implements vscode.HoverProvider {
 
         // Description section (with smart truncation)
         if (docSnippet && docSnippet.content && docSnippet.content.trim()) {
-            const maxLength = uiConfig.maxContentLength || 800;
-            const summary = this.extractBestParagraph(docSnippet.content);
-            
-            if (summary) {
-                if (summary.length > maxLength) {
-                    const docUrl = inventoryEntry
-                        ? `${inventoryEntry.uri}#${inventoryEntry.anchor}`
-                        : docSnippet.url;
-                    const encodedUrl = docUrl ? encodeURIComponent(JSON.stringify([docUrl])) : undefined;
-                    const readMoreCmd = encodedUrl ? `command:pythonHover.openDocs?${encodedUrl}` : undefined;
-                    md.appendMarkdown(this.theme.formatContentWithTruncation(summary, maxLength, readMoreCmd));
-                } else {
-                    md.appendMarkdown(this.theme.formatContent(summary));
+            const content = docSnippet.content.trim();
+
+            // NEW: Detect if we got a generic/index page instead of specific documentation
+            const isGenericPage = (
+                content.includes('Built-in Functions¶') ||
+                content.includes('are listed here in alphabetical order') ||
+                (content.length > 100 && !content.toLowerCase().includes(bareSymbol.toLowerCase()))
+            );
+
+            if (isGenericPage) {
+                // Show a helpful message instead of the generic page
+                md.appendMarkdown(this.theme.formatWarning('Specific documentation not found. See full documentation for details.'));
+
+                if (docSnippet.url) {
+                    md.appendMarkdown(this.theme.formatContent(`\n\nDocumentation available at [docs.python.org](${docSnippet.url}).`));
                 }
             } else {
-                // If extractBestParagraph returns nothing, show the raw content with truncation
-                const content = docSnippet.content.trim();
-                if (content.length > maxLength) {
-                    const docUrl = inventoryEntry
-                        ? `${inventoryEntry.uri}#${inventoryEntry.anchor}`
-                        : docSnippet.url;
-                    const encodedUrl = docUrl ? encodeURIComponent(JSON.stringify([docUrl])) : undefined;
-                    const readMoreCmd = encodedUrl ? `command:pythonHover.openDocs?${encodedUrl}` : undefined;
-                    md.appendMarkdown(this.theme.formatContentWithTruncation(content, maxLength, readMoreCmd));
+                // Show the actual documentation
+                const maxLength = uiConfig.maxContentLength || 800;
+                const summary = this.extractBestParagraph(content);
+
+                if (summary) {
+                    if (summary.length > maxLength) {
+                        const docUrl = inventoryEntry
+                            ? `${inventoryEntry.uri}#${inventoryEntry.anchor}`
+                            : docSnippet.url;
+                        const encodedUrl = docUrl ? encodeURIComponent(JSON.stringify([docUrl])) : undefined;
+                        const readMoreCmd = encodedUrl ? `command:pythonHover.openDocs?${encodedUrl}` : undefined;
+                        md.appendMarkdown(this.theme.formatContentWithTruncation(summary, maxLength, readMoreCmd));
+                    } else {
+                        md.appendMarkdown(this.theme.formatContent(summary));
+                    }
                 } else {
-                    md.appendMarkdown(this.theme.formatContent(content));
+                    // If extractBestParagraph returns nothing, show the raw content with truncation
+                    if (content.length > maxLength) {
+                        const docUrl = inventoryEntry
+                            ? `${inventoryEntry.uri}#${inventoryEntry.anchor}`
+                            : docSnippet.url;
+                        const encodedUrl = docUrl ? encodeURIComponent(JSON.stringify([docUrl])) : undefined;
+                        const readMoreCmd = encodedUrl ? `command:pythonHover.openDocs?${encodedUrl}` : undefined;
+                        md.appendMarkdown(this.theme.formatContentWithTruncation(content, maxLength, readMoreCmd));
+                    } else {
+                        md.appendMarkdown(this.theme.formatContent(content));
+                    }
                 }
             }
         } else if (docSnippet && docSnippet.url) {

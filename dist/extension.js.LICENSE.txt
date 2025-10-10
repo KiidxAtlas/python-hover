@@ -1,0 +1,72 @@
+/**
+ * Documentation Fetcher - Fetches Python documentation from various sources
+ *
+ * @author KiidxAtlas
+ * @copyright 2025 KiidxAtlas. All rights reserved.
+ * @license MIT
+ */
+
+/**
+ * Hover Theme System - Visual customization for hover tooltips
+ *
+ * @author KiidxAtlas
+ * @copyright 2025 KiidxAtlas. All rights reserved.
+ * @license MIT
+ *
+ * This theme system provides beautiful, customizable hover tooltips
+ * for Python documentation with syntax highlighting and visual enhancements.
+ */
+
+/**
+ * Logger Service for Python Hover Extension
+ *
+ * @author KiidxAtlas
+ * @copyright 2025 KiidxAtlas. All rights reserved.
+ * @license MIT
+ */
+
+/**
+ * Python Documentation URLs and Mappings
+ *
+ * @author KiidxAtlas
+ * @copyright 2025 KiidxAtlas. All rights reserved.
+ * @license MIT
+ *
+ * This file contains comprehensive documentation URLs for Python keywords,
+ * built-in functions, operators, and standard library modules.
+ *
+ * Original compilation and curation by KiidxAtlas - 2025
+ */
+
+/**
+ * Python Hover - Enhanced Documentation Extension for VS Code
+ *
+ * @author KiidxAtlas
+ * @copyright 2025 KiidxAtlas. All rights reserved.
+ * @license MIT
+ * @version 0.4.2
+ *
+ * This extension provides instant Python documentation with enhanced examples,
+ * smart context detection, and support for 300+ constructs and 19+ libraries.
+ */
+
+/**
+ * Python Hover Provider - Core hover implementation
+ *
+ * @author KiidxAtlas
+ * @copyright 2025 KiidxAtlas. All rights reserved.
+ * @license MIT
+ *
+ * This file contains the main hover provider logic for Python documentation.
+ * Unauthorized reproduction or distribution is prohibited.
+ */
+
+/**
+ * Symbol Resolver - Intelligent Python symbol resolution
+ *
+ * @author KiidxAtlas
+ * @copyright 2025 KiidxAtlas. All rights reserved.
+ * @license MIT
+ *
+ * Resolves Python symbols with context detection for accurate documentation.
+ */

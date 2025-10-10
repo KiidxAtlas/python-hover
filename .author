@@ -1,0 +1,73 @@
+# Extension Author Metadata
+
+# This file serves as proof of authorship and original creation
+
+AUTHOR=KiidxAtlas
+EXTENSION_NAME=Python Hover - Enhanced Documentation
+CREATION_YEAR=2025
+ORIGINAL_REPOSITORY=<https://github.com/KiidxAtlas/python-hover>
+MARKETPLACE_PUBLISHER=KiidxAtlas
+PUBLISHER_URL=<https://marketplace.visualstudio.com/publishers/KiidxAtlas>
+
+# Authorship signature
+
+# DO NOT REMOVE - This serves as proof of original authorship
+
+SIGNATURE=Python-Hover-KiidxAtlas-2025-Original-Work
+
+# Copyright Notice
+
+# Copyright (c) 2025 KiidxAtlas. All rights reserved
+
+# This extension and all its components are the original work of KiidxAtlas
+
+# Unauthorized reproduction, distribution, or modification is prohibited
+
+# Key Features Developed by KiidxAtlas
+
+# - Enhanced hover system with visual theming
+
+# - Smart context detection for Python symbols
+
+# - 300+ built-in construct documentation
+
+# - 19+ third-party library support
+
+# - Intersphinx inventory integration
+
+# - Custom documentation system
+
+# - Python version detection
+
+# - Enhanced examples with enrichment
+
+# - Special method documentation
+
+# - Operator documentation
+
+# - F-string support
+
+# - Type hints support
+
+# - Output channel logging
+
+# Version History
+
+# v0.4.2 - October 2025 - Bug fixes and logging improvements
+
+# v0.4.1 - October 2025 - Python version display
+
+# v0.4.0 - October 2025 - Custom library support
+
+# v0.3.0 - October 2025 - Intersphinx integration
+
+# Earlier versions - Initial development
+
+# Contact
+
+GITHUB_USERNAME=KiidxAtlas
+BUYMEACOFFEE=<https://buymeacoffee.com/kiidxatlas>
+
+# This extension is licensed under the MIT License
+
+# See LICENSE file for full license text
