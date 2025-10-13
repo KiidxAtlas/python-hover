@@ -4,7 +4,7 @@
 
 ## **Stop Googling. Start Coding.**
 
-**Instant Python documentation with 300+ constructs, 19+ libraries, and practical examples — right in your editor.**
+**Instant Python documentation with 300+ constructs, 19+ pre-configured libraries, PLUS auto-discovery for ANY Python library with Sphinx/ReadTheDocs documentation — right in your editor.**
 
 [![Visual Studio Marketplace](https://img.shields.io/visual-studio-marketplace/v/KiidxAtlas.python-hover?color=blue&label=VS%20Code%20Marketplace&style=flat-square)](https://marketplace.visualstudio.com/items?itemName=KiidxAtlas.python-hover)
 [![Downloads](https://img.shields.io/visual-studio-marketplace/d/KiidxAtlas.python-hover?color=success&style=flat-square)](https://marketplace.visualstudio.com/items?itemName=KiidxAtlas.python-hover)
@@ -48,7 +48,8 @@
 ✨ **Instant Documentation** — No more alt-tabbing to docs
 💡 **Practical Examples** — Real, runnable code you can copy
 🎯 **Smart Context** — Knows if you're using strings, lists, or dicts
-📚 **19+ Libraries** — NumPy, Pandas, FastAPI, PyTorch, Flask, and more
+📚 **19+ Pre-Configured Libraries** — NumPy, Pandas, FastAPI, PyTorch, Flask, and more
+🔍 **Auto-Discovery** — Automatically finds docs for ANY library with Sphinx/ReadTheDocs
 🚀 **300+ Built-ins** — Every Python keyword, method, and function
 ⚡ **Lightning Fast** — Cached for offline use
 🎨 **Fully Customizable** — Match your coding style
@@ -84,7 +85,9 @@
 
 💡 **Practical Examples** — Real, copyable code with expected outputs
 
-📚 **19+ Major Libraries** — NumPy, Pandas, FastAPI, Django, PyTorch, Flask, and more
+📚 **19+ Pre-Configured Libraries** — NumPy, Pandas, FastAPI, Django, PyTorch, Flask, and more
+
+🔍 **Auto-Discovery** — Automatically discovers documentation for ANY library with Sphinx/ReadTheDocs (scikit-learn, seaborn, plotly, dask, beautifulsoup4, and thousands more!)
 
 ⚙️ **Add Your Own Libraries** — Configure custom documentation for any Sphinx-documented library ([Learn how](CUSTOM_LIBRARIES.md))
 
@@ -180,6 +183,37 @@ class Person:  # ← Hover shows modern class patterns with type hints
 my_list = [1, 2, 3]
 my_list.append(4)  # ← Shows examples + comparison with extend()
 ```
+
+---
+
+## 🔍 **Auto-Discovery for ANY Library**
+
+**New in v0.5.0:** Don't see your favorite library? No problem!
+
+Python Hover now **automatically discovers documentation** for ANY Python library with Sphinx or ReadTheDocs documentation:
+
+```python
+import seaborn as sns
+import plotly.express as px
+import dask.dataframe as dd
+from sklearn.model_selection import train_test_split
+
+# Hover over ANY of these — instant docs!
+sns.lineplot()  # ✅ Auto-discovered from seaborn
+px.scatter()    # ✅ Auto-discovered from plotly
+dd.read_csv()   # ✅ Auto-discovered from dask
+train_test_split()  # ✅ Auto-discovered from scikit-learn
+```
+
+**How it works:**
+
+- Checks PyPI for documentation URLs
+- Tests common ReadTheDocs patterns
+- Validates inventory files for quality
+- Caches results for 24 hours
+- Works offline after first fetch
+
+**Supported:** scikit-learn, seaborn, plotly, dask, beautifulsoup4, SQLAlchemy, and **thousands more** with Sphinx/ReadTheDocs documentation!
 
 ---
 

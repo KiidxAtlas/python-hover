@@ -8,6 +8,7 @@ import { URLValidator } from '../utils/urlValidator';
 import { CacheManager } from './cache';
 import { ConfigurationManager } from './config';
 import { ErrorNotifier } from './errorNotifier';
+import { LibraryDiscovery } from './libraryDiscovery';
 import { Logger } from './logger';
 import { PackageDetector } from './packageDetector';
 
@@ -157,7 +158,14 @@ export class InventoryManager {
         private logger: Logger,
         private configManager?: ConfigurationManager,
         private packageDetector?: PackageDetector
-    ) { }
+    ) {
+        // Initialize library discovery if package detector is available
+        if (this.packageDetector) {
+            this.libraryDiscovery = new LibraryDiscovery(this.packageDetector);
+        }
+    }
+
+    private libraryDiscovery?: LibraryDiscovery;
 
     /**
      * Get all library configurations (hardcoded + custom)
@@ -337,7 +345,31 @@ export class InventoryManager {
         const config = allLibs.find(lib => lib.name === libraryName);
 
         if (!config) {
-            this.logger.debug(`No inventory configuration for library: ${libraryName}`);
+            this.logger.debug(`❌ No hardcoded config for "${libraryName}", trying auto-discovery...`);
+
+            // Try auto-discovery if available
+            if (this.libraryDiscovery) {
+                this.logger.debug(`🔎 Starting auto-discovery for "${libraryName}"...`);
+                const discovered = await this.libraryDiscovery.discoverLibrary(libraryName, pythonPath);
+
+                if (discovered) {
+                    this.logger.debug(`✅ Auto-discovered ${libraryName}: ${discovered.inventoryUrl}`);
+                    // Use the discovered config
+                    const discoveredConfig: LibraryInventoryConfig = {
+                        name: discovered.name,
+                        inventoryUrl: discovered.inventoryUrl,
+                        baseUrl: discovered.docBaseUrl,
+                        version: discovered.version
+                    };
+                    return await this.fetchThirdPartyInventory(discoveredConfig);
+                } else {
+                    this.logger.debug(`❌ Auto-discovery failed for "${libraryName}"`);
+                }
+            } else {
+                this.logger.warn(`⚠️ LibraryDiscovery not initialized!`);
+            }
+
+            this.logger.debug(`No inventory configuration or auto-discovery for library: ${libraryName}`);
             return null;
         }
 
@@ -737,10 +769,12 @@ export class InventoryManager {
         context?: string,
         pythonPath?: string
     ): Promise<InventoryEntry | null> {
+        this.logger.debug(`🔎 resolveSymbol: symbol="${symbol}", context="${context}", version="${version}"`);
+
         // If we have a context (e.g., 'numpy'), check third-party library inventories first
         if (context) {
             const baseModule = context.split('.')[0];
-            this.logger.debug(`Checking third-party library: ${baseModule} for symbol: ${symbol}`);
+            this.logger.debug(`📚 Checking third-party library: ${baseModule} for symbol: ${symbol}`);
 
             const thirdPartyInventory = await this.getThirdPartyInventory(baseModule, pythonPath);
             if (thirdPartyInventory) {

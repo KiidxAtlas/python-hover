@@ -24,7 +24,8 @@ export const MAP: Record<string, Info> = {
     yield: { title: 'yield — Yield Expressions', url: 'reference/expressions.html', anchor: 'yield-expressions' },
     async: { title: 'async — Asynchronous Functions', url: 'reference/compound_stmts.html', anchor: 'the-async-for-statement' },
     await: { title: 'await — Await Expressions', url: 'reference/expressions.html', anchor: 'await-expression' },
-    // 'import' and 'from' map to the import system documentation. See IMPORT_INFO below.
+    import: { title: 'import — Import Statement', url: 'reference/simple_stmts.html', anchor: 'import' },
+    from: { title: 'from — Import Statement', url: 'reference/simple_stmts.html', anchor: 'import' },
     try: { title: 'try — Exception Handling', url: 'reference/compound_stmts.html', anchor: 'the-try-statement' },
     if: { title: 'if — Conditional Statements', url: 'reference/compound_stmts.html', anchor: 'the-if-statement' },
     for: { title: 'for — For Loops', url: 'reference/compound_stmts.html', anchor: 'the-for-statement' },
@@ -291,9 +292,6 @@ export const MAP: Record<string, Info> = {
     NoReturn: { title: 'typing.NoReturn — No Return Type', url: 'library/typing.html', anchor: 'typing.NoReturn' },
     overload: { title: 'typing.overload — Function Overloading', url: 'library/typing.html', anchor: 'typing.overload' }
 };
-
-// Separate export for import system documentation (avoids using 'import' as a MAP key)
-export const IMPORT_INFO: Info = { title: 'import — Import System', url: 'reference/import.html', anchor: 'the-import-system' };
 
 // Built-in modules mapping (separate from main MAP to avoid conflicts)
 

@@ -6,6 +6,66 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.5.0] - 2025-10-12
+
+### 🚀 Major Features
+
+- **Auto-Discovery for ANY Python Library**: Revolutionary new feature that automatically discovers and provides documentation for ANY Python library with Sphinx/ReadTheDocs documentation
+  - Automatically fetches documentation from PyPI metadata
+  - Tests common ReadTheDocs URL patterns (6 different patterns)
+  - Validates inventory files (>1KB) to ensure quality documentation
+  - 24-hour caching for both successes and failures
+  - Works with scikit-learn, seaborn, plotly, dask, beautifulsoup4, and thousands more libraries
+  - No need to hardcode every library - dynamic discovery at runtime!
+
+### ✨ Improvements
+
+- **Enhanced Keyword Documentation**: Keywords now show BOTH official documentation AND practical examples
+  - Combined view provides complete context (e.g., `import` statement shows syntax + usage examples)
+  - Better learning experience with theory + practice in one hover
+  - Improved keyword coverage across Python language reference
+
+- **Improved Import Detection**: Import statements now handle inline comments correctly
+  - Fixed: `import sklearn  # machine learning library` now properly detected
+  - Strips comments before parsing import statements
+  - More robust library tracking throughout the document
+
+- **Cleaner Architecture**: Single source of truth for documentation URLs
+  - All URLs centralized in `documentationUrls.ts` MAP
+  - Removed hardcoded URLs scattered throughout codebase
+  - Easier maintenance and URL updates
+  - Consistent URL resolution across all code paths
+
+- **Reduced Logging Verbosity**: Production-ready logging levels
+  - Detailed operation logs moved from INFO to DEBUG level
+  - Only critical lifecycle events at INFO level
+  - Cleaner output for end users
+  - Easier debugging when needed with DEBUG level
+
+### 🐛 Bug Fixes
+
+- **Fixed `import` Keyword URL**: `import` now links to correct Python docs (simple_stmts instead of compound_stmts)
+- **Fixed Context Preservation**: Dotted expressions (e.g., `np.array`) now preserve context correctly
+- **Fixed Import Detection with Comments**: Inline comments in import statements no longer break detection
+- **Universal Third-Party Tracking**: All non-stdlib libraries now tracked, enabling auto-discovery fallback
+
+### 🏗️ Architecture
+
+- Added `LibraryDiscovery` service (~305 lines) for intelligent library detection
+- Integrated PyPI API for metadata fetching with 5-second timeout
+- Added URL validation with HEAD requests and size checks
+- Enhanced `InventoryManager` to use auto-discovery as fallback
+- Modified `isKnownLibrary()` to return true for ALL third-party libraries
+- Created `getDocUrlForSymbol()` helper for consistent URL lookups
+
+### 📚 Documentation
+
+- Updated package.json description to highlight auto-discovery
+- Added keywords: auto-discovery, pypi, readthedocs, sphinx
+- Version bumped to 0.5.0 to reflect major new capability
+
+---
+
 ## [0.4.2] - 2025-10-10
 
 ### �️ Cleanup

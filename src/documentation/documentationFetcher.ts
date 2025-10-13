@@ -6,7 +6,7 @@
  * @license MIT
  */
 
-import { getDunderInfo, IMPORT_INFO, MAP, MODULES, OPERATORS } from '../data/documentationUrls';
+import { getDunderInfo, MAP, MODULES, OPERATORS } from '../data/documentationUrls';
 import { CacheManager } from '../services/cache';
 import { InventoryEntry } from '../services/inventory';
 import { Logger } from '../services/logger';
@@ -75,11 +75,6 @@ function getDocumentationInfo(symbol: string): Info | null {
     // First check main MAP
     if (symbol in MAP) {
         return MAP[symbol];
-    }
-
-    // Map 'import' and 'from' keywords to the import system documentation
-    if (symbol === 'from' || symbol === 'import') {
-        return IMPORT_INFO;
     }
 
     // Then check MODULES
@@ -302,12 +297,20 @@ export class DocumentationFetcher {
                 const section = this.extractAnchoredSection(html, anchor);
                 if (section) {
                     const md = this.htmlToMarkdown(section, maxLines, baseUrl, symbolName);
+                    this.logger.debug(`📄 Extracted markdown length: ${md.trim().length} chars`);
+                    this.logger.debug(`📄 Preview: ${md.trim().substring(0, 150)}...`);
+
                     // If the extracted markdown is very short (e.g. only a heading), try a paragraph fallback
-                    if (md.trim().length < 40) {
-                        this.logger.debug(`Extracted markdown very short (${md.trim().length} chars), attempting paragraph fallback for anchor: ${anchor}`);
-                        const paraFallback = this.extractParagraphsAfterAnchor(html, anchor, 2);
+                    // Increased threshold from 40 to 100 to catch more cases
+                    if (md.trim().length < 100) {
+                        this.logger.debug(`⚠️ Markdown too short, trying paragraph fallback...`);
+                        const paraFallback = this.extractParagraphsAfterAnchor(html, anchor, 5); // Increased from 2 to 5 paragraphs
                         if (paraFallback) {
-                            return this.htmlToMarkdown(paraFallback, maxLines, baseUrl, symbolName);
+                            const fallbackMd = this.htmlToMarkdown(paraFallback, maxLines, baseUrl, symbolName);
+                            this.logger.debug(`✅ Paragraph fallback succeeded: ${fallbackMd.trim().length} chars`);
+                            return fallbackMd;
+                        } else {
+                            this.logger.debug(`⚠️ Paragraph fallback failed, using original short content`);
                         }
                     }
                     return md;

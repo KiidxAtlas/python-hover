@@ -781,10 +781,27 @@ function isKnownLibrary(libraryName: string, configManager?: any): boolean {
     // Check custom libraries from config (if available)
     if (configManager && typeof configManager.customLibraries !== 'undefined') {
         const customLibs = configManager.customLibraries || [];
-        return customLibs.some((lib: any) => lib.name === libraryName);
+        if (customLibs.some((lib: any) => lib.name === libraryName)) {
+            return true;
+        }
     }
 
-    return false;
+    // NEW: Track ALL third-party libraries (not just known ones)
+    // This allows auto-discovery to work with any library
+    // Skip Python standard library modules
+    const stdlibModules = new Set([
+        'os', 'sys', 'json', 'time', 'datetime', 'math', 'random', 're',
+        'collections', 'itertools', 'functools', 'operator', 'pathlib',
+        'typing', 'abc', 'enum', 'dataclasses', 'copy', 'pickle',
+        'io', 'csv', 'xml', 'html', 'urllib', 'http', 'email',
+        'threading', 'multiprocessing', 'subprocess', 'socket', 'ssl',
+        'logging', 'unittest', 'argparse', 'configparser', 'tempfile',
+        'shutil', 'glob', 'fnmatch', 'zipfile', 'tarfile', 'gzip',
+        'sqlite3', 'hashlib', 'hmac', 'secrets', 'uuid', 'struct'
+    ]);
+
+    // If not a standard library module, treat it as a potential third-party library
+    return !stdlibModules.has(libraryName);
 }
 
 export function getImportedLibraries(documentText: string, configManager?: any): Map<string, string> {
@@ -792,7 +809,9 @@ export function getImportedLibraries(documentText: string, configManager?: any):
     const lines = documentText.split('\n');
 
     for (const line of lines) {
-        const trimmed = line.trim();
+        // Remove comments before processing
+        const withoutComment = line.split('#')[0];
+        const trimmed = withoutComment.trim();
 
         // Match: import numpy as np
         const importAsMatch = trimmed.match(/^import\s+(\w+)(?:\s+as\s+(\w+))?$/);
