@@ -10,9 +10,11 @@ import { getDunderInfo, MAP, MODULES, OPERATORS } from '../data/documentationUrl
 import { CacheManager } from '../services/cache';
 import { InventoryEntry } from '../services/inventory';
 import { Logger } from '../services/logger';
+import { PyPIPackageInfo, PyPIService } from '../services/pypiService';
 import { Info } from '../types';
 import { FetchWithTimeout } from '../utils/fetchWithTimeout';
 import { ExampleEnricher } from './exampleEnricher';
+import { ParsedDocumentation, SphinxParser } from './sphinxParser';
 
 export interface DocumentationSnippet {
     title: string;
@@ -21,8 +23,10 @@ export interface DocumentationSnippet {
     anchor: string;
 }
 
-// Documentation fetcher - Developed by KiidxAtlas
-const FETCHER_SIGNATURE = 'DocFetcher-KiidxAtlas';
+export interface RichDocumentation extends ParsedDocumentation {
+    name: string;
+    url: string;
+}
 
 /**
  * Helper functions for working with documentation mappings
@@ -103,10 +107,63 @@ function buildFullUrlFromInfo(info: Info): string {
 export class DocumentationFetcher {
     private logger: Logger;
     private exampleEnricher: ExampleEnricher;
+    private pypiService: PyPIService;
+    private sphinxParser: SphinxParser;
 
-    constructor(private cacheManager: CacheManager) {
+    constructor(private cacheManager: CacheManager, pypiService?: PyPIService) {
         this.logger = Logger.getInstance();
         this.exampleEnricher = new ExampleEnricher();
+        this.pypiService = pypiService || new PyPIService();
+        this.sphinxParser = new SphinxParser();
+    }
+
+    /**
+     * Fetch rich documentation by parsing the actual documentation page
+     * This provides much more detail than just the inventory entry
+     */
+    public async fetchRichDocumentation(url: string, symbolName: string): Promise<RichDocumentation | null> {
+        try {
+            this.logger.debug(`📚 Fetching rich documentation from ${url}`);
+
+            // Check cache first
+            const cacheKey = `rich-doc:${url}`;
+            const cached = await this.cacheManager.get<RichDocumentation>(cacheKey);
+            if (cached) {
+                this.logger.debug(`✅ Found cached rich documentation for ${symbolName}`);
+                return cached.data;
+            }
+
+            // Fetch the HTML page
+            const response = await FetchWithTimeout.fetch(url, { timeoutMs: 8000 });
+            if (!response.ok) {
+                this.logger.debug(`❌ Failed to fetch documentation: ${response.status}`);
+                return null;
+            }
+
+            const html = await response.text();
+
+            // Parse the Sphinx documentation
+            const parsed = this.sphinxParser.parseDocumentation(html);
+
+            const richDoc: RichDocumentation = {
+                name: symbolName,
+                url: url,
+                ...parsed
+            };
+
+            // Cache for 24 hours
+            await this.cacheManager.set(cacheKey, richDoc, '24h');
+
+            this.logger.debug(`✅ Successfully parsed rich documentation for ${symbolName}`);
+            this.logger.debug(`   - Parameters: ${parsed.parameters?.length || 0}`);
+            this.logger.debug(`   - Examples: ${parsed.examples?.length || 0}`);
+            this.logger.debug(`   - See Also: ${parsed.seeAlso?.length || 0}`);
+
+            return richDoc;
+        } catch (error) {
+            this.logger.debug(`Error fetching rich documentation: ${error}`);
+            return null;
+        }
     }
 
     /**
@@ -907,5 +964,19 @@ export class DocumentationFetcher {
 
     private escapeRegex(string: string): string {
         return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    /**
+     * Fetch PyPI package description as fallback for module documentation
+     */
+    public async fetchPyPIDescription(moduleName: string): Promise<string | null> {
+        return await this.pypiService.fetchSummary(moduleName);
+    }
+
+    /**
+     * Fetch PyPI package information (description and doc URL)
+     */
+    public async fetchPyPIInfo(moduleName: string): Promise<PyPIPackageInfo | null> {
+        return await this.pypiService.fetchPackageInfo(moduleName);
     }
 }

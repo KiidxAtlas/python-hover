@@ -14,7 +14,10 @@ export class TypeDetectionService {
      * Returns the detected type or undefined if cannot determine
      */
     public static detectTypeFromValue(value: string): string | undefined {
-        const trimmedValue = value.trim();
+        // Strip inline comments first
+        const commentIndex = value.indexOf('#');
+        const cleanValue = commentIndex >= 0 ? value.substring(0, commentIndex) : value;
+        const trimmedValue = cleanValue.trim();
 
         // String literals (including raw, formatted, bytes)
         if (this.isStringLiteral(trimmedValue)) {
@@ -139,12 +142,25 @@ export class TypeDetectionService {
      * Detect constructor call type
      */
     private static detectConstructorCall(value: string): string | undefined {
-        const constructorMatch = value.match(/^(\w+)\(/);
+        // Match simple constructors: ClassName(...) or module.ClassName(...)
+        const constructorMatch = value.match(/^([\w.]+)\(/);
         if (constructorMatch) {
             const constructorName = constructorMatch[1];
+
+            // Check for built-in types
             if (['str', 'int', 'float', 'list', 'dict', 'set', 'tuple', 'bool'].includes(constructorName)) {
                 return constructorName;
             }
+
+            // Check for third-party library constructors (e.g., pandas.DataFrame, numpy.array)
+            if (constructorName.includes('.')) {
+                // Return the full qualified name (e.g., "pandas.DataFrame")
+                return constructorName;
+            }
+
+            // For simple class names (e.g., DataFrame, Series), also return them
+            // The context will be resolved later by the symbol resolver
+            return constructorName;
         }
         return undefined;
     }

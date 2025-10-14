@@ -350,20 +350,25 @@ export class InventoryManager {
             // Try auto-discovery if available
             if (this.libraryDiscovery) {
                 this.logger.debug(`🔎 Starting auto-discovery for "${libraryName}"...`);
-                const discovered = await this.libraryDiscovery.discoverLibrary(libraryName, pythonPath);
+                try {
+                    const discovered = await this.libraryDiscovery.discoverLibrary(libraryName, pythonPath);
 
-                if (discovered) {
-                    this.logger.debug(`✅ Auto-discovered ${libraryName}: ${discovered.inventoryUrl}`);
-                    // Use the discovered config
-                    const discoveredConfig: LibraryInventoryConfig = {
-                        name: discovered.name,
-                        inventoryUrl: discovered.inventoryUrl,
-                        baseUrl: discovered.docBaseUrl,
-                        version: discovered.version
-                    };
-                    return await this.fetchThirdPartyInventory(discoveredConfig);
-                } else {
-                    this.logger.debug(`❌ Auto-discovery failed for "${libraryName}"`);
+                    if (discovered) {
+                        this.logger.debug(`✅ Auto-discovered ${libraryName}: ${discovered.inventoryUrl}`);
+                        // Use the discovered config
+                        const discoveredConfig: LibraryInventoryConfig = {
+                            name: discovered.name,
+                            inventoryUrl: discovered.inventoryUrl,
+                            baseUrl: discovered.docBaseUrl,
+                            version: discovered.version
+                        };
+                        return await this.fetchThirdPartyInventory(discoveredConfig);
+                    } else {
+                        this.logger.debug(`❌ Auto-discovery failed for "${libraryName}"`);
+                    }
+                } catch (error) {
+                    this.logger.warn(`⚠️ Auto-discovery error for "${libraryName}": ${error instanceof Error ? error.message : String(error)}`);
+                    // Continue to return null below
                 }
             } else {
                 this.logger.warn(`⚠️ LibraryDiscovery not initialized!`);

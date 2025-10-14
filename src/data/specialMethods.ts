@@ -2,12 +2,6 @@
  * Special methods (dunder methods) information provider
  */
 
-export interface SpecialMethodEntry {
-    name: string;
-    kind?: 'object' | 'type';
-    desc?: string;
-}
-
 /**
  * Descriptions for special methods
  */
@@ -41,57 +35,3 @@ export const SPECIAL_METHOD_DESCRIPTIONS: Record<string, string> = {
     '__pow__': 'Implement power (**).',
     '__del__': 'Destructor; called when instance is about to be destroyed.',
 };
-
-/**
- * Default list of common special methods
- */
-export const DEFAULT_SPECIAL_METHODS: SpecialMethodEntry[] = [
-    { name: '__init__' },
-    { name: '__repr__' },
-    { name: '__str__' },
-    { name: '__len__' },
-    { name: '__iter__' },
-    { name: '__contains__' },
-    { name: '__getitem__' },
-    { name: '__setitem__' },
-    { name: '__delitem__' },
-    { name: '__enter__' },
-    { name: '__exit__' },
-    { name: '__call__' },
-    { name: '__new__' },
-    { name: '__del__' }
-];
-
-/**
- * Builds a formatted section with information about special methods
- */
-export function buildSpecialMethodsSection(className: string, methods: SpecialMethodEntry[] = DEFAULT_SPECIAL_METHODS): string {
-    const lines = [
-        `## Special Methods for \`${className}\` class`,
-        '',
-        'These methods have special meaning in Python:',
-        ''
-    ];
-
-    for (const method of methods) {
-        const desc = method.desc || SPECIAL_METHOD_DESCRIPTIONS[method.name] || 'Special method';
-        lines.push(`- \`${method.name}\`: ${desc}`);
-    }
-
-    lines.push('', 'Override these methods to customize class behavior.');
-    return lines.join('\n');
-}
-
-/**
- * Gets information about a specific dunder method
- */
-export function getDunderInfo(methodName: string): { description: string; example?: string } | undefined {
-    if (!methodName.startsWith('__') || !methodName.endsWith('__')) {
-        return undefined;
-    }
-
-    return {
-        description: SPECIAL_METHOD_DESCRIPTIONS[methodName] || 'Special method',
-        example: `class MyClass:\n    def ${methodName}(self, ...):\n        # Your implementation\n        pass`
-    };
-}

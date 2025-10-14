@@ -10,6 +10,7 @@
  */
 
 import * as vscode from 'vscode';
+import { LIMITS, PERFORMANCE } from '../constants/defaults';
 import { ENHANCED_EXAMPLES } from '../data/enhancedExamples';
 import { SPECIAL_METHOD_DESCRIPTIONS } from '../data/specialMethods';
 import { STATIC_EXAMPLES } from '../data/staticExamples';
@@ -21,16 +22,15 @@ import { MethodResolver } from '../resolvers/methodResolver';
 import { SymbolResolver } from '../resolvers/symbolResolver';
 import { CacheManager } from '../services/cache';
 import { ConfigurationManager } from '../services/config';
+import { DataLoader } from '../services/dataLoader';
 import { InventoryEntry, InventoryManager } from '../services/inventory';
 import { Logger } from '../services/logger';
 import { DeprecationInfo, ParameterInfo, RelatedSymbol, ReturnInfo } from '../types';
+import { BoundedCache } from '../utils/boundedCache';
 import { HoverTheme } from './hoverTheme';
 import { getRelatedMethodsForMethod } from './smartSuggestions';
 import { formatComparison, formatVersionInfo, getMethodComparison, getVersionInfo } from './versionComparison';
 import { VersionDetector } from './versionDetector';
-
-// Hover provider signature - Original work by KiidxAtlas
-const PROVIDER_SIGNATURE = 'PythonHoverProvider-KiidxAtlas-2025';
 
 export class PythonHoverProvider implements vscode.HoverProvider {
     private logger: Logger;
@@ -39,16 +39,18 @@ export class PythonHoverProvider implements vscode.HoverProvider {
     private contextDetector: ContextDetector;
     private methodResolver: MethodResolver;
     private customDocsLoader: CustomDocumentationLoader;
-    private pendingHoverRequests: Map<string, Promise<vscode.Hover | null>>;
+    private pendingHoverRequests: BoundedCache<string, Promise<vscode.Hover | null>>;
     private theme: HoverTheme;
     private debounceTimers: Map<string, NodeJS.Timeout>;
-    private versionCache: Map<string, { version: string; timestamp: number }>;
+    private versionCache: BoundedCache<string, { version: string; timestamp: number; pythonPath?: string }>;
+    private dataLoader: DataLoader;
 
     constructor(
         private configManager: ConfigurationManager,
         private inventoryManager: InventoryManager,
         private versionDetector: VersionDetector,
-        cacheManager: CacheManager
+        cacheManager: CacheManager,
+        dataLoader?: DataLoader
     ) {
         this.logger = Logger.getInstance();
         this.symbolResolver = new SymbolResolver();
@@ -56,27 +58,102 @@ export class PythonHoverProvider implements vscode.HoverProvider {
         this.contextDetector = new ContextDetector();
         this.methodResolver = new MethodResolver();
         this.customDocsLoader = new CustomDocumentationLoader();
-        this.pendingHoverRequests = new Map();
+
+        // Use BoundedCache instead of Map for better memory management
+        this.pendingHoverRequests = new BoundedCache({
+            maxSize: LIMITS.MAX_PENDING_REQUESTS,
+            ttl: 30000 // 30 seconds
+        });
+
         this.theme = new HoverTheme();
         this.debounceTimers = new Map();
-        this.versionCache = new Map();
+
+        // Use BoundedCache for version cache with TTL
+        this.versionCache = new BoundedCache({
+            maxSize: LIMITS.MAX_VERSION_CACHE_SIZE,
+            ttl: PERFORMANCE.VERSION_CACHE_TTL
+        });
+
+        // Initialize DataLoader (create new if not provided)
+        this.dataLoader = dataLoader || new DataLoader();
+
+        // Preload data in background after short delay (non-blocking)
+        setTimeout(() => {
+            this.dataLoader.preloadAll().catch(err => {
+                this.logger.error('Error preloading data:', err);
+            });
+        }, 5000);
 
         // Load custom docs when initialized
         this.loadCustomDocs();
     }
 
     /**
+     * Build full URL from inventory entry
+     */
+    private buildDocUrl(entry: InventoryEntry): string {
+        return `${entry.uri}#${entry.anchor}`;
+    }
+
+    /**
+     * Create a standardized hover with common structure
+     * Implements Template Method pattern to reduce duplication
+     */
+    private createStandardHover(config: {
+        symbol: string;
+        type: string;
+        badges?: Array<{ text: string; type: 'info' | 'warning' | 'success' | 'error' }>;
+        content?: string;
+        example?: string;
+        docUrl?: string;
+        versionInfo?: { version: string; pythonPath?: string };
+    }): vscode.Hover {
+        const md = this.theme.createMarkdown();
+
+        // Header
+        md.appendMarkdown(this.theme.formatHeader(config.symbol, config.type));
+
+        // Badges (optional)
+        if (config.badges) {
+            md.appendMarkdown(this.theme.formatBadgeGroup(config.badges));
+        }
+
+        // Content
+        if (config.content) {
+            md.appendMarkdown(this.theme.formatContent(config.content));
+        }
+
+        // Example (optional)
+        if (config.example) {
+            md.appendMarkdown(this.theme.formatDivider());
+            md.appendMarkdown(this.theme.formatCodeBlock(config.example, 'python'));
+        }
+
+        // Documentation link
+        if (config.docUrl) {
+            md.appendMarkdown(this.theme.formatDivider());
+            const links = [{ text: 'View Documentation', url: config.docUrl, icon: 'book' }];
+            md.appendMarkdown(this.theme.formatActionLinks(links));
+        }
+
+        // Version footer
+        this.appendVersionFooter(md, config.versionInfo);
+
+        return new vscode.Hover(md);
+    }
+
+    /**
      * Get debounce delay from configuration
      */
     private getDebounceDelay(): number {
-        return this.configManager.getValue<number>('debounceDelay', 150);
+        return this.configManager.getValue<number>('debounceDelay', PERFORMANCE.DEBOUNCE_DELAY);
     }
 
     /**
      * Get version cache TTL from configuration (in milliseconds)
      */
     private getVersionCacheTTL(): number {
-        const seconds = this.configManager.getValue<number>('versionCacheTTL', 30);
+        const seconds = this.configManager.getValue<number>('versionCacheTTL', PERFORMANCE.VERSION_CACHE_TTL / 1000);
         return seconds * 1000; // Convert to milliseconds
     }
 
@@ -108,25 +185,17 @@ export class PythonHoverProvider implements vscode.HoverProvider {
         await this.loadCustomDocs();
     }
 
-    /**
-     * Get cached Python version for a document
-     * Caches version detection results to avoid repeated file system operations
-     */
     private async getCachedPythonVersion(document: vscode.TextDocument): Promise<{ version: string; pythonPath?: string }> {
         const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
         const cacheKey = workspaceFolder?.uri.toString() || 'default';
 
-        // Check if we have a cached version that's still valid
         const cached = this.versionCache.get(cacheKey);
         const now = Date.now();
 
         if (cached && (now - cached.timestamp) < this.getVersionCacheTTL()) {
-            this.logger.debug(`Using cached Python version: ${cached.version}`);
             return { version: cached.version, pythonPath: (cached as any).pythonPath };
         }
 
-        // Detect version and cache it
-        this.logger.debug(`Detecting Python version for workspace: ${cacheKey}`);
         const versionInfo = await this.versionDetector.detectPythonVersionInfo();
 
         this.versionCache.set(cacheKey, {
@@ -151,37 +220,24 @@ export class PythonHoverProvider implements vscode.HoverProvider {
         position: vscode.Position,
         token: vscode.CancellationToken
     ): Promise<vscode.Hover | null> {
-        // Log hover attempts at info level for debugging
-        const wordRange = document.getWordRangeAtPosition(position);
-        const word = wordRange ? document.getText(wordRange) : '<none>';
-        this.logger.debug(`🔍 Hover on "${word}" at line ${position.line + 1}`);
-
-        // Check if cancellation was requested
         if (token.isCancellationRequested) {
-            this.logger.debug('Hover cancelled before processing');
             return null;
         }
 
-        // Create unique key for request deduplication
         const requestKey = `${document.uri.toString()}:${position.line}:${position.character}`;
 
-        // Check if we already have a pending request for this position
         if (this.pendingHoverRequests.has(requestKey)) {
-            this.logger.debug(`Reusing pending request for ${requestKey}`);
             return this.pendingHoverRequests.get(requestKey)!;
         }
 
-        // Debounce: Cancel any existing timer for this position
         const existingTimer = this.debounceTimers.get(requestKey);
         if (existingTimer) {
             clearTimeout(existingTimer);
         }
 
-        // Create debounced promise
         const debouncedPromise = new Promise<vscode.Hover | null>((resolve) => {
             const timer = setTimeout(async () => {
                 this.debounceTimers.delete(requestKey);
-
                 try {
                     const result = await this.provideHoverImpl(document, position, token);
                     resolve(result);
@@ -194,13 +250,11 @@ export class PythonHoverProvider implements vscode.HoverProvider {
             this.debounceTimers.set(requestKey, timer);
         });
 
-        // Store it to deduplicate concurrent requests
         this.pendingHoverRequests.set(requestKey, debouncedPromise);
 
         try {
             return await debouncedPromise;
         } finally {
-            // Clean up after request completes
             this.pendingHoverRequests.delete(requestKey);
         }
     }
@@ -211,260 +265,278 @@ export class PythonHoverProvider implements vscode.HoverProvider {
         _token: vscode.CancellationToken
     ): Promise<vscode.Hover | null> {
         try {
-            this.logger.debug(`📝 Processing hover implementation...`);
-
-            // Detect Python version for this document (with caching)
             const versionInfo = await this.getCachedPythonVersion(document);
-            const pythonVersion = versionInfo.version;
-            const pythonPath = versionInfo.pythonPath;
-            this.logger.debug(`🐍 Python version: ${pythonVersion}${pythonPath ? ` (${pythonPath})` : ''}`);
+            const { version: pythonVersion, pythonPath } = versionInfo;
 
-            // Resolve symbols at the current position
             const symbols = this.symbolResolver.resolveSymbolAtPosition(document, position);
-            this.logger.debug(`Symbols resolved: ${JSON.stringify(symbols)}`);
             if (symbols.length === 0) {
-                this.logger.debug(`No symbols found at position`);
                 return null;
             }
 
-            // Try to resolve the first symbol
             const primarySymbol = symbols[0];
-            this.logger.debug(`Primary symbol: ${primarySymbol.symbol} (type: ${primarySymbol.type})`);
 
-            // NEW: Check for custom documentation first
+            // Check for custom documentation first
             const customDoc = this.customDocsLoader.getCustomDoc(primarySymbol.symbol);
             if (customDoc) {
-                this.logger.debug(`Found custom documentation for ${primarySymbol.symbol}`);
                 return this.createCustomDocHover(customDoc, primarySymbol, versionInfo);
             }
 
-            // Get imported libraries for later use (even if auto-detect is disabled, we still need this for context)
+            // Get imported libraries
             const documentText = document.getText();
             const importedLibsMap = getImportedLibraries(documentText, this.configManager);
             const importedLibsSet = new Set(importedLibsMap.values());
 
-            this.logger.debug(`📚 Imported libraries: ${Array.from(importedLibsSet).join(', ') || '(none detected)'}`);
-            this.logger.debug(`🔍 Primary symbol: "${primarySymbol.symbol}"`);
-            this.logger.debug(`❓ Is "${primarySymbol.symbol}" in imported set? ${importedLibsSet.has(primarySymbol.symbol)}`);
-
-            // NEW: Check for third-party library documentation (if auto-detect is enabled)
+            // Check for third-party library documentation
             if (this.configManager.autoDetectLibrariesEnabled) {
-                this.logger.debug(`✅ Auto-detect libraries is ENABLED`);
-
-                // Check if we're hovering over a module import (like 'numpy')
-                // Only show module hover if the symbol IS the library itself, not an imported symbol FROM the library
+                // Hovering over library itself (e.g., 'numpy' in 'import numpy')
                 if (importedLibsSet.has(primarySymbol.symbol)) {
-                    // This is the library itself (e.g., hovering over 'numpy' in 'import numpy')
-                    const { version, pythonPath } = await this.getCachedPythonVersion(document);
-                    return await this.createModuleHover(primarySymbol.symbol, version, pythonPath);
+                    return await this.createModuleHover(primarySymbol.symbol, pythonVersion, pythonPath);
                 }
 
-                // Check if this symbol was imported FROM a library (e.g., 'KernelManager' from 'jupyter_client')
+                // Symbol imported from a library (e.g., 'KernelManager' from 'jupyter_client')
                 const sourceLibrary = importedLibsMap.get(primarySymbol.symbol);
                 if (sourceLibrary && sourceLibrary !== primarySymbol.symbol) {
-                    // This symbol was imported from a library, look it up in that library's inventory
-                    this.logger.debug(`Symbol '${primarySymbol.symbol}' imported from library '${sourceLibrary}', looking up in inventory`);
-
-                    const { version, pythonPath } = await this.getCachedPythonVersion(document);
-
-                    // Try to find the full qualified name in the inventory
-                    // For example: KernelManager -> jupyter_client.manager.KernelManager
                     const entry = await this.inventoryManager.resolveSymbol(
                         primarySymbol.symbol,
-                        version,
-                        sourceLibrary,  // Pass the source library as context
+                        pythonVersion,
+                        sourceLibrary,
                         pythonPath
                     );
 
                     if (entry) {
-                        this.logger.debug(`Found inventory entry for ${primarySymbol.symbol} from ${sourceLibrary}: ${entry.uri}#${entry.anchor}`);
-
-                        // Fetch and create rich hover for this inventory entry
-                        const maxLines = this.configManager.maxSnippetLines;
                         const docSnippet = await this.documentationFetcher.fetchDocumentationForSymbol(
                             primarySymbol.symbol,
                             entry,
-                            maxLines,
+                            this.configManager.maxSnippetLines,
                             sourceLibrary
                         );
-
-                        return this.createRichHover(docSnippet, entry, primarySymbol, versionInfo);
+                        return await this.createRichHover(docSnippet, entry, primarySymbol, versionInfo);
                     }
-
-                    this.logger.debug(`No inventory entry found for ${primarySymbol.symbol} from ${sourceLibrary}, continuing with other lookups`);
-                    // Fall through to other lookups if not found
                 }
-            } else {
-                this.logger.debug(`Auto-detect libraries is disabled, skipping third-party library auto-detection`);
             }
 
-            // Check if this is a method call on a third-party library (e.g., np.array, pd.DataFrame)
-            // Extract just the method name if symbol contains a dot
+            // Extract method name from dotted expressions
             let methodName = primarySymbol.symbol;
-            this.logger.debug(`🔍 Checking method: symbol="${primarySymbol.symbol}", type="${primarySymbol.type}", context="${primarySymbol.context}"`);
-
             if (methodName.includes('.')) {
                 const parts = methodName.split('.');
                 const baseModule = parts[0];
                 methodName = parts[parts.length - 1];
-                this.logger.debug(`📍 Dotted expression: base="${baseModule}", method="${methodName}"`);
 
-                // Check if the base module is a known/imported library
                 if (importedLibsSet.has(baseModule) || primarySymbol.context === baseModule) {
-                    this.logger.debug(`✅ Base "${baseModule}" is an imported library, will look up "${methodName}" in its inventory`);
-                    // Update the symbol structure to use the base as context
-                    primarySymbol.context = baseModule;  // ALWAYS set it, even if context was already set
-                    primarySymbol.symbol = methodName;    // Update symbol to just the method/attribute name
-                    this.logger.debug(`🔧 Updated: context="${primarySymbol.context}", symbol="${primarySymbol.symbol}"`);
+                    primarySymbol.context = baseModule;
+                    primarySymbol.symbol = methodName;
                 }
             }
 
-            // First check if the context is a known library (from symbol resolver)
+            // Check for third-party method documentation
             if (primarySymbol.type === 'method' && primarySymbol.context) {
                 const thirdPartyDoc = getThirdPartyDoc(primarySymbol.context, methodName);
                 if (thirdPartyDoc) {
-                    this.logger.debug(`Found third-party docs for ${primarySymbol.context}.${methodName}`);
-                    return this.createThirdPartyHover(thirdPartyDoc, primarySymbol, versionInfo);
+                    return await this.createThirdPartyHoverAsync(thirdPartyDoc, primarySymbol, versionInfo);
                 }
             }
 
-            // Also check all imported libraries by their actual names
+            // Check imported libraries for method documentation
             for (const lib of importedLibsSet) {
                 const thirdPartyDoc = getThirdPartyDoc(lib, methodName);
                 if (thirdPartyDoc) {
-                    this.logger.debug(`Found third-party docs for ${lib}.${methodName}`);
-                    return this.createThirdPartyHover(thirdPartyDoc, primarySymbol, versionInfo);
+                    return await this.createThirdPartyHoverAsync(thirdPartyDoc, primarySymbol, versionInfo);
                 }
             }
 
-            // ENHANCEMENT: Check for method context
+            // Detect method context
             if (primarySymbol.type === 'method') {
-                // If symbol contains a dot (like "paths.jupyter_data_dir"), check if the base is an import
-                let methodName = primarySymbol.symbol;
                 let receiverType = primarySymbol.context;
 
                 if (methodName.includes('.')) {
                     const parts = methodName.split('.');
-                    const baseSymbol = parts[0]; // e.g., "paths" from "paths.jupyter_data_dir"
-                    methodName = parts[parts.length - 1]; // Get just "jupyter_data_dir"
-                    this.logger.debug(`Extracted method name: ${methodName}`);
-                    this.logger.debug(`Checking if base symbol "${baseSymbol}" is an imported module...`);
+                    const baseSymbol = parts[0];
+                    methodName = parts[parts.length - 1];
 
-                    // Check if the base symbol is an imported third-party module
                     if (importedLibsMap.has(baseSymbol)) {
                         const library = importedLibsMap.get(baseSymbol);
-                        this.logger.debug(`Base symbol "${baseSymbol}" is imported from: ${library}`);
-                        receiverType = library; // Use the actual library name
-                        primarySymbol.context = library; // Update the context immediately
-                        primarySymbol.symbol = methodName; // Update symbol to just the method name
+                        receiverType = library;
+                        primarySymbol.context = library;
+                        primarySymbol.symbol = methodName;
                     }
                 }
 
-                // Detect the method's object type for better context if not already provided
-                // Skip if we already determined it's from an imported library
-                // ALSO skip if we already set context from dotted module expression (e.g., dask.datasets)
                 const alreadySetFromDottedExpression = importedLibsSet.has(receiverType || '');
-                if (!receiverType && !importedLibsMap.has(methodName.split('.')[0]) && !alreadySetFromDottedExpression) {
-                    receiverType = this.contextDetector.detectMethodContext(document, position, methodName);
-                    this.logger.debug(`Context detector found: ${receiverType}`);
+
+                Logger.getInstance().info(`[HoverProvider] ReceiverType before detection: ${receiverType}`);
+                Logger.getInstance().info(`[HoverProvider] AlreadySetFromDottedExpression: ${alreadySetFromDottedExpression}`);
+                Logger.getInstance().info(`[HoverProvider] Condition check: !receiverType=${!receiverType}, receiverType==='object'=${receiverType === 'object'}`);
+
+                // NEW: Always try to detect context for "object" since it's just a fallback
+                // Also try if receiverType is not set or if it's not from a dotted expression
+                if (!receiverType || receiverType === 'object' || (!alreadySetFromDottedExpression && !importedLibsMap.has(methodName.split('.')[0]))) {
+                    Logger.getInstance().info(`[HoverProvider] Calling detectMethodContext for method: ${methodName}`);
+                    const detectedType = this.contextDetector.detectMethodContext(document, position, methodName);
+                    if (detectedType) {
+                        Logger.getInstance().info(`[HoverProvider] Detected type: ${detectedType}`);
+                        receiverType = detectedType;
+                    } else {
+                        Logger.getInstance().info(`[HoverProvider] No type detected`);
+                    }
                 }
 
-                if (receiverType) {
-                    this.logger.debug(`Detected method context: ${receiverType}.${methodName}`);
+                Logger.getInstance().info(`[HoverProvider] Final receiverType: ${receiverType}`);
 
-                    // Only resolve method info if we haven't already set context from imports
-                    if (!primarySymbol.context) {
-                        // Resolve method with context
+                if (receiverType) {
+                    Logger.getInstance().info(`[HoverProvider] ReceiverType includes dot: ${receiverType.includes('.')}`);
+
+                    // NEW: If receiverType is a simple class name but we have libraries imported,
+                    // try to qualify it dynamically by checking which library has this symbol
+                    if (!receiverType.includes('.') && importedLibsSet.size > 0) {
+                        Logger.getInstance().info(`[HoverProvider] Attempting to qualify simple type: ${receiverType}`);
+
+                        // Store current receiverType to avoid type narrowing issues
+                        const currentType: string = receiverType;
+
+                        // Try each imported library to see if it has this symbol
+                        for (const lib of importedLibsSet) {
+                            try {
+                                const qualifiedName: string = `${lib}.${currentType}`;
+                                Logger.getInstance().info(`[HoverProvider] Trying to resolve: ${qualifiedName}`);
+
+                                // Quick check: see if inventory has this symbol with this library context
+                                const testEntry = await this.inventoryManager.resolveSymbol(
+                                    currentType,
+                                    pythonVersion,
+                                    lib,
+                                    pythonPath
+                                );
+
+                                if (testEntry) {
+                                    Logger.getInstance().info(`[HoverProvider] Found ${currentType} in library ${lib}`);
+                                    receiverType = qualifiedName;
+                                    break;
+                                }
+                            } catch (error) {
+                                // Skip libraries that fail (e.g., libraries with invalid/missing inventory files)
+                                Logger.getInstance().debug(`[HoverProvider] Failed to check library ${lib}: ${error instanceof Error ? error.message : String(error)}`);
+                                continue;
+                            }
+                        }
+                    }
+
+                    // NEW: Handle qualified type names (e.g., "pandas.DataFrame")
+                    if (receiverType.includes('.')) {
+                        Logger.getInstance().info(`[HoverProvider] Handling qualified type name: ${receiverType}`);
+                        const parts = receiverType.split('.');
+                        const library = parts[0];
+                        const className = parts[parts.length - 1];
+
+                        Logger.getInstance().info(`[HoverProvider] Library: ${library}, ClassName: ${className}`);
+                        Logger.getInstance().info(`[HoverProvider] Is library imported: ${importedLibsSet.has(library)}`);
+
+                        // Check if this library is imported
+                        if (importedLibsSet.has(library)) {
+                            // Try to find third-party documentation for this method
+                            const thirdPartyDoc = getThirdPartyDoc(library, methodName);
+                            if (thirdPartyDoc) {
+                                primarySymbol.context = className;
+                                primarySymbol.symbol = methodName;
+                                return await this.createThirdPartyHoverAsync(thirdPartyDoc, primarySymbol, versionInfo);
+                            }
+
+                            // No static docs, but we know the library and class
+                            // Try to resolve from inventory with library context
+                            const fullSymbol = `${className}.${methodName}`;
+                            const entry = await this.inventoryManager.resolveSymbol(
+                                fullSymbol,
+                                pythonVersion,
+                                library,  // Use library as context for inventory lookup
+                                pythonPath
+                            );
+
+                            if (entry) {
+                                const docSnippet = await this.documentationFetcher.fetchDocumentationForSymbol(
+                                    methodName,
+                                    entry,
+                                    this.configManager.maxSnippetLines,
+                                    library
+                                );
+
+                                // Try to get rich documentation from the URL
+                                if (entry.uri) {
+                                    const docUrl = `${entry.uri}#${entry.anchor}`;
+                                    const richDoc = await this.documentationFetcher.fetchRichDocumentation(docUrl, methodName);
+
+                                    if (richDoc && (richDoc.parameters?.length || richDoc.examples?.length || richDoc.seeAlso?.length)) {
+                                        return this.createDynamicRichHover(richDoc, primarySymbol.type, versionInfo);
+                                    }
+                                }
+
+                                // Use regular rich hover with the docs we found
+                                primarySymbol.context = className;
+                                primarySymbol.symbol = methodName;
+                                return await this.createRichHover(docSnippet, entry, primarySymbol, versionInfo);
+                            }
+
+                            // Set the context to the class name for later processing
+                            primarySymbol.context = className;
+                            primarySymbol.symbol = methodName;
+                        }
+                    } else if (!primarySymbol.context || primarySymbol.context === 'object') {
                         const methodInfo = this.methodResolver.resolveMethodInfo(document, position, methodName, receiverType);
                         if (methodInfo) {
                             primarySymbol.context = receiverType;
-                            // Store as "type.method" for display, but we'll look up just the method
                             primarySymbol.symbol = methodName;
                         } else {
                             primarySymbol.symbol = methodName;
                         }
                     }
-                } else {
-                    // No context found, just use the method name
-                    if (!primarySymbol.context) {
-                        primarySymbol.symbol = methodName;
-                    }
+                } else if (!primarySymbol.context) {
+                    primarySymbol.symbol = methodName;
                 }
             }
 
-            // CRITICAL FIX: Update symbol to use extracted method name for documentation lookups
-            // The initial extraction at line 283-287 extracted the method name (e.g., "upper" from "text.upper")
-            // but primarySymbol.symbol may still contain the qualified name. We need to ensure
-            // it's updated for MAP lookups to work correctly.
+            // Update symbol for MAP lookups
             if (primarySymbol.type === 'method' && methodName !== primarySymbol.symbol && methodName.length > 0) {
-                this.logger.debug(`Updating primarySymbol.symbol from "${primarySymbol.symbol}" to "${methodName}" for MAP lookup`);
                 primarySymbol.symbol = methodName;
             }
 
-            // ENHANCEMENT: Check for special dunder methods
+            // Handle dunder methods
             if (primarySymbol.symbol.startsWith('__') && primarySymbol.symbol.endsWith('__')) {
-                this.logger.debug(`Detected special method: ${primarySymbol.symbol}`);
-
-                // Log available special method descriptions for debugging
-                this.logger.debug(`Available special method descriptions: ${Object.keys(SPECIAL_METHOD_DESCRIPTIONS).join(', ')}`);
-
-                // Extract pure dunder method name if it's part of a qualified name (e.g., "MyClass.__init__")
                 let dunderMethodName = primarySymbol.symbol;
                 if (dunderMethodName.includes('.')) {
                     dunderMethodName = dunderMethodName.split('.').pop() || dunderMethodName;
-                    this.logger.debug(`Extracted dunder method name: ${dunderMethodName}`);
                 }
 
-                // Use SPECIAL_METHOD_DESCRIPTIONS directly
                 const description = SPECIAL_METHOD_DESCRIPTIONS[dunderMethodName];
-                this.logger.debug(`Found description: ${description || 'none'}`);
-
                 if (description) {
-                    // Create custom hover for dunder methods
                     const dunderInfo = { description };
                     return this.createDunderMethodHover(dunderMethodName, dunderInfo, versionInfo);
                 }
             }
 
-            // Build the symbol to look up in inventory
+            // Build lookup symbol
             let lookupSymbol = primarySymbol.symbol;
             if (primarySymbol.type === 'method' && primarySymbol.context) {
-                // For methods, look up as "type.method" (e.g., "list.append")
-                // But don't duplicate if the symbol already includes the context (e.g., "torch.zeros")
                 if (!primarySymbol.symbol.startsWith(primarySymbol.context + '.')) {
                     lookupSymbol = `${primarySymbol.context}.${primarySymbol.symbol}`;
                 }
-                this.logger.debug(`Looking up method as: ${lookupSymbol}`);
             }
 
             const inventoryEntry = await this.inventoryManager.resolveSymbol(
                 lookupSymbol,
                 pythonVersion,
-                primarySymbol.context, // Pass context for third-party library support
-                pythonPath // Pass Python path for version-aware inventory
+                primarySymbol.context,
+                pythonPath
             );
 
-            this.logger.debug(`Inventory entry result: ${inventoryEntry ? `${inventoryEntry.name} -> ${inventoryEntry.uri}#${inventoryEntry.anchor}` : 'not found'}`);
-
-            // Check for f-strings
+            // Handle special types
             if (primarySymbol.type === 'f-string') {
-                this.logger.debug(`Handling f-string: ${primarySymbol.symbol}`);
-                // Create a themed hover for f-strings
                 return this.createFStringHover(versionInfo);
             }
 
-            // Handle operators
             if (primarySymbol.type === 'operator') {
-                this.logger.debug(`Handling operator: ${primarySymbol.symbol}`);
                 return this.createOperatorHover(primarySymbol.symbol, versionInfo);
             }
 
-            // ENHANCEMENT: Handle language keywords with enhanced examples
-            // For keywords like 'import', combine enhanced examples with full documentation
+            // Handle keywords with enhanced examples
             if (primarySymbol.type === 'keyword' && ENHANCED_EXAMPLES[primarySymbol.symbol]) {
-                this.logger.debug(`✨ Found enhanced example for keyword: ${primarySymbol.symbol}`);
-
-                // Fetch the full documentation to combine with examples
                 const inventoryEntry = await this.inventoryManager.resolveSymbol(
                     primarySymbol.symbol,
                     pythonVersion,
@@ -472,9 +544,7 @@ export class PythonHoverProvider implements vscode.HoverProvider {
                     pythonPath
                 );
 
-                // If we have inventory entry, fetch and combine with enhanced examples
                 if (inventoryEntry) {
-                    this.logger.debug(`📄 Fetching documentation to combine with examples...`);
                     const docSnippet = await this.documentationFetcher.fetchDocumentationForSymbol(
                         primarySymbol.symbol,
                         inventoryEntry,
@@ -490,55 +560,42 @@ export class PythonHoverProvider implements vscode.HoverProvider {
                     );
                 }
 
-                // No inventory entry, just show enhanced examples
                 return this.createEnhancedExampleHover(primarySymbol.symbol, versionInfo);
             }
 
-            // Fetch documentation snippet with adjusted limits for compound statements
+            // Fetch documentation
             let maxLines = this.configManager.maxSnippetLines;
-            // For compound statement keywords, allow more lines to show complete context
             if (['else', 'elif', 'finally', 'except', 'with'].includes(primarySymbol.symbol)) {
-                maxLines = Math.max(40, maxLines); // At least 40 lines for compound statements
+                maxLines = Math.max(40, maxLines);
             }
 
-            // Use the new unified documentation fetcher that prioritizes direct URL mappings
             const docSnippet = await this.documentationFetcher.fetchDocumentationForSymbol(
                 primarySymbol.symbol,
                 inventoryEntry || undefined,
                 maxLines,
-                primarySymbol.context // Pass context for better examples
+                primarySymbol.context
             );
 
-            this.logger.debug(`Generated documentation URL: ${docSnippet.url}`);
-
-            // LAST RESORT: If no inventory entry was found and auto-detect is enabled,
-            // try auto-discovery for simple identifiers (but only if built-in lookup also failed)
+            // Auto-discovery fallback
             if (!inventoryEntry && this.configManager.autoDetectLibrariesEnabled && !docSnippet.content) {
                 const isSimpleIdentifier = /^[a-z_][a-z0-9_]*$/i.test(primarySymbol.symbol);
-
                 if (isSimpleIdentifier && !primarySymbol.symbol.includes('.')) {
-                    this.logger.debug(`🔍 No built-in docs found, attempting auto-discovery as last resort...`);
-                    const { version, pythonPath } = await this.getCachedPythonVersion(document);
-
-                    // Try to resolve it as a module - this will trigger auto-discovery
                     const entry = await this.inventoryManager.resolveSymbol(
                         primarySymbol.symbol,
-                        version,
-                        primarySymbol.symbol,  // Use symbol as context to trigger third-party lookup
+                        pythonVersion,
+                        primarySymbol.symbol,
                         pythonPath
                     );
 
                     if (entry) {
-                        this.logger.debug(`✅ Found via auto-discovery fallback!`);
-                        return await this.createModuleHover(primarySymbol.symbol, version, pythonPath);
+                        return await this.createModuleHover(primarySymbol.symbol, pythonVersion, pythonPath);
                     }
                 }
             }
 
-            return this.createRichHover(docSnippet, inventoryEntry, primarySymbol, versionInfo);
+            return await this.createRichHover(docSnippet, inventoryEntry, primarySymbol, versionInfo);
 
         } catch (error: any) {
-            // Better error handling with user feedback
             this.logger.error('Error in hover provider', error as Error);
 
             // Check if it's a network error
@@ -582,6 +639,9 @@ export class PythonHoverProvider implements vscode.HoverProvider {
      * Dispose resources
      */
     public dispose(): void {
+        // Clean up theme listener
+        this.theme.dispose();
+
         // Clear all pending timers
         for (const timer of this.debounceTimers.values()) {
             clearTimeout(timer);
@@ -598,199 +658,552 @@ export class PythonHoverProvider implements vscode.HoverProvider {
     }
 
     private createCustomDocHover(customDoc: any, _symbolInfo: { symbol: string; type: string }, pythonVersionInfo?: { version: string; pythonPath?: string }): vscode.Hover {
-        const md = new vscode.MarkdownString();
-        md.isTrusted = true;
-        md.supportHtml = true;
-        md.supportThemeIcons = true;
-
-        // Format custom documentation
+        const md = this.theme.createMarkdown();
         md.appendMarkdown(formatCustomDoc(customDoc));
-
-        // Add Python version at the bottom
         this.appendVersionFooter(md, pythonVersionInfo);
-
         return new vscode.Hover(md);
     }
 
     private async createModuleHover(moduleName: string, pythonVersion: string, pythonPath?: string): Promise<vscode.Hover> {
-        this.logger.debug(`📦 Creating module hover for: ${moduleName}`);
         const md = this.theme.createMarkdown();
+        const uiConfig = this.configManager.getConfig().ui;
 
-        // Header
-        md.appendMarkdown(this.theme.formatHeader(`${moduleName} module`, 'module'));
+        md.appendMarkdown(this.theme.formatHeader(`${moduleName}`, 'module'));
 
-        // Try to fetch module documentation from inventory
-        this.logger.debug(`🔍 Resolving symbol "${moduleName}" in inventory...`);
         const entry = await this.inventoryManager.resolveSymbol(
             moduleName,
             pythonVersion,
-            moduleName,  // Use the module name as context to search in its own inventory
+            moduleName,
             pythonPath
         );
 
-        if (entry) {
-            this.logger.debug(`Found inventory entry for module ${moduleName}: ${entry.uri}#${entry.anchor}`);
+        // Try to get rich information from PyPI
+        const pypiInfo = await this.documentationFetcher.fetchPyPIInfo(moduleName);
 
-            // Add badge for third-party library
-            const badges = [{ text: 'Third-party Library', type: 'info' as const }];
-            md.appendMarkdown(this.theme.formatBadgeGroup(badges));
+        if (entry || pypiInfo) {
+            // Enhanced badges with version info
+            const badges: Array<{ text: string, type?: 'info' | 'success' | 'warning' | 'error' }> = [
+                { text: 'module', type: 'info' }
+            ];
 
-            // Fetch documentation snippet
-            const maxLines = this.configManager.maxSnippetLines;
-            const docSnippet = await this.documentationFetcher.fetchDocumentationForSymbol(
-                moduleName,
-                entry,
-                maxLines,
-                moduleName
-            );
-
-            // Add description from documentation if available
-            if (docSnippet?.content) {
-                this.logger.debug(`✅ Using doc snippet content (${docSnippet.content.length} chars)`);
-                md.appendMarkdown(this.theme.formatContent(docSnippet.content));
-            } else {
-                // If content extraction failed, try to get PyPI description
-                this.logger.debug(`⚠️ No doc content extracted, trying PyPI fallback...`);
-                const pypiDesc = await this.fetchPyPIDescription(moduleName);
-                if (pypiDesc) {
-                    this.logger.debug(`✅ Using PyPI description: "${pypiDesc.substring(0, 50)}..."`);
-                    md.appendMarkdown(this.theme.formatContent(pypiDesc));
-                } else {
-                    this.logger.debug(`❌ No PyPI description available`);
-                }
+            if (pypiInfo?.version) {
+                badges.push({ text: `v${pypiInfo.version}`, type: 'success' });
             }
 
-            // Add helpful tip
-            md.appendMarkdown(this.theme.formatTip(`Hover over functions from \`${moduleName}\` for detailed help`));
+            // Add category badge
+            const category = this.categorizeModule(moduleName);
+            if (category) {
+                badges.push({ text: category, type: 'info' });
+            }
+
+            md.appendMarkdown(this.theme.formatBadgeGroup(badges));
+
+            // Quick actions bar
+            if (uiConfig.showQuickActions) {
+                const docUrl = pypiInfo?.docUrl || (entry ? this.buildDocUrl(entry) : `https://pypi.org/project/${moduleName}/`);
+                const encodedUrl = encodeURIComponent(JSON.stringify([docUrl]));
+                const actions = [
+                    { text: 'Docs', icon: 'book', command: `command:pythonHover.openDocs?${encodedUrl}` },
+                    { text: 'PyPI', icon: 'package', command: `command:pythonHover.openDocs?${encodeURIComponent(JSON.stringify([`https://pypi.org/project/${moduleName}/`]))}` },
+                    { text: 'Copy URL', icon: 'link', command: `command:pythonHover.copyUrl?${encodedUrl}` }
+                ];
+                md.appendMarkdown(this.theme.formatQuickActions(actions));
+            }
 
             md.appendMarkdown(this.theme.formatDivider());
 
-            // Add documentation link
-            const fullUrl = `${entry.uri}#${entry.anchor}`;
-            const links = [
-                { text: 'View Documentation', url: fullUrl, icon: 'book' }
-            ];
-            md.appendMarkdown(this.theme.formatActionLinks(links));
+            // Module summary/description
+            let description = '';
+            if (entry) {
+                const docSnippet = await this.documentationFetcher.fetchDocumentationForSymbol(
+                    moduleName,
+                    entry,
+                    this.configManager.maxSnippetLines,
+                    moduleName
+                );
+                description = docSnippet?.content || '';
+            }
 
-            // Add Python version at the bottom
+            if (!description && pypiInfo?.summary) {
+                description = pypiInfo.summary;
+            }
+
+            if (description) {
+                const maxLength = uiConfig.maxContentLength || 800;
+                const docUrl = pypiInfo?.docUrl || (entry ? this.buildDocUrl(entry) : undefined);
+                if (description.length > maxLength && docUrl) {
+                    const encodedUrl = encodeURIComponent(JSON.stringify([docUrl]));
+                    const readMoreCmd = `command:pythonHover.openDocs?${encodedUrl}`;
+                    md.appendMarkdown(this.theme.formatContentWithTruncation(description, maxLength, readMoreCmd));
+                } else {
+                    md.appendMarkdown(this.theme.formatContent(description));
+                }
+                md.appendMarkdown('\n\n');
+            }
+
+            // Show package metadata from PyPI
+            if (pypiInfo) {
+                const metadata: string[] = [];
+
+                if (pypiInfo.author) {
+                    metadata.push(`**Author:** ${pypiInfo.author}`);
+                }
+
+                if (pypiInfo.license) {
+                    metadata.push(`**License:** ${pypiInfo.license}`);
+                }
+
+                if (pypiInfo.requires_python) {
+                    metadata.push(`**Python:** ${pypiInfo.requires_python}`);
+                }
+
+                if (metadata.length > 0) {
+                    md.appendMarkdown(this.theme.formatSectionHeader('Package Info'));
+                    md.appendMarkdown(metadata.join(' • ') + '\n\n');
+                }
+            }
+
+            // Show key exports/submodules if available
+            const keyExports = await this.getModuleExports(moduleName, pythonVersion, pythonPath);
+            if (keyExports.length > 0) {
+                md.appendMarkdown(this.theme.formatSectionHeader('Key Exports'));
+                const exportList = keyExports.slice(0, 10).map(exp => `- \`${exp}\``).join('\n');
+                md.appendMarkdown(exportList + '\n\n');
+                if (keyExports.length > 10) {
+                    md.appendMarkdown(`*...and ${keyExports.length - 10} more*\n\n`);
+                }
+            }
+
+            md.appendMarkdown(this.theme.formatTip(`Hover over functions from \`${moduleName}\` for detailed documentation`));
+            md.appendMarkdown(this.theme.formatDivider());
+
+            // Action links (only if quick actions not shown at top)
+            if (!uiConfig.showQuickActions) {
+                const docUrl = pypiInfo?.docUrl || (entry ? this.buildDocUrl(entry) : undefined);
+                const links = [];
+                if (docUrl) {
+                    links.push({ text: 'View Documentation', url: docUrl, icon: 'book' });
+                }
+                links.push({ text: 'View on PyPI', url: `https://pypi.org/project/${moduleName}/`, icon: 'package' });
+                md.appendMarkdown(this.theme.formatActionLinks(links));
+            }
+
+            // Keyboard hints
+            if (uiConfig.showKeyboardHints) {
+                const shortcuts = [
+                    { keys: 'F12', description: 'Go to definition' },
+                    { keys: 'Ctrl+Space', description: 'IntelliSense' }
+                ];
+                md.appendMarkdown(this.theme.formatKeyboardHint(shortcuts));
+            }
+
             this.appendVersionFooter(md, { version: pythonVersion, pythonPath });
-
             return new vscode.Hover(md);
         }
 
-        // Fallback: Use hardcoded module info database for common libraries
-        const moduleInfo: { [key: string]: { description: string; docs: string; badge?: string } } = {
+        // Fallback to hardcoded module info
+        const moduleInfo: Record<string, { description: string; docs: string; badge?: string; exports?: string[] }> = {
             'numpy': {
-                description: 'Fundamental package for scientific computing with Python',
+                description: 'Fundamental package for scientific computing with Python. NumPy provides powerful N-dimensional array objects, broadcasting functions, linear algebra, Fourier transforms, and random number capabilities.',
                 docs: 'https://numpy.org/doc/',
-                badge: 'Scientific Computing'
+                badge: 'Scientific Computing',
+                exports: ['array', 'ndarray', 'zeros', 'ones', 'arange', 'linspace', 'dot', 'matmul', 'random', 'linalg']
             },
             'pandas': {
-                description: 'Powerful data analysis and manipulation library',
+                description: 'Powerful data analysis and manipulation library built on top of NumPy. Provides DataFrame and Series data structures for working with structured data.',
                 docs: 'https://pandas.pydata.org/docs/',
-                badge: 'Data Analysis'
+                badge: 'Data Analysis',
+                exports: ['DataFrame', 'Series', 'read_csv', 'read_excel', 'read_json', 'to_datetime', 'merge', 'concat']
             },
             'flask': {
-                description: 'Lightweight WSGI web application framework',
+                description: 'Lightweight WSGI web application framework designed with simplicity and flexibility in mind.',
                 docs: 'https://flask.palletsprojects.com/',
-                badge: 'Web Framework'
+                badge: 'Web Framework',
+                exports: ['Flask', 'request', 'Response', 'render_template', 'jsonify', 'redirect', 'url_for', 'session']
             },
             'django': {
-                description: 'High-level Python web framework',
+                description: 'High-level Python web framework that encourages rapid development and clean, pragmatic design.',
                 docs: 'https://docs.djangoproject.com/',
                 badge: 'Web Framework'
             },
             'requests': {
-                description: 'Elegant and simple HTTP library for Python',
+                description: 'Elegant and simple HTTP library for Python. Makes sending HTTP requests extremely simple.',
                 docs: 'https://requests.readthedocs.io/',
-                badge: 'HTTP Client'
+                badge: 'HTTP Client',
+                exports: ['get', 'post', 'put', 'delete', 'patch', 'head', 'options', 'Session', 'Response']
             }
         };
 
         const info = moduleInfo[moduleName.toLowerCase()];
         if (info) {
-            // Badge
-            if (info.badge) {
-                const badges = [{ text: info.badge, type: 'info' as const }];
-                md.appendMarkdown(this.theme.formatBadgeGroup(badges));
-            }
-
-            // Description
-            md.appendMarkdown(this.theme.formatContent(info.description));
-
-            // Helpful tip
-            md.appendMarkdown(this.theme.formatTip(`Hover over functions like \`${moduleName}.function()\` for detailed help`));
-
-            md.appendMarkdown(this.theme.formatDivider());
-
-            // Action links
-            const links = [
-                { text: 'Official Documentation', url: info.docs, icon: 'book' }
+            const badges: Array<{ text: string, type?: 'info' | 'success' | 'warning' | 'error' }> = [
+                { text: 'module', type: 'info' }
             ];
-            md.appendMarkdown(this.theme.formatActionLinks(links));
-        } else {
-            // Unknown third-party library - try to get info from PyPI
-            this.logger.debug(`📦 No hardcoded info for "${moduleName}", fetching from PyPI...`);
-
-            const pypiInfo = await this.fetchPyPIInfo(moduleName);
-
-            const badges = [{ text: 'Third-party Library', type: 'info' as const }];
+            if (info.badge) {
+                badges.push({ text: info.badge, type: 'success' });
+            }
             md.appendMarkdown(this.theme.formatBadgeGroup(badges));
 
-            // Show PyPI description if available
-            if (pypiInfo?.summary) {
-                md.appendMarkdown(this.theme.formatContent(pypiInfo.summary));
+            // Quick actions
+            if (uiConfig.showQuickActions) {
+                const encodedUrl = encodeURIComponent(JSON.stringify([info.docs]));
+                const actions = [
+                    { text: 'Docs', icon: 'book', command: `command:pythonHover.openDocs?${encodedUrl}` },
+                    { text: 'PyPI', icon: 'package', command: `command:pythonHover.openDocs?${encodeURIComponent(JSON.stringify([`https://pypi.org/project/${moduleName}/`]))}` }
+                ];
+                md.appendMarkdown(this.theme.formatQuickActions(actions));
             }
 
-            md.appendMarkdown(this.theme.formatTip(`Hover over functions from \`${moduleName}\` for detailed help`));
+            md.appendMarkdown(this.theme.formatDivider());
+            md.appendMarkdown(this.theme.formatContent(info.description));
+            md.appendMarkdown('\n\n');
 
-            // Show documentation link if available from PyPI
-            if (pypiInfo?.docUrl) {
-                md.appendMarkdown(this.theme.formatDivider());
+            // Show key exports if available
+            if (info.exports && info.exports.length > 0) {
+                md.appendMarkdown(this.theme.formatSectionHeader('Key Exports'));
+                const exportList = info.exports.map(exp => `- \`${exp}\``).join('\n');
+                md.appendMarkdown(exportList + '\n\n');
+            }
+
+            md.appendMarkdown(this.theme.formatTip(`Hover over functions like \`${moduleName}.function()\` for detailed documentation`));
+            md.appendMarkdown(this.theme.formatDivider());
+
+            if (!uiConfig.showQuickActions) {
                 const links = [
-                    { text: 'Official Documentation', url: pypiInfo.docUrl, icon: 'book' }
+                    { text: 'Official Documentation', url: info.docs, icon: 'book' },
+                    { text: 'View on PyPI', url: `https://pypi.org/project/${moduleName}/`, icon: 'package' }
                 ];
                 md.appendMarkdown(this.theme.formatActionLinks(links));
             }
+        } else {
+            // Generic fallback for unknown modules
+            const badges: Array<{ text: string, type?: 'info' | 'success' | 'warning' | 'error' }> = [
+                { text: 'module', type: 'info' },
+                { text: 'third-party', type: 'success' }
+            ];
+            md.appendMarkdown(this.theme.formatBadgeGroup(badges));
+
+            md.appendMarkdown(this.theme.formatDivider());
+            md.appendMarkdown(this.theme.formatContent(`Third-party Python module: **${moduleName}**`));
+            md.appendMarkdown('\n\n');
+            md.appendMarkdown(this.theme.formatTip(`Hover over functions from \`${moduleName}\` for detailed documentation`));
+            md.appendMarkdown(this.theme.formatDivider());
+
+            const links = [{ text: 'View on PyPI', url: `https://pypi.org/project/${moduleName}/`, icon: 'package' }];
+            md.appendMarkdown(this.theme.formatActionLinks(links));
         }
 
-        // Add Python version at the bottom
         this.appendVersionFooter(md, { version: pythonVersion, pythonPath });
+        return new vscode.Hover(md);
+    }
+
+    /**
+     * Categorize module by name patterns
+     */
+    private categorizeModule(moduleName: string): string | undefined {
+        const categories: Record<string, RegExp> = {
+            'Web Framework': /^(flask|django|fastapi|tornado|bottle|pyramid|web2py)/i,
+            'Data Science': /^(pandas|numpy|scipy|scikit-learn|sklearn|matplotlib|seaborn)/i,
+            'Machine Learning': /^(tensorflow|keras|torch|pytorch|transformers|ml|ai)/i,
+            'Database': /^(sqlalchemy|pymongo|redis|psycopg|mysql|sqlite)/i,
+            'HTTP Client': /^(requests|httpx|aiohttp|urllib)/i,
+            'Testing': /^(pytest|unittest|nose|mock)/i,
+            'CLI': /^(click|argparse|typer|rich)/i
+        };
+
+        for (const [category, pattern] of Object.entries(categories)) {
+            if (pattern.test(moduleName)) {
+                return category;
+            }
+        }
+
+        return undefined;
+    }
+
+    /**
+     * Get key exports from a module using inventory
+     */
+    private async getModuleExports(moduleName: string, pythonVersion: string, pythonPath?: string): Promise<string[]> {
+        try {
+            // Query the inventory for symbols in this module
+            const exports: string[] = [];
+
+            // This is a simplified implementation - in reality you'd query the inventory
+            // for all symbols with domain 'py:class', 'py:function', etc. that start with moduleName
+
+            // For now, return empty array - this would need inventory query support
+            return exports;
+        } catch (error) {
+            this.logger.debug(`Could not fetch exports for ${moduleName}:`, error);
+            return [];
+        }
+    }
+
+    private async createThirdPartyHoverAsync(libDoc: any, symbolInfo: { symbol: string; type: string }, pythonVersionInfo?: { version: string; pythonPath?: string }): Promise<vscode.Hover> {
+        // Try to fetch rich documentation from the actual docs page
+        let richDoc = null;
+        if (libDoc.url) {
+            this.logger.debug(`🔍 Attempting to fetch rich documentation for ${libDoc.name} from ${libDoc.url}`);
+            richDoc = await this.documentationFetcher.fetchRichDocumentation(libDoc.url, libDoc.name);
+        }
+
+        // If we have rich documentation, use it; otherwise fall back to static data
+        if (richDoc && (richDoc.parameters?.length || richDoc.examples?.length || richDoc.seeAlso?.length)) {
+            this.logger.debug(`✅ Using rich documentation for ${libDoc.name}`);
+            return this.createDynamicRichHover(richDoc, symbolInfo.type, pythonVersionInfo);
+        }
+
+        // Fallback to basic hover with static data
+        this.logger.debug(`ℹ️ Using basic hover for ${libDoc.name}`);
+        return this.createBasicThirdPartyHover(libDoc, symbolInfo, pythonVersionInfo);
+    }
+
+    /**
+     * Create a basic hover for third-party library with static data
+     */
+    private createBasicThirdPartyHover(libDoc: any, symbolInfo: { symbol: string; type: string }, pythonVersionInfo?: { version: string; pythonPath?: string }): vscode.Hover {
+        const md = this.theme.createMarkdown();
+        const uiConfig = this.configManager.getConfig().ui;
+
+        // Header
+        md.appendMarkdown(this.theme.formatHeader(libDoc.name, symbolInfo.type === 'method' ? 'function' : symbolInfo.type));
+
+        // Type/role badges
+        const badges: Array<{ text: string, type?: 'info' | 'success' | 'warning' | 'error' }> = [
+            { text: symbolInfo.type === 'method' ? 'function' : symbolInfo.type, type: 'info' }
+        ];
+        if (libDoc.url && libDoc.url.includes('pandas')) {
+            badges.push({ text: 'pandas', type: 'success' });
+        } else if (libDoc.url && libDoc.url.includes('numpy')) {
+            badges.push({ text: 'numpy', type: 'success' });
+        } else if (libDoc.url) {
+            badges.push({ text: 'third-party', type: 'success' });
+        }
+        md.appendMarkdown(this.theme.formatBadgeGroup(badges));
+
+        // Quick actions bar at top
+        if (uiConfig.showQuickActions && libDoc.url) {
+            const encodedUrl = encodeURIComponent(JSON.stringify([libDoc.url]));
+            const actions = [
+                { text: 'Docs', icon: 'book', command: `command:pythonHover.openDocs?${encodedUrl}` },
+                { text: 'Copy URL', icon: 'link', command: `command:pythonHover.copyUrl?${encodedUrl}` }
+            ];
+            md.appendMarkdown(this.theme.formatQuickActions(actions));
+        }
+
+        md.appendMarkdown(this.theme.formatDivider());
+
+        // Description
+        if (libDoc.description) {
+            const maxLength = uiConfig.maxContentLength || 800;
+            if (libDoc.description.length > maxLength && libDoc.url) {
+                const encodedUrl = encodeURIComponent(JSON.stringify([libDoc.url]));
+                const readMoreCmd = `command:pythonHover.openDocs?${encodedUrl}`;
+                md.appendMarkdown(this.theme.formatContentWithTruncation(libDoc.description, maxLength, readMoreCmd));
+            } else {
+                md.appendMarkdown(this.theme.formatContent(libDoc.description));
+            }
+            md.appendMarkdown('\n\n');
+        }
+
+        // Single example if available
+        if (libDoc.example) {
+            md.appendMarkdown(this.theme.formatSectionHeader('Example'));
+            md.appendMarkdown(this.theme.formatCodeBlock(libDoc.example, 'python'));
+        }
+
+        // Documentation link (only if quick actions not shown at top)
+        if (!uiConfig.showQuickActions && libDoc.url) {
+            md.appendMarkdown(this.theme.formatDivider());
+            const links = [{ text: 'View Documentation', url: libDoc.url, icon: 'book' }];
+            md.appendMarkdown(this.theme.formatActionLinks(links));
+        }
+
+        // Keyboard hints at bottom
+        if (uiConfig.showKeyboardHints) {
+            const shortcuts = [
+                { keys: 'F12', description: 'Go to definition' },
+                { keys: 'Ctrl+Space', description: 'IntelliSense' }
+            ];
+            md.appendMarkdown(this.theme.formatKeyboardHint(shortcuts));
+        }
+
+        // Version footer
+        this.appendVersionFooter(md, pythonVersionInfo);
 
         return new vscode.Hover(md);
     }
 
-    private createThirdPartyHover(libDoc: any, symbolInfo: { symbol: string; type: string }, pythonVersionInfo?: { version: string; pythonPath?: string }): vscode.Hover {
+    /**
+     * Create a rich hover with dynamically parsed documentation
+     */
+    private createDynamicRichHover(richDoc: any, symbolType: string, pythonVersionInfo?: { version: string; pythonPath?: string }): vscode.Hover {
         const md = this.theme.createMarkdown();
+        const uiConfig = this.configManager.getConfig().ui;
 
-        // Header with theme - use 'function' for third-party methods
-        const displayType = symbolInfo.type === 'method' ? 'function' : symbolInfo.type;
-        md.appendMarkdown(this.theme.formatHeader(libDoc.name, displayType));
+        // Header
+        md.appendMarkdown(this.theme.formatHeader(richDoc.name, symbolType === 'method' ? 'function' : symbolType));
 
-        // Description with proper spacing
-        md.appendMarkdown(this.theme.formatContent(libDoc.description));
+        // Type/role badges
+        const badges: Array<{ text: string, type?: 'info' | 'success' | 'warning' | 'error' }> = [
+            { text: symbolType === 'method' ? 'function' : symbolType, type: 'info' }
+        ];
+        if (richDoc.url && richDoc.url.includes('pandas')) {
+            badges.push({ text: 'pandas', type: 'success' });
+        } else if (richDoc.url && richDoc.url.includes('numpy')) {
+            badges.push({ text: 'numpy', type: 'success' });
+        } else if (richDoc.url) {
+            badges.push({ text: 'third-party', type: 'success' });
+        }
+        md.appendMarkdown(this.theme.formatBadgeGroup(badges));
 
-        // Example section
-        if (libDoc.example) {
-            md.appendMarkdown(this.theme.formatSectionHeader('Example'));
-            md.appendMarkdown(this.theme.formatCodeBlock(libDoc.example));
+        // Check for deprecation
+        if (uiConfig.showDeprecationWarnings && richDoc.deprecated) {
+            md.appendMarkdown(this.theme.formatDeprecation(
+                richDoc.versionAdded || '',
+                richDoc.deprecated,
+                undefined
+            ));
         }
 
-        // Add helpful tip
-        if (libDoc.version) {
-            md.appendMarkdown(this.theme.formatNote(`Available since version ${libDoc.version}`));
-        }
-
-        // Action links
-        if (libDoc.url) {
-            md.appendMarkdown(this.theme.formatDivider());
-            const links = [
-                { text: 'Official Documentation', url: libDoc.url, icon: 'book' }
+        // Quick actions bar at top
+        if (uiConfig.showQuickActions && richDoc.url) {
+            const encodedUrl = encodeURIComponent(JSON.stringify([richDoc.url]));
+            const actions = [
+                { text: 'Docs', icon: 'book', command: `command:pythonHover.openDocs?${encodedUrl}` },
+                { text: 'Copy URL', icon: 'link', command: `command:pythonHover.copyUrl?${encodedUrl}` }
             ];
+            md.appendMarkdown(this.theme.formatQuickActions(actions));
+        }
+
+        md.appendMarkdown(this.theme.formatDivider());
+
+        // Summary box if available (separate from full description)
+        if (richDoc.summary && richDoc.summary !== richDoc.description) {
+            md.appendMarkdown(this.theme.formatSummaryBox(richDoc.summary));
+        }
+
+        // Description
+        if (richDoc.description) {
+            const maxLength = uiConfig.maxContentLength || 800;
+            if (richDoc.description.length > maxLength && richDoc.url) {
+                const encodedUrl = encodeURIComponent(JSON.stringify([richDoc.url]));
+                const readMoreCmd = `command:pythonHover.openDocs?${encodedUrl}`;
+                md.appendMarkdown(this.theme.formatContentWithTruncation(richDoc.description, maxLength, readMoreCmd));
+            } else {
+                md.appendMarkdown(this.theme.formatContent(richDoc.description));
+            }
+            md.appendMarkdown('\n\n');
+        }
+
+        // Parameters section with enhanced formatting
+        if (uiConfig.showParameterTables && richDoc.parameters && richDoc.parameters.length > 0) {
+            md.appendMarkdown(this.theme.formatSectionHeader('Parameters'));
+
+            // Use detailed parameter formatting for better visual hierarchy
+            for (const param of richDoc.parameters) {
+                md.appendMarkdown(this.theme.formatParameterDetailed({
+                    name: param.name,
+                    type: param.type,
+                    description: param.description,
+                    default: param.default,
+                    required: param.required,
+                    constraints: param.constraints
+                }));
+            }
+        }
+
+        // Return type with enhanced formatting
+        if (uiConfig.showReturnTypes) {
+            if (richDoc.returnType && richDoc.returns) {
+                md.appendMarkdown(this.theme.formatReturnType(richDoc.returnType, richDoc.returns));
+            } else if (richDoc.returns) {
+                const returnMatch = richDoc.returns.match(/^([^\n:]+)(?:\s*:\s*|\s+—\s+|\s+-\s+|\n)(.+)/s);
+                if (returnMatch) {
+                    const [, type, description] = returnMatch;
+                    md.appendMarkdown(this.theme.formatReturnType(type.trim(), description.trim()));
+                } else {
+                    md.appendMarkdown(this.theme.formatSectionHeader('Returns'));
+                    md.appendMarkdown(richDoc.returns + '\n\n');
+                }
+            }
+        }
+
+        // Yields section (for generators)
+        if (richDoc.yields) {
+            md.appendMarkdown(this.theme.formatYields(richDoc.yields));
+        }
+
+        // Raises/Exceptions section
+        if (richDoc.raises && richDoc.raises.length > 0) {
+            md.appendMarkdown(this.theme.formatRaises(richDoc.raises));
+        }
+
+        // Attributes section (for classes)
+        if (richDoc.attributes && richDoc.attributes.length > 0) {
+            md.appendMarkdown(this.theme.formatAttributes(richDoc.attributes));
+        }
+
+        // Notes section
+        if (richDoc.notes) {
+            md.appendMarkdown(this.theme.formatSectionHeader('Notes'));
+            md.appendMarkdown(richDoc.notes + '\n\n');
+        }
+
+        // Warnings section
+        if (richDoc.warnings) {
+            md.appendMarkdown(this.theme.formatSectionHeader('⚠️ Warning'));
+            md.appendMarkdown(richDoc.warnings + '\n\n');
+        }
+
+        // See Also section with enhanced formatting
+        if (uiConfig.showSeeAlso && richDoc.seeAlso && richDoc.seeAlso.length > 0) {
+            const related = richDoc.seeAlso.map((item: string) => ({
+                name: item,
+                description: ''
+            }));
+            md.appendMarkdown(this.theme.formatSeeAlso(related));
+        }
+
+        // Examples section with enhanced formatting
+        if (richDoc.examples && richDoc.examples.length > 0) {
+            md.appendMarkdown(this.theme.formatSectionHeader('Examples'));
+            for (const ex of richDoc.examples) {
+                md.appendMarkdown(this.theme.formatExampleEnhanced({
+                    title: ex.title,
+                    code: ex.code,
+                    output: ex.output,
+                    description: ex.description
+                }));
+            }
+        }
+
+        // Version metadata
+        if (richDoc.versionAdded || richDoc.versionChanged) {
+            md.appendMarkdown(this.theme.formatVersionMetadata({
+                added: richDoc.versionAdded,
+                changed: richDoc.versionChanged,
+                deprecated: richDoc.deprecated
+            }));
+        }
+
+        // Documentation link (only if quick actions not shown at top)
+        if (!uiConfig.showQuickActions && richDoc.url) {
+            md.appendMarkdown(this.theme.formatDivider());
+            const links = [{ text: 'View Documentation', url: richDoc.url, icon: 'book' }];
             md.appendMarkdown(this.theme.formatActionLinks(links));
         }
 
-        // Add Python version at the bottom
+        // Keyboard hints at bottom
+        if (uiConfig.showKeyboardHints) {
+            const shortcuts = [
+                { keys: 'F12', description: 'Go to definition' },
+                { keys: 'Ctrl+Space', description: 'IntelliSense' }
+            ];
+            md.appendMarkdown(this.theme.formatKeyboardHint(shortcuts));
+        }
+
+        // Version footer
         this.appendVersionFooter(md, pythonVersionInfo);
 
         return new vscode.Hover(md);
@@ -801,16 +1214,28 @@ export class PythonHoverProvider implements vscode.HoverProvider {
      */
     private createDunderMethodHover(methodName: string, dunderInfo: { description: string; example?: string }, pythonVersionInfo?: { version: string; pythonPath?: string }): vscode.Hover {
         const md = this.theme.createMarkdown();
+        const uiConfig = this.configManager.getConfig().ui;
 
         // Header for special method
         md.appendMarkdown(this.theme.formatHeader(`${methodName} — Special Method`, 'method'));
 
         // Badge for special method
-        const badges = [
-            { text: 'Special Method', type: 'info' as const },
-            { text: 'Dunder', type: 'success' as const }
+        const badges: Array<{ text: string, type?: 'info' | 'success' | 'warning' | 'error' }> = [
+            { text: 'Special Method', type: 'info' },
+            { text: 'Dunder', type: 'success' }
         ];
         md.appendMarkdown(this.theme.formatBadgeGroup(badges));
+
+        // Quick actions bar
+        if (uiConfig.showQuickActions) {
+            const docUrl = "https://docs.python.org/3/reference/datamodel.html#special-method-names";
+            const encodedDocUrl = encodeURIComponent(JSON.stringify([docUrl]));
+            const actions = [
+                { text: 'Docs', icon: 'book', command: `command:pythonHover.openDocs?${encodedDocUrl}` },
+                { text: 'Copy URL', icon: 'link', command: `command:pythonHover.copyUrl?${encodedDocUrl}` }
+            ];
+            md.appendMarkdown(this.theme.formatQuickActions(actions));
+        }
 
         md.appendMarkdown(this.theme.formatDivider());
 
@@ -830,21 +1255,101 @@ export class PythonHoverProvider implements vscode.HoverProvider {
         // Informative note
         md.appendMarkdown(this.theme.formatNote('Special methods are invoked implicitly by Python syntax and built-in operations.'));
 
+        // Related dunder methods (See Also section)
+        if (uiConfig.showSeeAlso) {
+            const related = this.getRelatedDunderMethods(methodName);
+            if (related.length > 0) {
+                md.appendMarkdown(this.theme.formatSeeAlso(related));
+            }
+        }
+
         md.appendMarkdown(this.theme.formatDivider());
 
-        // Action links
-        const docUrl = "https://docs.python.org/3/reference/datamodel.html#special-method-names";
-        const encodedDocUrl = encodeURIComponent(JSON.stringify([docUrl]));
-        const links = [
-            { text: 'Open Documentation', command: `command:pythonHover.openDocs?${encodedDocUrl}`, icon: 'book' },
-            { text: 'Copy URL', command: `command:pythonHover.copyUrl?${encodedDocUrl}`, icon: 'copy' }
-        ];
-        md.appendMarkdown(this.theme.formatActionLinks(links));
+        // Action links (only if quick actions not shown at top)
+        if (!uiConfig.showQuickActions) {
+            const docUrl = "https://docs.python.org/3/reference/datamodel.html#special-method-names";
+            const encodedDocUrl = encodeURIComponent(JSON.stringify([docUrl]));
+            const links = [
+                { text: 'Open Documentation', command: `command:pythonHover.openDocs?${encodedDocUrl}`, icon: 'book' },
+                { text: 'Copy URL', command: `command:pythonHover.copyUrl?${encodedDocUrl}`, icon: 'copy' }
+            ];
+            md.appendMarkdown(this.theme.formatActionLinks(links));
+        }
+
+        // Keyboard hints
+        if (uiConfig.showKeyboardHints) {
+            const shortcuts = [
+                { keys: 'F12', description: 'Go to definition' },
+                { keys: 'Ctrl+Space', description: 'IntelliSense' }
+            ];
+            md.appendMarkdown(this.theme.formatKeyboardHint(shortcuts));
+        }
 
         // Add Python version at the bottom
         this.appendVersionFooter(md, pythonVersionInfo);
 
         return new vscode.Hover(md);
+    }
+
+    /**
+     * Get related dunder methods based on category
+     */
+    private getRelatedDunderMethods(methodName: string): RelatedSymbol[] {
+        // Categorize dunder methods by functionality
+        const categories: Record<string, { methods: string[], description: string }> = {
+            '__init__': {
+                methods: ['__new__', '__del__', '__repr__', '__str__'],
+                description: 'Object lifecycle methods'
+            },
+            '__str__': {
+                methods: ['__repr__', '__format__', '__bytes__'],
+                description: 'String representation methods'
+            },
+            '__repr__': {
+                methods: ['__str__', '__format__', '__bytes__'],
+                description: 'String representation methods'
+            },
+            '__add__': {
+                methods: ['__radd__', '__iadd__', '__sub__', '__mul__'],
+                description: 'Arithmetic operators'
+            },
+            '__eq__': {
+                methods: ['__ne__', '__lt__', '__le__', '__gt__', '__ge__', '__hash__'],
+                description: 'Comparison operators'
+            },
+            '__getitem__': {
+                methods: ['__setitem__', '__delitem__', '__len__', '__contains__'],
+                description: 'Container methods'
+            },
+            '__enter__': {
+                methods: ['__exit__'],
+                description: 'Context manager protocol'
+            },
+            '__call__': {
+                methods: ['__init__', '__new__'],
+                description: 'Callable protocol'
+            },
+            '__iter__': {
+                methods: ['__next__', '__reversed__', '__contains__'],
+                description: 'Iterator protocol'
+            },
+            '__get__': {
+                methods: ['__set__', '__delete__', '__set_name__'],
+                description: 'Descriptor protocol'
+            }
+        };
+
+        const category = categories[methodName];
+        if (!category) {
+            return [];
+        }
+
+        return category.methods
+            .filter(m => m !== methodName)
+            .map(m => ({
+                name: m,
+                description: SPECIAL_METHOD_DESCRIPTIONS[m] || ''
+            }));
     }
 
     /**
@@ -915,17 +1420,12 @@ export class PythonHoverProvider implements vscode.HoverProvider {
 
         md.appendMarkdown(this.theme.formatDivider());
 
-        // Add documentation content FIRST (official info)
+        // Add documentation content (already includes examples from exampleEnricher)
         if (docSnippet?.content) {
             this.logger.debug(`📄 Adding documentation content (${docSnippet.content.length} chars)`);
             md.appendMarkdown(this.theme.formatContent(docSnippet.content));
             md.appendMarkdown('\n\n');
         }
-
-        // Then add practical examples
-        md.appendMarkdown(this.theme.formatSectionHeader('Examples'));
-        md.appendMarkdown(ENHANCED_EXAMPLES[symbolName].content);
-        md.appendMarkdown('\n\n');
 
         md.appendMarkdown(this.theme.formatDivider());
 
@@ -942,12 +1442,33 @@ export class PythonHoverProvider implements vscode.HoverProvider {
         return new vscode.Hover(md);
     }
 
-    private createRichHover(
+    private async createRichHover(
         docSnippet: any,
         inventoryEntry: InventoryEntry | null,
         symbolInfo: { symbol: string; type: string; context?: string },
         pythonVersionInfo?: { version: string; pythonPath?: string }
-    ): vscode.Hover {
+    ): Promise<vscode.Hover> {
+        // NEW: Try to fetch rich documentation using SphinxParser for stdlib docs
+        if (inventoryEntry) {
+            const docUrl = `${inventoryEntry.uri}#${inventoryEntry.anchor}`;
+            this.logger.debug(`🔍 Attempting to fetch rich stdlib documentation for ${symbolInfo.symbol} from ${docUrl}`);
+
+            try {
+                const richDoc = await this.documentationFetcher.fetchRichDocumentation(docUrl, symbolInfo.symbol);
+
+                // If we have rich documentation with meaningful content, use it
+                if (richDoc && (richDoc.parameters?.length || richDoc.examples?.length || richDoc.seeAlso?.length || richDoc.raises?.length || richDoc.summary)) {
+                    this.logger.debug(`✅ Using rich SphinxParser documentation for stdlib symbol ${symbolInfo.symbol}`);
+                    return this.createDynamicRichHover(richDoc, symbolInfo.type, pythonVersionInfo);
+                }
+            } catch (error) {
+                this.logger.debug(`ℹ️ SphinxParser failed for ${symbolInfo.symbol}, falling back to manual extraction:`, error);
+            }
+        }
+
+        // Fallback to manual extraction if SphinxParser doesn't work
+        this.logger.debug(`ℹ️ Using manual extraction for ${symbolInfo.symbol}`);
+
         const md = this.theme.createMarkdown();
         const uiConfig = this.configManager.getConfig().ui;
 
@@ -1083,8 +1604,8 @@ export class PythonHoverProvider implements vscode.HoverProvider {
             md.appendMarkdown(this.theme.formatContent(`Documentation available at [docs.python.org](${docSnippet.url}). Click **Open Documentation** below for full details.`));
         }
 
-        // ENHANCEMENT: Add examples with better formatting
-        this.appendExamplesSection(md, bareSymbol, symbolInfo);
+        // NOTE: Examples are already included in docSnippet.content via exampleEnricher
+        // Do not manually add examples here to avoid duplication
 
         // Add version information if available
         this.appendVersionInfo(md, bareSymbol);
@@ -1152,12 +1673,8 @@ export class PythonHoverProvider implements vscode.HoverProvider {
             md.appendMarkdown(this.theme.formatContent(docSnippet.content));
         }
 
-        // Examples section (f-strings should have examples in STATIC_EXAMPLES or ENHANCED_EXAMPLES)
-        if (STATIC_EXAMPLES['f-string']) {
-            md.appendMarkdown(this.theme.formatSectionHeader('Examples'));
-            const examplesText = STATIC_EXAMPLES['f-string'].examples.join('\n');
-            md.appendMarkdown(this.theme.formatCodeBlock(examplesText));
-        }
+        // NOTE: Examples are already included in docSnippet.content via exampleEnricher
+        // Do not manually add examples here to avoid duplication
 
         md.appendMarkdown(this.theme.formatDivider());
 
@@ -1259,37 +1776,6 @@ export class PythonHoverProvider implements vscode.HoverProvider {
         }
 
         return paragraphs[0] || '';
-    }
-
-    /**
-     * Append examples section with enhanced formatting
-     */
-    private appendExamplesSection(
-        md: vscode.MarkdownString,
-        bareSymbol: string,
-        symbolInfo: { symbol: string; type: string; context?: string }
-    ): void {
-        // Check for enhanced examples
-        if (ENHANCED_EXAMPLES[bareSymbol]) {
-            md.appendMarkdown(this.theme.formatSectionHeader('Examples'));
-            md.appendMarkdown(ENHANCED_EXAMPLES[bareSymbol].content);
-            md.appendMarkdown('\n\n');
-        }
-        // Check for static examples
-        else if (STATIC_EXAMPLES[bareSymbol]) {
-            md.appendMarkdown(this.theme.formatSectionHeader('Examples'));
-            const examplesText = STATIC_EXAMPLES[bareSymbol].examples.join('\n');
-            md.appendMarkdown(this.theme.formatCodeBlock(examplesText));
-        }
-        // Check for method-specific examples
-        else if (symbolInfo.type === 'method' && symbolInfo.context) {
-            const methodKey = `${symbolInfo.context}.${bareSymbol}`;
-            if (ENHANCED_EXAMPLES[methodKey]) {
-                md.appendMarkdown(this.theme.formatSectionHeader('Examples'));
-                md.appendMarkdown(ENHANCED_EXAMPLES[methodKey].content);
-                md.appendMarkdown('\n\n');
-            }
-        }
     }
 
     /**
@@ -1478,14 +1964,25 @@ export class PythonHoverProvider implements vscode.HoverProvider {
 
     /**
      * Detect if a symbol is deprecated
+     * Only matches explicit deprecation warnings, not casual mentions
      */
     private isDeprecated(docContent: string): DeprecationInfo | null {
-        // Look for deprecation warnings
-        const deprecatedMatch = docContent.match(/(?:deprecated|DEPRECATED)(?:\s+(?:since|in)\s+(?:version\s+)?([0-9.]+))?[:\s]+(.+?)(?:\n|$)/i);
+        // Only match explicit deprecation patterns to avoid false positives
 
-        if (deprecatedMatch) {
-            const version = deprecatedMatch[1];
-            let message = deprecatedMatch[2].trim();
+        // 1. Check for Sphinx .. deprecated:: directive
+        const sphinxMatch = docContent.match(/\.\.\s+deprecated::\s*([0-9.]+)?\s*\n\s+(.+)/);
+        if (sphinxMatch) {
+            return {
+                version: sphinxMatch[1],
+                message: sphinxMatch[2].trim()
+            };
+        }
+
+        // 2. Match lines that START with "Deprecated" (with optional bold/strong markers)
+        const explicitDeprecated = docContent.match(/(?:^|\n)(?:\*\*)?Deprecated(?:\*\*)?(?:\s+(?:since|in)\s+(?:version\s+)?([0-9.]+))?[:\s]+(.+?)(?:\n|$)/im);
+        if (explicitDeprecated) {
+            const version = explicitDeprecated[1];
+            let message = explicitDeprecated[2].trim();
 
             // Try to find alternative suggestion
             const altMatch = message.match(/(?:use|try|replaced by|instead use)\s+[`']?(\w+(?:\.\w+)?(?:\(\))?)[`']?/i);
@@ -1500,12 +1997,12 @@ export class PythonHoverProvider implements vscode.HoverProvider {
             };
         }
 
-        // Check for .. deprecated:: directive (Sphinx)
-        const sphinxMatch = docContent.match(/\.\.\s+deprecated::\s*([0-9.]+)?\s*\n\s+(.+)/);
-        if (sphinxMatch) {
+        // 3. Match deprecation warnings that are clearly standalone statements
+        const warningMatch = docContent.match(/(?:^|\n)(?:⚠️|WARNING|Note)?\s*(?:\*\*)?This (?:function|method|class|feature) is deprecated(?:\*\*)?(?:\s+(?:since|in)\s+(?:version\s+)?([0-9.]+))?[:\s.]+(.+?)(?:\n|$)/im);
+        if (warningMatch) {
             return {
-                version: sphinxMatch[1],
-                message: sphinxMatch[2].trim()
+                version: warningMatch[1],
+                message: warningMatch[2].trim()
             };
         }
 
@@ -1590,49 +2087,5 @@ export class PythonHoverProvider implements vscode.HoverProvider {
         }
 
         return null;
-    }
-
-    /**
-     * Fetch PyPI package description as fallback for module documentation
-     */
-    private async fetchPyPIDescription(moduleName: string): Promise<string | null> {
-        const info = await this.fetchPyPIInfo(moduleName);
-        return info?.summary || null;
-    }
-
-    /**
-     * Fetch PyPI package information (description and doc URL)
-     */
-    private async fetchPyPIInfo(moduleName: string): Promise<{ summary: string; docUrl?: string } | null> {
-        try {
-            this.logger.debug(`📦 Fetching PyPI info for ${moduleName}...`);
-            const response = await fetch(`https://pypi.org/pypi/${moduleName}/json`, {
-                headers: { 'User-Agent': 'VSCode-Python-Hover-Extension' },
-                signal: AbortSignal.timeout(5000)
-            });
-
-            if (!response.ok) {
-                this.logger.debug(`❌ PyPI returned ${response.status} for ${moduleName}`);
-                return null;
-            }
-
-            const data: any = await response.json();
-            const summary = data.info?.summary;
-
-            // Try to find documentation URL
-            const urls = data.info?.project_urls || {};
-            const docUrl = urls.Documentation || urls.Docs || urls.documentation || urls.docs ||
-                urls['Read the Docs'] || data.info?.docs_url || data.info?.project_url;
-
-            if (summary && summary.length > 10) {
-                this.logger.debug(`✅ Got PyPI info: "${summary.substring(0, 50)}..."${docUrl ? ` (${docUrl})` : ''}`);
-                return { summary, docUrl };
-            }
-
-            return null;
-        } catch (error) {
-            this.logger.debug(`Failed to fetch PyPI info for ${moduleName}:`, error as Error);
-            return null;
-        }
     }
 }

@@ -10,6 +10,7 @@
 
 import { Logger } from './logger';
 import { PackageDetector } from './packageDetector';
+import { PyPIService } from './pypiService';
 
 export interface DiscoveredLibrary {
     name: string;
@@ -23,13 +24,15 @@ export interface DiscoveredLibrary {
 export class LibraryDiscovery {
     private logger: Logger;
     private packageDetector: PackageDetector;
+    private pypiService: PyPIService;
     private cache: Map<string, DiscoveredLibrary | null> = new Map();
     private readonly CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
     private readonly MIN_INVENTORY_SIZE = 1024; // 1KB - real docs are always bigger
 
-    constructor(packageDetector: PackageDetector) {
+    constructor(packageDetector: PackageDetector, pypiService?: PyPIService) {
         this.logger = Logger.getInstance();
         this.packageDetector = packageDetector;
+        this.pypiService = pypiService || new PyPIService();
     }
 
     /**
@@ -89,28 +92,28 @@ export class LibraryDiscovery {
     private async tryPyPI(libraryName: string): Promise<DiscoveredLibrary | null> {
         try {
             this.logger.debug(`  📦 Trying PyPI for ${libraryName}...`);
-            const response = await fetch(`https://pypi.org/pypi/${libraryName}/json`, {
-                headers: { 'User-Agent': 'VSCode-Python-Hover-Extension' },
-                signal: AbortSignal.timeout(5000)
-            });
+            const info = await this.pypiService.fetchPackageInfo(libraryName);
 
-            if (!response.ok) {
-                this.logger.debug(`  ❌ PyPI returned ${response.status} for ${libraryName}`);
+            if (!info) {
+                this.logger.debug(`  ❌ No PyPI info found for ${libraryName}`);
                 return null;
             }
 
-            const data: any = await response.json();
-            const urls = data.info?.project_urls || {};
-
-            // Try documentation URL variations
-            const docUrls = [
-                urls.Documentation,
-                urls.Docs,
-                urls.documentation,
-                urls.docs,
-                urls['Read the Docs'],
-                data.info?.docs_url
-            ].filter(Boolean);
+            // Collect all possible documentation URLs
+            const docUrls: string[] = [];
+            if (info.docUrl) {
+                docUrls.push(info.docUrl);
+            }
+            if (info.homeUrl) {
+                docUrls.push(info.homeUrl);
+            }
+            if (info.projectUrls) {
+                Object.values(info.projectUrls).forEach(url => {
+                    if (url && !docUrls.includes(url)) {
+                        docUrls.push(url);
+                    }
+                });
+            }
 
             this.logger.debug(`  📄 Found ${docUrls.length} doc URL(s) in PyPI metadata`);
             if (docUrls.length > 0) {
@@ -119,12 +122,12 @@ export class LibraryDiscovery {
 
             for (const url of docUrls) {
                 this.logger.debug(`  🔍 Checking ${url}...`);
-                const inventoryUrl = await this.findInventory(url as string);
+                const inventoryUrl = await this.findInventory(url);
                 if (inventoryUrl) {
                     this.logger.debug(`  ✅ Found ${libraryName} from PyPI: ${inventoryUrl}`);
                     return {
                         name: libraryName,
-                        version: data.info?.version || 'latest',
+                        version: info.version,
                         inventoryUrl,
                         docBaseUrl: this.extractBaseUrl(inventoryUrl),
                         discoveredAt: Date.now(),

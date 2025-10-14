@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
+import { LIMITS, PERFORMANCE } from '../constants/defaults';
 import { Logger } from '../services/logger';
 import { TypeDetectionService } from '../services/typeDetectionService';
+import { BoundedCache } from '../utils/boundedCache';
 
 /**
  * Provides context-aware type detection for Python variables and expressions
@@ -8,7 +10,13 @@ import { TypeDetectionService } from '../services/typeDetectionService';
  */
 export class ContextDetector {
     // Cache for compiled regex patterns to improve performance
-    private regexCache = new Map<string, RegExp>();
+    private regexCache: BoundedCache<string, RegExp>;
+
+    constructor() {
+        this.regexCache = new BoundedCache({
+            maxSize: LIMITS.MAX_REGEX_CACHE_SIZE
+        });
+    }
 
     /**
      * Get a cached regex pattern or create and cache it
@@ -33,92 +41,69 @@ export class ContextDetector {
     public detectVariableTypeFromContext(document: vscode.TextDocument, position: vscode.Position, variableName: string): string | undefined {
         if (!variableName) return undefined;
 
-        const maxLines = 100; // Limit search to prevent performance issues
+        const maxLines = PERFORMANCE.MAX_CONTEXT_SCAN_LINES;
         const startLine = Math.max(0, position.line - maxLines);
         const endLine = Math.min(document.lineCount - 1, position.line + 5);
 
-        // Search backward for variable assignments
-        for (let i = position.line; i >= startLine; i--) {
-            const line = document.lineAt(i).text;
+        // Search backward then forward
+        for (const line of this.scanLines(document, position.line, startLine, -1)) {
+            const type = this.detectTypeFromLine(line, variableName);
+            if (type) return type;
+        }
 
-            // Check for variable assignments (var = value)
-            const assignmentRegex = this.getCachedRegex(`${variableName}\\s*=\\s*(.+)$`);
-            const assignmentMatch = line.match(assignmentRegex);
+        for (const line of this.scanLines(document, position.line + 1, endLine, 1)) {
+            const type = this.detectTypeFromLine(line, variableName);
+            if (type) return type;
+        }
 
-            if (assignmentMatch) {
-                const value = assignmentMatch[1].trim();
-                const detectedType = TypeDetectionService.detectTypeFromValue(value);
-                if (detectedType) {
-                    return detectedType;
-                }
+        return undefined;
+    }
+
+    /**
+     * Scan lines in a direction
+     */
+    private *scanLines(document: vscode.TextDocument, start: number, end: number, step: number): Generator<string> {
+        if (step > 0) {
+            for (let i = start; i <= end; i++) {
+                yield document.lineAt(i).text;
             }
-
-            // Check for walrus operator assignments (var := value)
-            const walrusRegex = this.getCachedRegex(`${variableName}\\s*:=\\s*(.+)$`);
-            const walrusMatch = line.match(walrusRegex);
-
-            if (walrusMatch) {
-                const value = walrusMatch[1].trim();
-                const detectedType = TypeDetectionService.detectTypeFromValue(value);
-                if (detectedType) {
-                    return detectedType;
-                }
+        } else {
+            for (let i = start; i >= end; i--) {
+                yield document.lineAt(i).text;
             }
+        }
+    }
 
-            // Check for type annotations (var: Type)
-            const annotationRegex = this.getCachedRegex(`${variableName}\\s*:\\s*(\\w+)`);
-            const annotationMatch = line.match(annotationRegex);
+    /**
+     * Detect type from a single line for a given variable
+     */
+    private detectTypeFromLine(line: string, variableName: string): string | undefined {
+        // Check for assignments (var = value)
+        const assignmentRegex = this.getCachedRegex(`${variableName}\\s*=\\s*(.+)$`);
+        const assignmentMatch = line.match(assignmentRegex);
+        if (assignmentMatch) {
+            const type = TypeDetectionService.detectTypeFromValue(assignmentMatch[1].trim());
+            if (type) return type;
+        }
 
-            if (annotationMatch) {
-                const typeName = annotationMatch[1];
-                if (TypeDetectionService.isBuiltinType(typeName)) {
-                    return typeName;
-                }
+        // Check for walrus operator (var := value)
+        const walrusRegex = this.getCachedRegex(`${variableName}\\s*:=\\s*(.+)$`);
+        const walrusMatch = line.match(walrusRegex);
+        if (walrusMatch) {
+            const type = TypeDetectionService.detectTypeFromValue(walrusMatch[1].trim());
+            if (type) return type;
+        }
+
+        // Check for type annotations (var: Type)
+        const annotationRegex = this.getCachedRegex(`${variableName}\\s*:\\s*(\\w+)`);
+        const annotationMatch = line.match(annotationRegex);
+        if (annotationMatch) {
+            const typeName = annotationMatch[1];
+            if (TypeDetectionService.isBuiltinType(typeName)) {
+                return typeName;
             }
         }
 
-        // If backward search didn't find anything, search forward a few lines
-        // This helps when cursor is at the start of a variable name before assignment
-        for (let i = position.line + 1; i <= endLine; i++) {
-            const line = document.lineAt(i).text;
-
-            // Check for variable assignments (var = value)
-            const assignmentRegex = this.getCachedRegex(`${variableName}\\s*=\\s*(.+)$`);
-            const assignmentMatch = line.match(assignmentRegex);
-
-            if (assignmentMatch) {
-                const value = assignmentMatch[1].trim();
-                const detectedType = TypeDetectionService.detectTypeFromValue(value);
-                if (detectedType) {
-                    return detectedType;
-                }
-            }
-
-            // Check for walrus operator in forward search too
-            const walrusRegex = this.getCachedRegex(`${variableName}\\s*:=\\s*(.+)$`);
-            const walrusMatch = line.match(walrusRegex);
-
-            if (walrusMatch) {
-                const value = walrusMatch[1].trim();
-                const detectedType = TypeDetectionService.detectTypeFromValue(value);
-                if (detectedType) {
-                    return detectedType;
-                }
-            }
-
-            // Check for type annotations in forward search
-            const annotationRegex = this.getCachedRegex(`${variableName}\\s*:\\s*(\\w+)`);
-            const annotationMatch = line.match(annotationRegex);
-
-            if (annotationMatch) {
-                const typeName = annotationMatch[1];
-                if (TypeDetectionService.isBuiltinType(typeName)) {
-                    return typeName;
-                }
-            }
-        }
-
-        // If we reach here, we couldn't determine the type
         return undefined;
     }
 
@@ -129,25 +114,57 @@ export class ContextDetector {
         const line = document.lineAt(position.line).text;
         const beforePosition = line.substring(0, position.character);
 
+        Logger.getInstance().info(`[detectMethodContext] Line: "${line}"`);
+        Logger.getInstance().info(`[detectMethodContext] BeforePosition: "${beforePosition}"`);
+        Logger.getInstance().info(`[detectMethodContext] MethodName: "${methodName}"`);
+
         // Check for method calls (obj.method)
-        const dotMatch = beforePosition.match(this.getCachedRegex(`(\\w+)\\s*\\.\\s*${methodName}\\s*$`));
+        // Look for pattern: objectName followed by dot, ending right before current position
+        // This handles cases where cursor is AT the method name
+        const dotMatch = beforePosition.match(this.getCachedRegex(`(\\w+)\\s*\\.\\s*$`));
+
+        Logger.getInstance().info(`[detectMethodContext] DotMatch: ${dotMatch ? `Found: ${dotMatch[0]}, Object: ${dotMatch[1]}` : 'No match'}`);
+
         if (dotMatch) {
             const objectName = dotMatch[1];
-            return this.detectVariableTypeFromContext(document, position, objectName);
+            const detectedType = this.detectVariableTypeFromContext(document, position, objectName);
+
+            Logger.getInstance().info(`[detectMethodContext] Detected type for "${objectName}": ${detectedType}`);
+
+            // If we detected a qualified type name (e.g., "pandas.DataFrame"), return it as-is
+            if (detectedType && detectedType.includes('.')) {
+                return detectedType;
+            }
+
+            return detectedType;
         }
 
-        // Common method-to-type inference as a fallback
-        if (['strip', 'split', 'join', 'replace', 'find', 'startswith', 'endswith', 'upper', 'lower',
-            'capitalize', 'title', 'isdigit', 'isalpha', 'isalnum', 'format'].includes(methodName)) {
-            return 'str';
-        } else if (['append', 'extend', 'insert', 'remove', 'pop', 'clear', 'copy', 'reverse', 'sort'].includes(methodName)) {
-            return 'list';
-        } else if (['keys', 'values', 'items', 'get', 'setdefault', 'update', 'popitem', 'fromkeys'].includes(methodName)) {
-            return 'dict';
-        } else if (['add', 'update', 'remove', 'discard', 'clear', 'copy', 'union', 'intersection'].includes(methodName)) {
-            return 'set';
-        }
+        // Method-to-type inference mapping
+        const methodTypeMap: Record<string, string> = {
+            // String methods
+            'strip': 'str', 'split': 'str', 'join': 'str', 'replace': 'str', 'find': 'str',
+            'startswith': 'str', 'endswith': 'str', 'upper': 'str', 'lower': 'str',
+            'capitalize': 'str', 'title': 'str', 'isdigit': 'str', 'isalpha': 'str',
+            'isalnum': 'str', 'format': 'str',
+            // List methods
+            'append': 'list', 'extend': 'list', 'insert': 'list', 'remove': 'list',
+            'pop': 'list', 'clear': 'list', 'copy': 'list', 'reverse': 'list', 'sort': 'list',
+            // Dict methods
+            'keys': 'dict', 'values': 'dict', 'items': 'dict', 'get': 'dict',
+            'setdefault': 'dict', 'update': 'dict', 'popitem': 'dict', 'fromkeys': 'dict',
+            // Set methods
+            'add': 'set', 'discard': 'set', 'union': 'set', 'intersection': 'set',
+            // Pandas DataFrame methods
+            'head': 'DataFrame', 'tail': 'DataFrame', 'describe': 'DataFrame',
+            'groupby': 'DataFrame', 'merge': 'DataFrame', 'fillna': 'DataFrame',
+            'dropna': 'DataFrame', 'drop': 'DataFrame', 'reset_index': 'DataFrame',
+            // Pandas Series methods
+            'value_counts': 'Series', 'unique': 'Series', 'nunique': 'Series',
+            // NumPy array methods
+            'reshape': 'ndarray', 'flatten': 'ndarray', 'transpose': 'ndarray',
+            'dot': 'ndarray', 'sum': 'ndarray', 'mean': 'ndarray'
+        };
 
-        return undefined;
+        return methodTypeMap[methodName];
     }
 }

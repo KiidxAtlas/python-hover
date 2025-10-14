@@ -5,10 +5,28 @@
 
 import { Logger } from '../services/logger';
 
+export interface Parameter {
+    name: string;
+    type?: string;
+    description: string;
+    default?: string;
+}
+
+export interface Example {
+    title: string;
+    code: string;
+    description?: string;
+}
+
 export interface LibraryDoc {
     name: string;
     description: string;
     example?: string;
+    examples?: Example[];  // Multiple examples for richer documentation
+    parameters?: Parameter[];  // Parameter documentation
+    returns?: string;  // Return value description
+    seeAlso?: string[];  // Related functions/methods
+    notes?: string;  // Additional notes
     url?: string;
     version?: string;
 }
@@ -125,10 +143,44 @@ print(arr_3d.shape)  # (2, 3, 2)`,
     pandas: {
         'DataFrame': {
             name: 'pandas.DataFrame',
-            description: 'Two-dimensional, size-mutable, potentially heterogeneous tabular data.',
-            example: `import pandas as pd
+            description: 'Two-dimensional, size-mutable, potentially heterogeneous tabular data. Data structure also contains labeled axes (rows and columns). Arithmetic operations align on both row and column labels. Can be thought of as a dict-like container for Series objects.',
+            parameters: [
+                {
+                    name: 'data',
+                    type: 'ndarray, Iterable, dict, or DataFrame',
+                    description: 'Dict can contain Series, arrays, constants, or list-like objects. If data is a dict, column order follows insertion-order.'
+                },
+                {
+                    name: 'index',
+                    type: 'Index or array-like',
+                    description: 'Index to use for resulting frame. Will default to RangeIndex if no indexing information provided.',
+                    default: 'None'
+                },
+                {
+                    name: 'columns',
+                    type: 'Index or array-like',
+                    description: 'Column labels to use for resulting frame when data does not have them.',
+                    default: 'None'
+                },
+                {
+                    name: 'dtype',
+                    type: 'dtype',
+                    description: 'Data type to force. Only a single dtype is allowed. If None, infer.',
+                    default: 'None'
+                },
+                {
+                    name: 'copy',
+                    type: 'bool',
+                    description: 'Copy data from inputs. For dict data, the default of None behaves like copy=True.',
+                    default: 'None'
+                }
+            ],
+            examples: [
+                {
+                    title: 'Creating DataFrame from Dictionary',
+                    code: `import pandas as pd
 
-# From dictionary
+# Basic dictionary to DataFrame
 df = pd.DataFrame({
     'name': ['Alice', 'Bob', 'Charlie'],
     'age': [25, 30, 35],
@@ -138,11 +190,64 @@ print(df)
 #       name  age     city
 # 0    Alice   25       NY
 # 1      Bob   30       LA
-# 2  Charlie   35  Chicago
+# 2  Charlie   35  Chicago`,
+                    description: 'Most common way to create a DataFrame from a dictionary of lists.'
+                },
+                {
+                    title: 'DataFrame from List of Dictionaries',
+                    code: `import pandas as pd
 
-# Access columns
-print(df['name'])  # Name column
-print(df.age)      # Alternative access`,
+# List of dictionaries
+data = [
+    {'name': 'Alice', 'age': 25, 'city': 'NY'},
+    {'name': 'Bob', 'age': 30, 'city': 'LA'},
+    {'name': 'Charlie', 'age': 35}  # Missing 'city'
+]
+df = pd.DataFrame(data)
+print(df)
+#       name  age city
+# 0    Alice   25   NY
+# 1      Bob   30   LA
+# 2  Charlie   35  NaN`,
+                    description: 'Each dictionary becomes a row. Missing values are filled with NaN.'
+                },
+                {
+                    title: 'DataFrame with Custom Index',
+                    code: `import pandas as pd
+
+df = pd.DataFrame(
+    {'A': [1, 2, 3], 'B': [4, 5, 6]},
+    index=['row1', 'row2', 'row3']
+)
+print(df)
+#       A  B
+# row1  1  4
+# row2  2  5
+# row3  3  6`,
+                    description: 'Specify custom row labels with the index parameter.'
+                },
+                {
+                    title: 'DataFrame from NumPy Array',
+                    code: `import pandas as pd
+import numpy as np
+
+arr = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]])
+df = pd.DataFrame(arr, columns=['A', 'B', 'C'])
+print(df)
+#    A  B  C
+# 0  1  2  3
+# 1  4  5  6
+# 2  7  8  9`,
+                    description: 'Convert NumPy arrays to DataFrames with column labels.'
+                }
+            ],
+            seeAlso: [
+                'pandas.Series - One-dimensional labeled array',
+                'pandas.read_csv - Read CSV file into DataFrame',
+                'pandas.DataFrame.from_dict - Construct from dict',
+                'pandas.DataFrame.from_records - Construct from records'
+            ],
+            notes: 'DataFrame is the primary pandas data structure. Operations between DataFrame and Series are aligned by index. When arithmetic operations are applied, pandas automatically aligns the data.',
             url: 'https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.html'
         },
         'read_csv': {

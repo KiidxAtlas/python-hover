@@ -13,9 +13,6 @@ import { OPERATORS } from '../data/documentationUrls';
 import { TYPING_CONSTRUCTS } from '../data/typingConstructs';
 import { Logger } from '../services/logger';
 
-// Symbol resolver watermark - KiidxAtlas 2025
-const RESOLVER_ID = 'SymbolResolver-KiidxAtlas';
-
 export interface SymbolInfo {
     symbol: string;
     type: 'builtin' | 'module' | 'method' | 'exception' | 'keyword' | 'decorator' | 'operator' | 'class' | 'f-string' | 'typing';

@@ -11,10 +11,8 @@
 
 import * as vscode from 'vscode';
 
-// Theme signature - Original design by KiidxAtlas
-const THEME_SIGNATURE = 'HoverTheme-KiidxAtlas-2025';
-
 export type FontSize = 'small' | 'medium' | 'large';
+export type VSCodeThemeKind = 'light' | 'dark' | 'high-contrast';
 
 export interface ThemeConfig {
     fontSize: 'small' | 'medium' | 'large';
@@ -25,9 +23,13 @@ export interface ThemeConfig {
 
 export class HoverTheme {
     private config: ThemeConfig;
+    private currentTheme: VSCodeThemeKind = 'dark';
+    private themeChangeListener?: vscode.Disposable;
 
     constructor() {
         this.config = this.loadConfig();
+        this.detectTheme();
+        this.setupThemeChangeListener();
     }
 
     private loadConfig(): ThemeConfig {
@@ -40,12 +42,115 @@ export class HoverTheme {
         };
     }
 
+    /**
+     * Detect current VS Code theme
+     */
+    private detectTheme(): void {
+        const theme = vscode.window.activeColorTheme;
+
+        switch (theme.kind) {
+            case vscode.ColorThemeKind.Light:
+                this.currentTheme = 'light';
+                break;
+            case vscode.ColorThemeKind.HighContrast:
+            case vscode.ColorThemeKind.HighContrastLight:
+                this.currentTheme = 'high-contrast';
+                break;
+            default:
+                this.currentTheme = 'dark';
+        }
+    }
+
+    /**
+     * Setup listener for theme changes
+     */
+    private setupThemeChangeListener(): void {
+        this.themeChangeListener = vscode.window.onDidChangeActiveColorTheme(() => {
+            this.detectTheme();
+        });
+    }
+
+    /**
+     * Get current theme kind
+     */
+    public getCurrentTheme(): VSCodeThemeKind {
+        return this.currentTheme;
+    }
+
+    /**
+     * Get themed color value
+     */
+    public getThemedColor(colorName: 'accent' | 'background' | 'text' | 'border' | 'success' | 'warning' | 'error'): string {
+        const colors: Record<VSCodeThemeKind, Record<string, string>> = {
+            light: {
+                accent: '#0066cc',
+                background: '#f5f5f5',
+                text: '#333333',
+                border: '#cccccc',
+                success: '#22863a',
+                warning: '#bf8700',
+                error: '#d73a49'
+            },
+            dark: {
+                accent: '#4daafc',
+                background: '#1e1e1e',
+                text: '#cccccc',
+                border: '#444444',
+                success: '#28a745',
+                warning: '#ffc107',
+                error: '#f85149'
+            },
+            'high-contrast': {
+                accent: '#ffffff',
+                background: '#000000',
+                text: '#ffffff',
+                border: '#ffffff',
+                success: '#00ff00',
+                warning: '#ffff00',
+                error: '#ff0000'
+            }
+        };
+
+        return colors[this.currentTheme][colorName] || colors.dark[colorName];
+    }
+
+    /**
+     * Get themed icon for better visibility
+     */
+    public getThemedIcon(baseIcon: string, colorType?: 'accent' | 'success' | 'warning' | 'error'): string {
+        // For high contrast, always use basic icons
+        if (this.currentTheme === 'high-contrast') {
+            return baseIcon;
+        }
+
+        // For other themes, optionally add color indicators
+        if (colorType && this.config.showColors) {
+            const colorEmojis = {
+                accent: '🔵',
+                success: '🟢',
+                warning: '🟡',
+                error: '🔴'
+            };
+            return this.config.showEmojis ? `${colorEmojis[colorType]} ${baseIcon}` : baseIcon;
+        }
+
+        return baseIcon;
+    }
+
     public refresh(): void {
         this.config = this.loadConfig();
+        this.detectTheme();
     }
 
     public getConfig(): ThemeConfig {
         return { ...this.config };
+    }
+
+    /**
+     * Dispose of resources
+     */
+    public dispose(): void {
+        this.themeChangeListener?.dispose();
     }
 
     /**
@@ -461,5 +566,170 @@ export class HoverTheme {
         }
 
         return this.formatContent(result);
+    }
+
+    /**
+     * Format type annotation with prominent icon and color
+     */
+    public formatTypeAnnotation(type: string, context?: string): string {
+        const icon = '$(symbol-interface)';
+        let result = `${icon} \`${type}\``;
+
+        if (context) {
+            result += ` — ${context}`;
+        }
+
+        return result;
+    }
+
+    /**
+     * Format parameter with enhanced visual hierarchy
+     */
+    public formatParameterDetailed(param: {
+        name: string;
+        type?: string;
+        description: string;
+        default?: string;
+        required?: boolean;
+        constraints?: string;
+    }): string {
+        const requiredIcon = param.required !== false ? '$(circle-filled)' : '$(circle-outline)';
+
+        let result = `${requiredIcon} **\`${param.name}\`**`;
+
+        // Add type annotation
+        if (param.type) {
+            result += ` : ${this.formatTypeAnnotation(param.type)}`;
+        }
+
+        // Add default value
+        if (param.default) {
+            result += ` = \`${param.default}\``;
+        }
+
+        result += '\n\n';
+
+        // Add description with indentation
+        result += `  ${param.description}`;
+
+        // Add constraints if present
+        if (param.constraints) {
+            result += `\n  $(info) *${param.constraints}*`;
+        }
+
+        return result + '\n\n';
+    }
+
+    /**
+     * Format summary box with visual distinction
+     */
+    public formatSummaryBox(summary: string): string {
+        return `> 📋 **Summary:** ${summary}\n\n`;
+    }
+
+    /**
+     * Format version metadata (versionadded, versionchanged)
+     */
+    public formatVersionMetadata(metadata: {
+        added?: string;
+        changed?: string;
+        deprecated?: string;
+    }): string {
+        const lines: string[] = [];
+
+        if (metadata.added) {
+            lines.push(`$(history) New in version **${metadata.added}**`);
+        }
+
+        if (metadata.changed) {
+            lines.push(`$(git-commit) Changed in version **${metadata.changed}**`);
+        }
+
+        if (metadata.deprecated) {
+            lines.push(`$(warning) Deprecated: ${metadata.deprecated}`);
+        }
+
+        if (lines.length === 0) return '';
+
+        return '\n' + lines.join(' · ') + '\n\n';
+    }
+
+    /**
+     * Format raises/exceptions section
+     */
+    public formatRaises(exceptions: string[]): string {
+        if (exceptions.length === 0) return '';
+
+        let result = this.formatSectionHeader('Raises');
+
+        for (const exc of exceptions) {
+            result += `$(error) \`${exc}\`\n`;
+        }
+
+        return result + '\n';
+    }
+
+    /**
+     * Format yields section (for generators)
+     */
+    public formatYields(yieldsInfo: string): string {
+        const icon = '$(symbol-property)';
+        return `${icon} **Yields:** ${yieldsInfo}\n\n`;
+    }
+
+    /**
+     * Format attributes section (for classes)
+     */
+    public formatAttributes(attributes: Array<{
+        name: string;
+        type?: string;
+        description: string;
+    }>): string {
+        if (attributes.length === 0) return '';
+
+        let result = this.formatSectionHeader('Attributes');
+
+        for (const attr of attributes) {
+            result += `$(symbol-property) **\`${attr.name}\`**`;
+            if (attr.type) {
+                result += ` : \`${attr.type}\``;
+            }
+            result += `\n  ${attr.description}\n\n`;
+        }
+
+        return result;
+    }
+
+    /**
+     * Format example with better structure
+     */
+    public formatExampleEnhanced(example: {
+        title?: string;
+        code: string;
+        output?: string;
+        description?: string;
+    }): string {
+        let result = '';
+
+        // Title
+        if (example.title) {
+            result += `**${example.title}**\n\n`;
+        }
+
+        // Description
+        if (example.description) {
+            result += `${example.description}\n\n`;
+        }
+
+        // Code
+        result += this.formatCodeBlock(example.code, 'python');
+
+        // Output
+        if (example.output) {
+            result += '**Output:**\n';
+            result += this.formatCodeBlock(example.output, 'text');
+        }
+
+        return result;
     }
 }

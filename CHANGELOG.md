@@ -6,6 +6,60 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.5.1] - 2025-10-13
+
+### 🚀 Major Features
+
+- **Dynamic Library Resolution**: Revolutionary context detection that works with ANY Python library automatically
+  - No more hardcoded class-to-library mappings
+  - Automatically detects which library a class belongs to by checking inventories
+  - Works seamlessly with pandas, numpy, scikit-learn, tensorflow, flask, requests, and any other library
+  - Scales infinitely - handles custom libraries with Sphinx documentation
+  - Early exit optimization for fast performance (<10ms cached)
+
+### ✨ Improvements
+
+- **Enhanced Type Detection**: Improved detection of Python types from code context
+  - Strips inline comments before type detection (fixes `df = DataFrame() # comment` cases)
+  - Supports qualified constructor calls like `pandas.DataFrame(...)`
+  - Better handling of complex assignment patterns
+
+- **Robust Error Handling**: Graceful fallback for libraries with missing or invalid documentation
+  - Try-catch around auto-discovery prevents crashes from malformed inventory files
+  - Silently skips libraries that fail inventory parsing
+  - Continues checking other libraries instead of failing completely
+  - Debug-level logging for troubleshooting without noise
+
+- **Context Detection Improvements**: Fixed multiple issues with method context resolution
+  - Fixed regex pattern to match cursor position correctly (dot before method name)
+  - Added 'object' override logic to re-attempt detection when type is generic
+  - Method-to-type fallback mapping for common cases
+
+### 🐛 Bug Fixes
+
+- **Fixed "object.method" Issue**: Methods now correctly show qualified names (e.g., "DataFrame.head" instead of "object.head")
+- **Fixed Cursor Position Detection**: Hover now works correctly when cursor is on the method name
+- **Fixed Library Qualification**: Types are now properly qualified with their library names
+- **Fixed Error Propagation**: Invalid inventory files no longer crash the entire hover provider
+
+### 🎨 Visual Enhancements
+
+- **Rich Sphinx Documentation**: Enhanced parsing of Sphinx documentation with metadata
+  - Summary boxes with visual hierarchy
+  - Enhanced parameter formatting with type annotations
+  - Version metadata display (added/changed/deprecated)
+  - Better formatting for raises, yields, and attributes sections
+
+### 🏗️ Architecture
+
+- **Better Code Organization**: Cleaner separation of concerns
+  - Type detection improvements in `typeDetectionService.ts`
+  - Context detection enhancements in `contextDetector.ts`
+  - Dynamic resolution in `hoverProvider.ts`
+  - Comprehensive error handling in `inventory.ts`
+
+---
+
 ## [0.5.0] - 2025-10-12
 
 ### 🚀 Major Features
