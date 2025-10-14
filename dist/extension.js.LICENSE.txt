@@ -1,4 +1,48 @@
 /**
+ * Application Constants - Centralized configuration values
+ *
+ * @author KiidxAtlas
+ * @copyright 2025 KiidxAtlas. All rights reserved.
+ * @license MIT
+ *
+ * Centralized constants for easier tuning and maintenance.
+ * All time values are in milliseconds unless otherwise specified.
+ */
+
+/**
+ * Bounded Cache - Size-limited cache with automatic eviction
+ *
+ * @author KiidxAtlas
+ * @copyright 2025 KiidxAtlas. All rights reserved.
+ * @license MIT
+ *
+ * Provides a cache with configurable size limits to prevent memory leaks.
+ * Uses LRU (Least Recently Used) eviction strategy.
+ */
+
+/**
+ * Circuit Breaker - Fault tolerance pattern for network requests
+ *
+ * @author KiidxAtlas
+ * @copyright 2025 KiidxAtlas. All rights reserved.
+ * @license MIT
+ *
+ * Implements the circuit breaker pattern to prevent cascading failures
+ * and provide automatic recovery from network issues.
+ */
+
+/**
+ * Data Loader Service - Lazy loading for data files
+ *
+ * @author KiidxAtlas
+ * @copyright 2025 KiidxAtlas. All rights reserved.
+ * @license MIT
+ *
+ * This service implements lazy loading for large data files to improve
+ * extension activation time and reduce initial memory footprint.
+ */
+
+/**
  * Documentation Fetcher - Fetches Python documentation from various sources
  *
  * @author KiidxAtlas
@@ -22,6 +66,20 @@
  *
  * @author KiidxAtlas
  * @copyright 2025 KiidxAtlas. All rights reserved.
+ * @license MIT
+ */
+
+/**
+ * PyPI Service - Single source of truth for PyPI API interactions
+ *
+ * Responsibilities:
+ * - Fetch package information from PyPI
+ * - Extract documentation URLs from package metadata
+ * - Parse PyPI JSON responses
+ * - Cache PyPI requests
+ *
+ * @author KiidxAtlas
+ * @copyright 2025 KiidxAtlas
  * @license MIT
  */
 
