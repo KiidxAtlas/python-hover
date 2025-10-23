@@ -7,7 +7,7 @@
  */
 
 import * as vscode from 'vscode';
-import { getDunderInfo, IMPORT_INFO, MAP, MODULES, OPERATORS } from '../data/documentationUrls';
+import { getDunderInfo, MAP, MODULES, OPERATORS } from '../data/documentationUrls';
 import { CacheManager } from '../services/cache';
 import { InventoryEntry } from '../services/inventory';
 import { Logger } from '../services/logger';
@@ -91,11 +91,6 @@ function getDocumentationInfo(symbol: string): Info | null {
     // First check main MAP
     if (symbol in MAP) {
         return MAP[symbol];
-    }
-
-    // Map 'import' and 'from' keywords to the import system documentation
-    if (symbol === 'from' || symbol === 'import') {
-        return IMPORT_INFO;
     }
 
     // Then check MODULES
