@@ -348,3 +348,50 @@ MIT License - see [LICENSE](LICENSE) for details.
 **Made with ❤️ for the Python community**
 
 </div>
+
+---
+
+## 🧪 Testing
+
+Run fast unit tests (no VS Code needed):
+
+```bash
+npm run test:unit
+```
+
+Watch mode for rapid iteration:
+
+```bash
+npm run test:unit:watch
+```
+
+Full integration tests (spins up VS Code test host):
+
+```bash
+npm test
+```
+
+Notes:
+
+- Unit tests stub the VS Code API and run in Node for speed.
+- Integration tests validate activation, hover performance, and inventory resolution end-to-end.
+
+### Snapshot hover tests (real content)
+
+Want to see the exact Markdown users see in the hover? Run the snapshot suite to generate reviewable artifacts:
+
+```bash
+npm run test:snapshots
+```
+
+What this does:
+
+- Spins up the full VS Code test host and forces the real hover pipeline (no test shortcuts)
+- Captures the actual Markdown from dozens of representative hovers
+- Writes files to `artifacts/hover-snapshots/*.md` for hands-on review
+
+Tips:
+
+- Open a few files like `artifacts/hover-snapshots/builtin-range.md` or `artifacts/hover-snapshots/keyword-for.md` to inspect content
+- Add new cases in `src/test/suite/hoverSnapshots.test.ts` to expand coverage
+- Snapshot mode skips strict perf checks to keep runs stable and focused on content

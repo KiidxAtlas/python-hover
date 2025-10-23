@@ -14,7 +14,7 @@
 import { Info } from '../types';
 
 // Documentation mapping signature - KiidxAtlas
-const DOC_MAP_AUTHOR = 'KiidxAtlas-2025';
+const _DOC_MAP_AUTHOR = 'KiidxAtlas-2025';
 
 export const MAP: Record<string, Info> = {
     class: { title: 'class — Class Definitions', url: 'reference/compound_stmts.html', anchor: 'class-definitions' },
@@ -96,7 +96,7 @@ export const MAP: Record<string, Info> = {
     // Built-ins
     print: { title: 'print() — Print Objects', url: 'library/functions.html', anchor: 'print' },
     len: { title: 'len() — Return Length', url: 'library/functions.html', anchor: 'len' },
-    range: { title: 'range() — Range Object', url: 'library/functions.html', anchor: 'range' },
+    range: { title: 'range() — Range Object', url: 'library/functions.html', anchor: 'func-range' },
     enumerate: { title: 'enumerate() — Enumerate Object', url: 'library/functions.html', anchor: 'enumerate' },
     zip: { title: 'zip() — Zip Iterator', url: 'library/functions.html', anchor: 'zip' },
     map: { title: 'map() — Apply Function', url: 'library/functions.html', anchor: 'map' },
@@ -381,6 +381,26 @@ export const MODULES: Record<string, Info> = {
     errno: { title: 'errno — Standard errno System Symbols', url: 'library/errno.html' },
     ctypes: { title: 'ctypes — Foreign Function Library', url: 'library/ctypes.html' }
 };
+
+// Additional direct mappings for common stdlib callables and classes used in snapshots
+// Typing additions
+MAP['Self'] = { title: 'typing.Self — Self type', url: 'library/typing.html', anchor: 'typing.Self' };
+
+// itertools
+MAP['product'] = { title: 'itertools.product — Cartesian product', url: 'library/itertools.html', anchor: 'itertools.product' };
+
+// functools
+MAP['lru_cache'] = { title: 'functools.lru_cache — LRU cache decorator', url: 'library/functools.html', anchor: 'functools.lru_cache' };
+
+// operator
+MAP['itemgetter'] = { title: 'operator.itemgetter — Construct item-getting callable', url: 'library/operator.html', anchor: 'operator.itemgetter' };
+
+// dataclasses
+MAP['dataclass'] = { title: 'dataclasses.dataclass — Dataclass decorator', url: 'library/dataclasses.html', anchor: 'dataclasses.dataclass' };
+
+// pathlib
+MAP['Path'] = { title: 'pathlib.Path — Filesystem path class', url: 'library/pathlib.html', anchor: 'pathlib.Path' };
+MAP['glob'] = { title: 'pathlib.Path.glob — Glob entries in a directory', url: 'library/pathlib.html', anchor: 'pathlib.Path.glob' };
 
 export const BUILTIN_KEYWORDS = ['print', 'len', 'range', 'enumerate', 'zip', 'map', 'filter', 'sorted', 'reversed', 'sum', 'max', 'min', 'abs', 'round', 'type', 'vars', 'dir', 'help', 'input', 'eval', 'exec', 'compile', 'hash', 'hex', 'oct', 'bin', 'ord', 'chr', 'ascii', 'repr', 'format', 'divmod', 'callable', 'super', 'staticmethod', 'classmethod', 'property', 'slice', 'object', 'bytes', 'bytearray', 'memoryview', 'frozenset', 'complex', 'locals', 'globals', 'breakpoint', 'and', 'or', 'not', 'is', 'in'];
 export const DATA_TYPES = ['str', 'int', 'float', 'bool', 'list', 'dict', 'set', 'tuple'];

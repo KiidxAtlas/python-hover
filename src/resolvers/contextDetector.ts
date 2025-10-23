@@ -46,8 +46,24 @@ export class ContextDetector {
             const assignmentMatch = line.match(assignmentRegex);
 
             if (assignmentMatch) {
-                const value = assignmentMatch[1].trim();
-                const detectedType = TypeDetectionService.detectTypeFromValue(value);
+                // Capture potential multiline literals by scanning forward until brackets balance
+                const value = assignmentMatch[1];
+                let collected = value;
+                let openParens = (value.match(/\(/g) || []).length - (value.match(/\)/g) || []).length;
+                let openBrackets = (value.match(/\[/g) || []).length - (value.match(/\]/g) || []).length;
+                let openBraces = (value.match(/\{/g) || []).length - (value.match(/\}/g) || []).length;
+
+                let j = i + 1;
+                while ((openParens > 0 || openBrackets > 0 || openBraces > 0) && j <= Math.min(i + maxLines, document.lineCount - 1)) {
+                    const nextLine = document.lineAt(j).text;
+                    collected += '\n' + nextLine;
+                    openParens += (nextLine.match(/\(/g) || []).length - (nextLine.match(/\)/g) || []).length;
+                    openBrackets += (nextLine.match(/\[/g) || []).length - (nextLine.match(/\]/g) || []).length;
+                    openBraces += (nextLine.match(/\{/g) || []).length - (nextLine.match(/\}/g) || []).length;
+                    j++;
+                }
+
+                const detectedType = TypeDetectionService.detectTypeFromValue(collected.trim());
                 if (detectedType) {
                     return detectedType;
                 }
@@ -58,8 +74,10 @@ export class ContextDetector {
             const walrusMatch = line.match(walrusRegex);
 
             if (walrusMatch) {
-                const value = walrusMatch[1].trim();
-                const detectedType = TypeDetectionService.detectTypeFromValue(value);
+                // Trim trailing delimiters like ), ], }, commas, semicolons, or colons
+                const raw = walrusMatch[1].trim();
+                const val = raw.replace(/[)\]},;:]+$/, '').trim();
+                const detectedType = TypeDetectionService.detectTypeFromValue(val);
                 if (detectedType) {
                     return detectedType;
                 }
@@ -87,8 +105,24 @@ export class ContextDetector {
             const assignmentMatch = line.match(assignmentRegex);
 
             if (assignmentMatch) {
-                const value = assignmentMatch[1].trim();
-                const detectedType = TypeDetectionService.detectTypeFromValue(value);
+                // Handle potential multiline values in forward search as well
+                const value = assignmentMatch[1];
+                let collected = value;
+                let openParens = (value.match(/\(/g) || []).length - (value.match(/\)/g) || []).length;
+                let openBrackets = (value.match(/\[/g) || []).length - (value.match(/\]/g) || []).length;
+                let openBraces = (value.match(/\{/g) || []).length - (value.match(/\}/g) || []).length;
+
+                let j = i + 1;
+                while ((openParens > 0 || openBrackets > 0 || openBraces > 0) && j <= endLine) {
+                    const nextLine = document.lineAt(j).text;
+                    collected += '\n' + nextLine;
+                    openParens += (nextLine.match(/\(/g) || []).length - (nextLine.match(/\)/g) || []).length;
+                    openBrackets += (nextLine.match(/\[/g) || []).length - (nextLine.match(/\]/g) || []).length;
+                    openBraces += (nextLine.match(/\{/g) || []).length - (nextLine.match(/\}/g) || []).length;
+                    j++;
+                }
+
+                const detectedType = TypeDetectionService.detectTypeFromValue(collected.trim());
                 if (detectedType) {
                     return detectedType;
                 }
@@ -99,8 +133,9 @@ export class ContextDetector {
             const walrusMatch = line.match(walrusRegex);
 
             if (walrusMatch) {
-                const value = walrusMatch[1].trim();
-                const detectedType = TypeDetectionService.detectTypeFromValue(value);
+                const raw = walrusMatch[1].trim();
+                const val = raw.replace(/[)\]},;:]+$/, '').trim();
+                const detectedType = TypeDetectionService.detectTypeFromValue(val);
                 if (detectedType) {
                     return detectedType;
                 }

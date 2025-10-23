@@ -145,6 +145,16 @@ print(df['name'])  # Name column
 print(df.age)      # Alternative access`,
             url: 'https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.html'
         },
+        'head': {
+            name: 'pandas.DataFrame.head',
+            description: 'Return the first n rows of the DataFrame.',
+            example: `import pandas as pd
+
+df = pd.DataFrame({'a': [1,2,3], 'b':[4,5,6]})
+print(df.head())
+print(df.head(2))`,
+            url: 'https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.head.html'
+        },
         'read_csv': {
             name: 'pandas.read_csv',
             description: 'Read a comma-separated values (csv) file into DataFrame.',
@@ -787,6 +797,8 @@ function isKnownLibrary(libraryName: string, configManager?: any): boolean {
     return false;
 }
 
+import { MODULES } from '../data/documentationUrls';
+
 export function getImportedLibraries(documentText: string, configManager?: any): Map<string, string> {
     const imports = new Map<string, string>(); // alias -> library name
     const lines = documentText.split('\n');
@@ -799,7 +811,8 @@ export function getImportedLibraries(documentText: string, configManager?: any):
         if (importAsMatch) {
             const library = importAsMatch[1];
             const alias = importAsMatch[2] || library;
-            if (isKnownLibrary(library, configManager)) {
+            // Treat both known third-party libraries and stdlib modules as known
+            if (isKnownLibrary(library, configManager) || (library in MODULES)) {
                 imports.set(alias, library);
             }
             continue;
@@ -814,7 +827,7 @@ export function getImportedLibraries(documentText: string, configManager?: any):
             const importedItems = fromMatch[2]; // Everything after "import"
 
             // Check if this is a library we track
-            if (isKnownLibrary(library, configManager)) {
+            if (isKnownLibrary(library, configManager) || (library in MODULES)) {
                 // DON'T add imports.set(library, library) here!
                 // We're importing symbols FROM the library, not the library itself.
                 // Only map the individual imported symbols.
@@ -844,7 +857,7 @@ export function getImportedLibraries(documentText: string, configManager?: any):
         const simpleImportMatch = trimmed.match(/^import\s+(\w+)$/);
         if (simpleImportMatch) {
             const library = simpleImportMatch[1];
-            if (isKnownLibrary(library, configManager)) {
+            if (isKnownLibrary(library, configManager) || (library in MODULES)) {
                 imports.set(library, library);
             }
         }

@@ -14,7 +14,7 @@ import { TYPING_CONSTRUCTS } from '../data/typingConstructs';
 import { Logger } from '../services/logger';
 
 // Symbol resolver watermark - KiidxAtlas 2025
-const RESOLVER_ID = 'SymbolResolver-KiidxAtlas';
+const _RESOLVER_ID = 'SymbolResolver-KiidxAtlas';
 
 export interface SymbolInfo {
     symbol: string;
@@ -77,19 +77,13 @@ export class SymbolResolver {
         // Get the full line for context
         const lineText = text.trim();
 
-        // Early exit for empty or non-identifier words
-        if (!word) {
-            return [];
-        }
-
-        // Must look like a Python identifier (starts with letter or underscore)
-        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(word)) {
-            return [];
-        }
-
-        // Avoid numeric literals
-        if (/^[0-9]+(?:\.[0-9]+)?$/.test(word)) {
-            return [];
+        const isIdentifier = !!word && /^[A-Za-z_][A-Za-z0-9_]*$/.test(word);
+        // If there's no identifier under cursor, we still try operator/f-string detection below
+        if (isIdentifier) {
+            // Avoid numeric literals
+            if (/^[0-9]+(?:\.[0-9]+)?$/.test(word)) {
+                return [];
+            }
         }
 
         Logger.getInstance().debug(`Raw line: ${text}`);
@@ -102,47 +96,53 @@ export class SymbolResolver {
             return [];
         }
 
-        // CHECK KEYWORDS FIRST (before filtering by length)
-        // This ensures short keywords like 'if', 'or', 'as', 'in', 'is' are not skipped
-        if (SymbolResolver.PYTHON_KEYWORDS.has(word)) {
-            Logger.getInstance().debug(`Detected Python keyword: ${word}`);
-            results.push({
-                symbol: word,
-                type: 'keyword'
-            });
-            // For keywords, don't continue looking for other interpretations
-            return results;
-        }
+        if (isIdentifier) {
+            // CHECK KEYWORDS FIRST (before filtering by length)
+            // This ensures short keywords like 'if', 'or', 'as', 'in', 'is' are not skipped
+            if (SymbolResolver.PYTHON_KEYWORDS.has(word)) {
+                Logger.getInstance().debug(`Detected Python keyword: ${word}`);
+                results.push({
+                    symbol: word,
+                    type: 'keyword'
+                });
+                // For keywords, don't continue looking for other interpretations
+                return results;
+            }
 
-        // CHECK BUILTINS EARLY (before filtering by length)
-        // This ensures short builtins are not skipped
-        if (SymbolResolver.PYTHON_BUILTINS.has(word)) {
-            Logger.getInstance().debug(`Detected Python builtin: ${word}`);
-            results.push({
-                symbol: word,
-                type: 'builtin'
-            });
-        }
+            // CHECK BUILTINS EARLY (before filtering by length)
+            // This ensures short builtins are not skipped
+            if (SymbolResolver.PYTHON_BUILTINS.has(word)) {
+                Logger.getInstance().debug(`Detected Python builtin: ${word}`);
+                results.push({
+                    symbol: word,
+                    type: 'builtin'
+                });
+            }
 
-        // CHECK EXCEPTIONS EARLY
-        if (SymbolResolver.PYTHON_EXCEPTIONS.has(word)) {
-            Logger.getInstance().debug(`Detected Python exception: ${word}`);
-            results.push({
-                symbol: word,
-                type: 'exception'
-            });
+            // CHECK EXCEPTIONS EARLY
+            if (SymbolResolver.PYTHON_EXCEPTIONS.has(word)) {
+                Logger.getInstance().debug(`Detected Python exception: ${word}`);
+                results.push({
+                    symbol: word,
+                    type: 'exception'
+                });
+            }
         }
 
         // Now apply heuristic filtering for other symbols
         // Skip very short identifiers UNLESS they're already identified above
-        if (results.length === 0 && word.length < 2) {
-            return [];
+        if (isIdentifier) {
+            if (results.length === 0 && word.length < 2) {
+                return [];
+            }
         }
 
         // Skip common English stopwords only if not already identified
         const stopwords = new Set(['the', 'a', 'an', 'and', 'or', 'but', 'if', 'else', 'for', 'to', 'of', 'in', 'on', 'with', 'by', 'as', 'is', 'it', 'this', 'that', 'these', 'those']);
-        if (results.length === 0 && stopwords.has(word.toLowerCase())) {
-            return [];
+        if (isIdentifier) {
+            if (results.length === 0 && stopwords.has(word.toLowerCase())) {
+                return [];
+            }
         }
 
         // Detect if inside an f-string (simple heuristic: quote before cursor with an 'f' prefix)
@@ -166,16 +166,26 @@ export class SymbolResolver {
         }
 
         // Don't resolve inside plain strings (not just f-strings)
-        const singleQuoteBefore = rawLine.lastIndexOf("'", position.character - 1);
-        const doubleQuoteBefore = rawLine.lastIndexOf('"', position.character - 1);
-        const quoteBefore = Math.max(singleQuoteBefore, doubleQuoteBefore);
-        if (quoteBefore !== -1) {
-            const quoteChar = rawLine[quoteBefore];
-            const closingQuote = rawLine.indexOf(quoteChar, position.character);
-            if (closingQuote !== -1) {
-                // inside a quoted string -> skip
-                return [];
-            }
+        // Improved heuristic: only consider inside-string if a quote started before and hasn't closed before the position
+        const isInsideQuotedString = (() => {
+            const countUnescaped = (q: string): number => {
+                let count = 0;
+                for (let idx = 0; idx < position.character; idx++) {
+                    if (rawLine[idx] === q) {
+                        // treat as escaped if preceded by a backslash
+                        const escaped = idx > 0 && rawLine[idx - 1] === '\\';
+                        if (!escaped) count++;
+                    }
+                }
+                return count;
+            };
+            const dQuotes = countUnescaped('"');
+            const sQuotes = countUnescaped("'");
+            // Inside string if odd number of a quote type before cursor
+            return (dQuotes % 2 === 1) || (sQuotes % 2 === 1);
+        })();
+        if (isInsideQuotedString) {
+            return [];
         }
 
         // Detect operators at the cursor by scanning a small window around the position
@@ -200,7 +210,7 @@ export class SymbolResolver {
         }
 
         // Check if it's a decorator
-        if (lineText.startsWith('@') && lineText.includes(word)) {
+        if (isIdentifier && lineText.startsWith('@') && lineText.includes(word)) {
             results.push({
                 symbol: word,
                 type: 'decorator'
@@ -208,7 +218,7 @@ export class SymbolResolver {
         }
 
         // Check if it's a typing construct
-        if (word in TYPING_CONSTRUCTS) {
+        if (isIdentifier && word in TYPING_CONSTRUCTS) {
             results.push({
                 symbol: word,
                 type: 'typing',
@@ -217,7 +227,7 @@ export class SymbolResolver {
         }
 
         // Check if it's a dunder method
-        if (word.startsWith('__') && word.endsWith('__')) {
+        if (isIdentifier && word.startsWith('__') && word.endsWith('__')) {
             Logger.getInstance().debug(`Detected potential dunder method: ${word}`);
             results.push({
                 symbol: word,
@@ -226,7 +236,7 @@ export class SymbolResolver {
         }
 
         // Check for dotted access (method calls)
-        const dottedMatch = wordRange ? this.findDottedAccess(text, wordRange) : null;
+        const dottedMatch = (isIdentifier && wordRange) ? this.findDottedAccess(text, wordRange) : null;
         if (dottedMatch) {
             Logger.getInstance().debug(`Detected dotted access: ${dottedMatch.fullPath}`);
             results.push({
@@ -237,7 +247,7 @@ export class SymbolResolver {
         }
 
         // Check for module imports
-        const moduleMatch = this.findModuleContext(document, position, word);
+        const moduleMatch = isIdentifier ? this.findModuleContext(document, position, word) : null;
         Logger.getInstance().debug(`findModuleContext for "${word}" returned: ${moduleMatch || 'null'}`);
         if (moduleMatch) {
             Logger.getInstance().debug(`Adding as module: ${moduleMatch}`);
@@ -248,7 +258,7 @@ export class SymbolResolver {
         }
 
         // Check for std:label class
-        if (word === 'std:label') {
+        if (isIdentifier && word === 'std:label') {
             results.push({
                 symbol: 'std:label',
                 type: 'class',
@@ -258,7 +268,7 @@ export class SymbolResolver {
 
         // Only return as a generic symbol if it might be a third-party import
         // Check if the word is likely to be an imported symbol (not a local variable)
-        if (results.length === 0) {
+        if (isIdentifier && results.length === 0) {
             // Only treat as potential imported symbol if:
             // 1. It's in an import statement (definitely an import)
             // 2. It's a class-like name (PascalCase) followed by () or . (likely class instantiation/access)
@@ -293,34 +303,65 @@ export class SymbolResolver {
         text: string,
         wordRange: vscode.Range
     ): { fullPath: string; baseType: string } | null {
-        const startChar = wordRange.start.character;
+        const method = text.substring(wordRange.start.character, wordRange.end.character);
+        if (!method) return null;
 
-        // Look backwards for dots
-        let dotPos = startChar - 1;
-        while (dotPos >= 0 && text[dotPos] === ' ') {
-            dotPos--;
+        // Find the dot immediately before the method
+        let dotIdx = wordRange.start.character - 1;
+        // Skip whitespace between dot and method (rare but safe)
+        while (dotIdx >= 0 && text[dotIdx] === ' ') dotIdx--;
+        if (dotIdx < 0 || text[dotIdx] !== '.') return null;
+
+        // Walk left to find the start of the base expression, skipping over bracketed/indexed/call segments
+        let i = dotIdx - 1;
+        const skipBalanced = (openCh: string, closeCh: string) => {
+            let depth = 1;
+            i--; // move past the opening candidate position
+            while (i >= 0 && depth > 0) {
+                const c = text[i];
+                if (c === closeCh) depth++;
+                else if (c === openCh) depth--;
+                i--;
+            }
+        };
+
+        while (i >= 0) {
+            const ch = text[i];
+            if (ch === ' ' || ch === '\t') {
+                i--;
+                continue;
+            }
+            // Skip over calls and indexing like obj(...), obj[...], obj{...}
+            if (ch === ')') { skipBalanced('(', ')'); continue; }
+            if (ch === ']') { skipBalanced('[', ']'); continue; }
+            if (ch === '}') { skipBalanced('{', '}'); continue; }
+            // Continue scanning identifiers and dots
+            if (/[a-zA-Z0-9_.]/.test(ch)) {
+                i--;
+                continue;
+            }
+            break;
         }
 
-        if (dotPos >= 0 && text[dotPos] === '.') {
-            // Found a dot, now find the base object
-            let baseStart = dotPos - 1;
-            while (baseStart >= 0 && /[a-zA-Z0-9_]/.test(text[baseStart])) {
-                baseStart--;
-            }
-            baseStart++;
+        const start = i + 1; // start of base expression region
+        const end = dotIdx;   // end is the dot before method
+        if (start >= end) return null;
 
-            const baseObject = text.substring(baseStart, dotPos);
-            const method = text.substring(wordRange.start.character, wordRange.end.character);
-
-            if (baseObject && method) {
-                return {
-                    fullPath: `${baseObject}.${method}`,
-                    baseType: this.inferBaseType(baseObject)
-                };
+        // Build base chain by including only identifier and dot characters (drop brackets/args)
+        let baseChain = '';
+        for (let j = start; j < end; j++) {
+            const cj = text[j];
+            if (/[a-zA-Z0-9_.]/.test(cj)) {
+                baseChain += cj;
             }
         }
+        baseChain = baseChain.replace(/\.+$/, '').trim();
+        if (!baseChain) return null;
 
-        return null;
+        return {
+            fullPath: `${baseChain}.${method}`,
+            baseType: baseChain
+        };
     }
 
     private inferBaseType(baseObject: string): string {

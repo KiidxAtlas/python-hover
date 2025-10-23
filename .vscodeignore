@@ -3,6 +3,12 @@ src/**
 tsconfig.json
 webpack.config.js
 out/**
+scripts/**
+examples/**
+artifacts/**
+.github/**
+.vscode/**
+python-hover-*.vsix
 
 # Development files
 .vscode/

@@ -8,13 +8,6 @@ export interface Info {
     anchor?: string;
 }
 
-export interface InventoryEntry {
-    name: string;
-    uri: string;
-    anchor: string;
-    description?: string; // Added optional description property
-}
-
 /**
  * Parameter information for hover display
  */
@@ -52,11 +45,4 @@ export interface RelatedSymbol {
     type?: string;
 }
 
-/**
- * Performance/complexity information
- */
-export interface PerformanceInfo {
-    time?: string;
-    space?: string;
-    note?: string;
-}
+// (Performance info not currently used in hovers)

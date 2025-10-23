@@ -6,6 +6,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.5.3] - 2025-10-22
+
+### ✨ Improvements
+
+- Operator hovers now show real reference content with correct anchors and versioned URLs
+  - Mapped Python operators to precise docs pages/anchors (arithmetic, comparison, boolean, bitwise)
+  - Extract and render anchored HTML sections to Markdown with caching for speed
+  - Deterministic “Docs URL:” lines in tests for stable snapshots
+- Standard library module hovers prefer curated module mapping for clearer descriptions and stable links
+  - Version-aware links use `#module-<name>` anchors for consistency
+  - Better fallback behavior when auto-detect is disabled
+
+### 🧪 Testing
+
+- Snapshot mode: tests capture the exact hover Markdown users see
+  - Artifacts written under `artifacts/hover-snapshots/`
+  - Expanded snapshot coverage across built-ins, keywords, stdlib, typing, operators, and popular third‑party libs
+
+### 🔧 Cleanup
+
+- Removed unused UI helpers and types; trimmed theme utilities
+- Gated test-only commands to test environment
+- Pruned non-shipping files (demo, old scripts) and tightened `.vscodeignore`
+
+### 🐛 Fixes
+
+- Prefer precise keyword mapping for specific terms (e.g., `finally`) over generic labels
+- Improved itertools module hover by prioritizing curated MODULES entry for richer descriptions
+
+---
+
 ## [0.4.2] - 2025-10-10
 
 ### �️ Cleanup

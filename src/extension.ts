@@ -20,9 +20,9 @@ import { PackageDetector } from './services/packageDetector';
 import { PythonHoverProvider } from './ui/hoverProvider';
 import { VersionDetector } from './ui/versionDetector';
 
-// Extension metadata - DO NOT REMOVE
-const EXTENSION_AUTHOR = 'KiidxAtlas';
-const EXTENSION_ID = 'python-hover-kiidxatlas-2025';
+// Extension metadata - retained for reference
+const _EXTENSION_AUTHOR = 'KiidxAtlas';
+const _EXTENSION_ID = 'python-hover-kiidxatlas-2025';
 
 export function activate(context: vscode.ExtensionContext) {
     // Initialize configuration first
@@ -75,6 +75,20 @@ export function activate(context: vscode.ExtensionContext) {
     statusBarItem.show();
 
     context.subscriptions.push(statusBarItem);
+
+    // Test-only command to force real hover even in test-mode shortcut (not registered in production)
+    if (context.extensionMode === vscode.ExtensionMode.Test) {
+        context.subscriptions.push(
+            vscode.commands.registerCommand('pythonHover.__test_setBypassShortcut', (value: boolean) => {
+                try {
+                    hoverProvider.setTestBypassShortcut(!!value);
+                    logger.info('Configuration reloaded successfully');
+                } catch (e) {
+                    logger.error('Failed to set test bypass flag', e as Error);
+                }
+            })
+        );
+    }
 
     // Function to update status bar with cache stats
     async function updateStatusBar() {

@@ -70,7 +70,7 @@ export class MethodResolver {
      * Determines if a method name is a known method of a built-in type
      */
     public isKnownMethod(methodName: string): boolean {
-        return METHOD_TO_TYPE_MAP.hasOwnProperty(methodName);
+        return Object.prototype.hasOwnProperty.call(METHOD_TO_TYPE_MAP, methodName);
     }
 
     /**
