@@ -13,7 +13,11 @@ async function main() {
         await runTests({
             extensionDevelopmentPath,
             extensionTestsPath,
-            launchArgs: ['--disable-extensions'] // Run without other extensions
+            launchArgs: ['--disable-extensions'], // Run without other extensions
+            // Forward selected environment variables into the extension host where tests run
+            extensionTestsEnv: {
+                SNAPSHOT: process.env.SNAPSHOT || undefined,
+            }
         });
     } catch (err) {
         console.error('Failed to run tests:', err);

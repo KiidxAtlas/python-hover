@@ -11,17 +11,18 @@
  */
 
 import * as vscode from 'vscode';
-import { NETWORK, PERFORMANCE } from './constants/defaults';
 import { CacheManager } from './services/cache';
 import { ConfigurationManager } from './services/config';
-import { DataLoader } from './services/dataLoader';
 import { ErrorNotifier } from './services/errorNotifier';
 import { InventoryManager } from './services/inventory';
 import { Logger } from './services/logger';
 import { PackageDetector } from './services/packageDetector';
 import { PythonHoverProvider } from './ui/hoverProvider';
 import { VersionDetector } from './ui/versionDetector';
-import { CircuitBreakerManager } from './utils/circuitBreaker';
+
+// Extension metadata - retained for reference
+const _EXTENSION_AUTHOR = 'KiidxAtlas';
+const _EXTENSION_ID = 'python-hover-kiidxatlas-2025';
 
 export function activate(context: vscode.ExtensionContext) {
     // Initialize configuration first
@@ -31,40 +32,18 @@ export function activate(context: vscode.ExtensionContext) {
     const logger = Logger.getInstance(configManager);
     logger.info('🐍 Extension activating...');
 
-    // Initialize DataLoader for lazy loading
-    const dataLoader = new DataLoader();
-
-    // Initialize circuit breaker manager
-    const circuitBreakerManager = new CircuitBreakerManager();
-
-    // Create circuit breakers for different services
-    const docsBreaker = circuitBreakerManager.getBreaker('docs-api', {
-        failureThreshold: NETWORK.CB_FAILURE_THRESHOLD,
-        successThreshold: NETWORK.CB_SUCCESS_THRESHOLD,
-        timeout: NETWORK.CB_TIMEOUT,
-        resetTimeout: NETWORK.CB_RESET_TIMEOUT
-    });
-
-    const inventoryBreaker = circuitBreakerManager.getBreaker('inventory-api', {
-        failureThreshold: NETWORK.CB_FAILURE_THRESHOLD,
-        successThreshold: NETWORK.CB_SUCCESS_THRESHOLD,
-        timeout: NETWORK.CB_TIMEOUT,
-        resetTimeout: NETWORK.CB_RESET_TIMEOUT
-    });
-
     // Initialize managers
     const cacheManager = new CacheManager(context.globalStorageUri);
     const packageDetector = new PackageDetector();
     const inventoryManager = new InventoryManager(cacheManager, logger, configManager, packageDetector);
     const versionDetector = new VersionDetector(configManager);
 
-    // Register hover provider with DataLoader
+    // Register hover provider
     const hoverProvider = new PythonHoverProvider(
         configManager,
         inventoryManager,
         versionDetector,
-        cacheManager,
-        dataLoader
+        cacheManager
     );
 
     const hoverProviderDisposable = vscode.languages.registerHoverProvider(
@@ -97,6 +76,20 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(statusBarItem);
 
+    // Test-only command to force real hover even in test-mode shortcut (not registered in production)
+    if (context.extensionMode === vscode.ExtensionMode.Test) {
+        context.subscriptions.push(
+            vscode.commands.registerCommand('pythonHover.__test_setBypassShortcut', (value: boolean) => {
+                try {
+                    hoverProvider.setTestBypassShortcut(!!value);
+                    logger.info('Configuration reloaded successfully');
+                } catch (e) {
+                    logger.error('Failed to set test bypass flag', e as Error);
+                }
+            })
+        );
+    }
+
     // Function to update status bar with cache stats
     async function updateStatusBar() {
         try {
@@ -112,8 +105,8 @@ export function activate(context: vscode.ExtensionContext) {
         }
     }
 
-    // Update status bar every interval (using constant)
-    const statusBarInterval = setInterval(updateStatusBar, PERFORMANCE.STATUS_BAR_UPDATE_INTERVAL);
+    // Update status bar every 30 seconds
+    const statusBarInterval = setInterval(updateStatusBar, 30000);
     context.subscriptions.push({
         dispose: () => clearInterval(statusBarInterval)
     });
@@ -301,25 +294,14 @@ export function activate(context: vscode.ExtensionContext) {
             const counts = inventoryManager.getSupportedLibrariesCount();
             const autoDetectEnabled = configManager.autoDetectLibrariesEnabled;
 
-            // Library category mapping
-            const categoryMap: Record<string, string> = {
-                // Data Science & ML
-                'numpy': 'Data Science & ML', 'pandas': 'Data Science & ML', 'scipy': 'Data Science & ML',
-                'matplotlib': 'Data Science & ML', 'sklearn': 'Data Science & ML', 'torch': 'Data Science & ML',
-                'pytorch': 'Data Science & ML',
-                // Web Development
-                'flask': 'Web Development', 'django': 'Web Development', 'fastapi': 'Web Development',
-                'aiohttp': 'Web Development', 'requests': 'Web Development',
-                // Testing & Automation
-                'pytest': 'Testing & Automation', 'selenium': 'Testing & Automation',
-                // Database & Validation
-                'sqlalchemy': 'Database & Validation', 'pydantic': 'Database & Validation',
-                // Utilities
-                'beautifulsoup4': 'Utilities', 'bs4': 'Utilities', 'pillow': 'Utilities',
-                'click': 'Utilities', 'sphinx': 'Utilities'
-            };
+            // Group libraries by category
+            const dataScience = ['numpy', 'pandas', 'scipy', 'matplotlib', 'sklearn', 'torch', 'pytorch'];
+            const webFrameworks = ['flask', 'django', 'fastapi', 'aiohttp', 'requests'];
+            const testing = ['pytest', 'selenium'];
+            const database = ['sqlalchemy', 'pydantic'];
+            const utilities = ['beautifulsoup4', 'bs4', 'pillow', 'click', 'sphinx'];
 
-            const categorized: Record<string, string[]> = {
+            const categorized: { [key: string]: string[] } = {
                 'Data Science & ML': [],
                 'Web Development': [],
                 'Testing & Automation': [],
@@ -329,15 +311,25 @@ export function activate(context: vscode.ExtensionContext) {
                 'Other': []
             };
 
+            // Categorize libraries
             const customLibNames = new Set((configManager.customLibraries ?? []).map(l => l.name));
 
             for (const lib of allLibraries) {
                 const name = lib.name;
                 if (customLibNames.has(name)) {
                     categorized['Custom Libraries'].push(name);
+                } else if (dataScience.includes(name)) {
+                    categorized['Data Science & ML'].push(name);
+                } else if (webFrameworks.includes(name)) {
+                    categorized['Web Development'].push(name);
+                } else if (testing.includes(name)) {
+                    categorized['Testing & Automation'].push(name);
+                } else if (database.includes(name)) {
+                    categorized['Database & Validation'].push(name);
+                } else if (utilities.includes(name)) {
+                    categorized['Utilities'].push(name);
                 } else {
-                    const category = categoryMap[name] || 'Other';
-                    categorized[category].push(name);
+                    categorized['Other'].push(name);
                 }
             }
 
@@ -359,6 +351,7 @@ export function activate(context: vscode.ExtensionContext) {
             for (const [category, libs] of Object.entries(categorized)) {
                 if (libs.length > 0) {
                     content += `## ${category}\n\n`;
+                    // Sort alphabetically within each category
                     const sortedLibs = libs.sort();
                     content += sortedLibs.map(lib => `- \`${lib}\``).join('\n');
                     content += `\n\n`;
@@ -372,6 +365,7 @@ export function activate(context: vscode.ExtensionContext) {
             content += `\`pythonHover.experimental.autoDetectLibraries\`\n\n`;
             content += `📖 [Learn more about custom libraries](command:vscode.open?${encodeURIComponent(JSON.stringify('https://github.com/KiidxAtlas/python-hover/blob/main/CUSTOM_LIBRARIES.md'))})\n`;
 
+            // Create and show in new editor
             const doc = await vscode.workspace.openTextDocument({
                 content,
                 language: 'markdown'
@@ -381,31 +375,6 @@ export function activate(context: vscode.ExtensionContext) {
                 preview: true,
                 viewColumn: vscode.ViewColumn.Beside
             });
-        })
-    );
-
-    // Register health check command for circuit breakers
-    context.subscriptions.push(
-        vscode.commands.registerCommand('pythonHover.showHealthStatus', async () => {
-            const health = circuitBreakerManager.getHealthSummary();
-
-            let message = `🏥 **Python Hover Health Status**\n\n`;
-            message += `📊 **Circuit Breakers:**\n`;
-            message += `- Total: ${health.total}\n`;
-            message += `- Healthy: ${health.healthy} ✅\n`;
-            message += `- Unhealthy: ${health.unhealthy} ⚠️\n\n`;
-
-            if (health.details.length > 0) {
-                message += `**Details:**\n`;
-                for (const detail of health.details) {
-                    const statusEmoji = detail.state === 'closed' ? '✅' :
-                        detail.state === 'half-open' ? '🔄' : '🔴';
-                    const successRate = (detail.successRate * 100).toFixed(1);
-                    message += `- ${statusEmoji} ${detail.name}: ${detail.state} (${successRate}% success)\n`;
-                }
-            }
-
-            await ErrorNotifier.showInfo(message, 'Reset All', 'Close');
         })
     );
 

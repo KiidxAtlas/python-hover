@@ -53,4 +53,6 @@ docs/REFACTORING_PROGRESS.md
 docs/REFACTORING_SESSION_SUMMARY.md
 docs/REFACTORING_SUMMARY.md
 docs/VERIFICATION_SUMMARY.md
-.vscode
+
+# Test artifacts
+artifacts/

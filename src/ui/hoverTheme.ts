@@ -309,15 +309,6 @@ export class HoverTheme {
     }
 
     /**
-     * Format type hint
-     */
-    public formatTypeHint(type: string): string {
-        const typeIcon = '$(symbol-interface)';
-        const displayIcon = this.config.showEmojis ? `🏷️ ${typeIcon}` : typeIcon;
-        return `${displayIcon} **Type:** \`${type}\``;
-    }
-
-    /**
      * Format a tip or note with blockquote
      */
     public formatTip(text: string, icon?: string): string {
@@ -369,27 +360,11 @@ export class HoverTheme {
     }
 
     /**
-     * Format a parameter list item
-     */
-    public formatParameter(name: string, description: string, required: boolean = true): string {
-        const bullet = required ? 'required' : 'optional';
-        const prefix = required ? '**Required:**' : '**Optional:**';
-        return this.formatListItem(`${prefix} \`${name}\` — ${description}`, bullet);
-    }
-
-    /**
      * Format content with proper spacing
      */
     public formatContent(content: string): string {
         // Ensure consistent spacing - always end with double newline
         return content.trim() + '\n\n';
-    }
-
-    /**
-     * Format a signature code block
-     */
-    public formatSignature(signature: string): string {
-        return this.formatCodeBlock(signature, 'python');
     }
 
     /**
@@ -424,7 +399,7 @@ export class HoverTheme {
     /**
      * Format signature with prominent display
      */
-    public formatSignatureBox(signature: string, symbolName: string): string {
+    public formatSignatureBox(signature: string, _symbolName: string): string {
         // Add section header
         let result = this.formatSectionHeader('Signature', '$(code)');
 
@@ -511,19 +486,7 @@ export class HoverTheme {
         return result + '\n';
     }
 
-    /**
-     * Format performance/complexity hint
-     */
-    public formatPerformance(complexity: string, note?: string): string {
-        const icon = this.config.showEmojis ? '⚡' : '$(zap)';
-        let result = `${icon} **Performance:** ${complexity}`;
-
-        if (note) {
-            result += ` — ${note}`;
-        }
-
-        return result + '\n\n';
-    }
+    // Note: formatTypeHint, formatParameter, formatSignature, and formatPerformance were removed as unused
 
     /**
      * Format keyboard shortcut hint

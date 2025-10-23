@@ -6,117 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
-## [0.5.1] - 2025-10-13
-
-### 🚀 Major Features
-
-- **Dynamic Library Resolution**: Revolutionary context detection that works with ANY Python library automatically
-  - No more hardcoded class-to-library mappings
-  - Automatically detects which library a class belongs to by checking inventories
-  - Works seamlessly with pandas, numpy, scikit-learn, tensorflow, flask, requests, and any other library
-  - Scales infinitely - handles custom libraries with Sphinx documentation
-  - Early exit optimization for fast performance (<10ms cached)
+## [0.5.3] - 2025-10-22
 
 ### ✨ Improvements
 
-- **Enhanced Type Detection**: Improved detection of Python types from code context
-  - Strips inline comments before type detection (fixes `df = DataFrame() # comment` cases)
-  - Supports qualified constructor calls like `pandas.DataFrame(...)`
-  - Better handling of complex assignment patterns
+- Operator hovers now show real reference content with correct anchors and versioned URLs
+  - Mapped Python operators to precise docs pages/anchors (arithmetic, comparison, boolean, bitwise)
+  - Extract and render anchored HTML sections to Markdown with caching for speed
+  - Deterministic “Docs URL:” lines in tests for stable snapshots
+- Standard library module hovers prefer curated module mapping for clearer descriptions and stable links
+  - Version-aware links use `#module-<name>` anchors for consistency
+  - Better fallback behavior when auto-detect is disabled
 
-- **Robust Error Handling**: Graceful fallback for libraries with missing or invalid documentation
-  - Try-catch around auto-discovery prevents crashes from malformed inventory files
-  - Silently skips libraries that fail inventory parsing
-  - Continues checking other libraries instead of failing completely
-  - Debug-level logging for troubleshooting without noise
+### 🧪 Testing
 
-- **Context Detection Improvements**: Fixed multiple issues with method context resolution
-  - Fixed regex pattern to match cursor position correctly (dot before method name)
-  - Added 'object' override logic to re-attempt detection when type is generic
-  - Method-to-type fallback mapping for common cases
+- Snapshot mode: tests capture the exact hover Markdown users see
+  - Artifacts written under `artifacts/hover-snapshots/`
+  - Expanded snapshot coverage across built-ins, keywords, stdlib, typing, operators, and popular third‑party libs
 
-### 🐛 Bug Fixes
+### 🔧 Cleanup
 
-- **Fixed "object.method" Issue**: Methods now correctly show qualified names (e.g., "DataFrame.head" instead of "object.head")
-- **Fixed Cursor Position Detection**: Hover now works correctly when cursor is on the method name
-- **Fixed Library Qualification**: Types are now properly qualified with their library names
-- **Fixed Error Propagation**: Invalid inventory files no longer crash the entire hover provider
+- Removed unused UI helpers and types; trimmed theme utilities
+- Gated test-only commands to test environment
+- Pruned non-shipping files (demo, old scripts) and tightened `.vscodeignore`
 
-### 🎨 Visual Enhancements
+### 🐛 Fixes
 
-- **Rich Sphinx Documentation**: Enhanced parsing of Sphinx documentation with metadata
-  - Summary boxes with visual hierarchy
-  - Enhanced parameter formatting with type annotations
-  - Version metadata display (added/changed/deprecated)
-  - Better formatting for raises, yields, and attributes sections
-
-### 🏗️ Architecture
-
-- **Better Code Organization**: Cleaner separation of concerns
-  - Type detection improvements in `typeDetectionService.ts`
-  - Context detection enhancements in `contextDetector.ts`
-  - Dynamic resolution in `hoverProvider.ts`
-  - Comprehensive error handling in `inventory.ts`
-
----
-
-## [0.5.0] - 2025-10-12
-
-### 🚀 Major Features
-
-- **Auto-Discovery for ANY Python Library**: Revolutionary new feature that automatically discovers and provides documentation for ANY Python library with Sphinx/ReadTheDocs documentation
-  - Automatically fetches documentation from PyPI metadata
-  - Tests common ReadTheDocs URL patterns (6 different patterns)
-  - Validates inventory files (>1KB) to ensure quality documentation
-  - 24-hour caching for both successes and failures
-  - Works with scikit-learn, seaborn, plotly, dask, beautifulsoup4, and thousands more libraries
-  - No need to hardcode every library - dynamic discovery at runtime!
-
-### ✨ Improvements
-
-- **Enhanced Keyword Documentation**: Keywords now show BOTH official documentation AND practical examples
-  - Combined view provides complete context (e.g., `import` statement shows syntax + usage examples)
-  - Better learning experience with theory + practice in one hover
-  - Improved keyword coverage across Python language reference
-
-- **Improved Import Detection**: Import statements now handle inline comments correctly
-  - Fixed: `import sklearn  # machine learning library` now properly detected
-  - Strips comments before parsing import statements
-  - More robust library tracking throughout the document
-
-- **Cleaner Architecture**: Single source of truth for documentation URLs
-  - All URLs centralized in `documentationUrls.ts` MAP
-  - Removed hardcoded URLs scattered throughout codebase
-  - Easier maintenance and URL updates
-  - Consistent URL resolution across all code paths
-
-- **Reduced Logging Verbosity**: Production-ready logging levels
-  - Detailed operation logs moved from INFO to DEBUG level
-  - Only critical lifecycle events at INFO level
-  - Cleaner output for end users
-  - Easier debugging when needed with DEBUG level
-
-### 🐛 Bug Fixes
-
-- **Fixed `import` Keyword URL**: `import` now links to correct Python docs (simple_stmts instead of compound_stmts)
-- **Fixed Context Preservation**: Dotted expressions (e.g., `np.array`) now preserve context correctly
-- **Fixed Import Detection with Comments**: Inline comments in import statements no longer break detection
-- **Universal Third-Party Tracking**: All non-stdlib libraries now tracked, enabling auto-discovery fallback
-
-### 🏗️ Architecture
-
-- Added `LibraryDiscovery` service (~305 lines) for intelligent library detection
-- Integrated PyPI API for metadata fetching with 5-second timeout
-- Added URL validation with HEAD requests and size checks
-- Enhanced `InventoryManager` to use auto-discovery as fallback
-- Modified `isKnownLibrary()` to return true for ALL third-party libraries
-- Created `getDocUrlForSymbol()` helper for consistent URL lookups
-
-### 📚 Documentation
-
-- Updated package.json description to highlight auto-discovery
-- Added keywords: auto-discovery, pypi, readthedocs, sphinx
-- Version bumped to 0.5.0 to reflect major new capability
+- Prefer precise keyword mapping for specific terms (e.g., `finally`) over generic labels
+- Improved itertools module hover by prioritizing curated MODULES entry for richer descriptions
 
 ---
 

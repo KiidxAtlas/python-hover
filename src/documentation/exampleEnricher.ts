@@ -1,6 +1,4 @@
 import { DocumentationSnippet } from './documentationFetcher';
-import { ENHANCED_EXAMPLES } from '../data/enhancedExamples';
-import { STATIC_EXAMPLES } from '../data/staticExamples';
 
 /**
  * Enriches documentation snippets with examples from staticExamples and enhancedExamples
@@ -14,41 +12,12 @@ export class ExampleEnricher {
      */
     public enrichWithExamples(
         docSnippet: DocumentationSnippet,
-        symbol: string,
-        context?: string
+        _symbol: string,
+        _context?: string
     ): DocumentationSnippet {
-        // Make a copy to avoid modifying the original
-        const enrichedSnippet: DocumentationSnippet = {
-            ...docSnippet,
-            content: docSnippet.content
-        };
-
-        // Try to find examples for this symbol
-        const bareSymbol = symbol.split('.').pop() || symbol;
-        let exampleContent = '';
-        let exampleFound = false;
-
-        // First check enhanced examples
-        if (context && ENHANCED_EXAMPLES[`${context}.${bareSymbol}`]) {
-            // Method with context (e.g., "str.upper")
-            exampleContent = this.formatEnhancedExample(ENHANCED_EXAMPLES[`${context}.${bareSymbol}`].content);
-            exampleFound = true;
-        } else if (ENHANCED_EXAMPLES[bareSymbol]) {
-            // Direct symbol match (e.g., "for", "class", "__init__")
-            exampleContent = this.formatEnhancedExample(ENHANCED_EXAMPLES[bareSymbol].content);
-            exampleFound = true;
-        } else if (STATIC_EXAMPLES[bareSymbol]) {
-            // Fall back to static examples
-            exampleContent = this.formatStaticExample(STATIC_EXAMPLES[bareSymbol].examples);
-            exampleFound = true;
-        }
-
-        // Add examples if found
-        if (exampleFound) {
-            enrichedSnippet.content += '\n\n## Examples\n\n' + exampleContent;
-        }
-
-        return enrichedSnippet;
+        // Do not mutate content here. Examples are rendered in hoverProvider
+        // via appendExamplesSection to avoid duplication and formatting issues.
+        return docSnippet;
     }
 
     /**

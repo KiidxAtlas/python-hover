@@ -3,10 +3,19 @@ src/**
 tsconfig.json
 webpack.config.js
 out/**
+scripts/**
+examples/**
+artifacts/**
+docs/**
+.github/**
+.vscode/**
+python-hover-*.vsix
 
 # Development files
 .vscode/
 .vscode-test/
+.eslintrc.json
+.eslintignore
 *.vsix
 test.py
 test_hover.py

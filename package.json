@@ -2,8 +2,8 @@
     "name": "python-hover",
     "icon": "media/icon.png",
     "displayName": "🐍 Python Hover - Enhanced Documentation",
-    "description": "Instant Python documentation with 300+ constructs, 19+ pre-configured libraries (NumPy, Pandas, FastAPI, Django, PyTorch), PLUS auto-discovery for ANY Python library with Sphinx/ReadTheDocs documentation. Practical examples, smart context detection. Zero context switching!",
-    "version": "0.5.1",
+    "description": "Instant Python documentation with 300+ constructs, 19+ libraries (NumPy, Pandas, FastAPI, Django, PyTorch, aiohttp, Click), practical examples, and smart context detection. Zero context switching!",
+    "version": "0.5.3",
     "publisher": "KiidxAtlas",
     "author": {
         "name": "KiidxAtlas",
@@ -45,10 +45,6 @@
         "type-hints",
         "education",
         "productivity",
-        "auto-discovery",
-        "pypi",
-        "readthedocs",
-        "sphinx",
         "numpy",
         "pandas",
         "matplotlib",
@@ -114,11 +110,6 @@
             {
                 "command": "pythonHover.showSupportedLibraries",
                 "title": "Show Supported Libraries",
-                "category": "Python Hover"
-            },
-            {
-                "command": "pythonHover.showHealthStatus",
-                "title": "Show Health Status",
                 "category": "Python Hover"
             }
         ],
@@ -314,6 +305,11 @@
                     "minimum": 200,
                     "maximum": 2000,
                     "description": "Maximum character length for hover content before smart truncation with 'Read more...' link."
+                },
+                "pythonHover.testing.forceRealHover": {
+                    "type": "boolean",
+                    "default": false,
+                    "markdownDescription": "Testing only: When true, disables test-mode hover shortcut so integration tests exercise full hover pipeline."
                 }
             }
         }
@@ -323,14 +319,20 @@
         "compile": "webpack",
         "watch": "webpack --watch",
         "package": "webpack --mode production --devtool hidden-source-map",
+        "vsce:package": "vsce package",
+        "vsce:publish": "vsce publish",
         "compile-tests": "tsc -p . --outDir out",
         "watch-tests": "tsc -p . -w --outDir out",
-        "pretest": "npm run compile-tests",
+        "pretest": "npm run compile && npm run compile-tests",
         "test": "node ./out/test/runTest.js",
+        "test:snapshots": "npm run compile && npm run compile-tests && SNAPSHOT=1 node ./out/test/runTest.js",
+        "test:unit": "mocha -u tdd -r ts-node/register -r ./src/test/setup/unit.setup.js \"src/test/unit/**/*.test.ts\"",
+        "test:unit:watch": "mocha -u tdd -r ts-node/register -r ./src/test/setup/unit.setup.js --watch \"src/test/unit/**/*.test.ts\"",
         "lint": "eslint src --ext ts",
         "clean": "rm -rf out && rm -rf dist && rm -rf node_modules/.cache"
     },
     "devDependencies": {
+        "@vscode/vsce": "^3.2.0",
         "@types/mocha": "^10.0.1",
         "@types/node": "18.x",
         "@types/node-fetch": "^2.6.13",
@@ -343,9 +345,11 @@
         "glob": "^10.3.0",
         "mocha": "^10.2.0",
         "ts-loader": "^9.5.4",
+        "ts-node": "^10.9.2",
         "typescript": "^5.1.6",
         "webpack": "^5.102.0",
-        "webpack-cli": "^6.0.1"
+        "webpack-cli": "^6.0.1",
+        "mock-require": "^3.0.3"
     },
     "dependencies": {
         "node-fetch": "^2.6.12",

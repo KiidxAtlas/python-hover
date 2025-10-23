@@ -28,8 +28,14 @@ export class Logger {
     }
 
     public static getInstance(config?: ConfigurationManager): Logger {
-        if (!Logger.instance && config) {
-            Logger.instance = new Logger(config);
+        // Always ensure we return a usable singleton instance
+        if (!Logger.instance) {
+            // Use provided config if available, otherwise create a default one
+            const cfg = config ?? new ConfigurationManager();
+            Logger.instance = new Logger(cfg);
+        } else if (config) {
+            // If caller provides a config after initialization, keep logger in sync
+            Logger.instance.updateConfig(config);
         }
         return Logger.instance;
     }

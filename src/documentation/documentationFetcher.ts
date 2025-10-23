@@ -6,15 +6,14 @@
  * @license MIT
  */
 
-import { getDunderInfo, MAP, MODULES, OPERATORS } from '../data/documentationUrls';
+import * as vscode from 'vscode';
+import { getDunderInfo, IMPORT_INFO, MAP, MODULES, OPERATORS } from '../data/documentationUrls';
 import { CacheManager } from '../services/cache';
 import { InventoryEntry } from '../services/inventory';
 import { Logger } from '../services/logger';
-import { PyPIPackageInfo, PyPIService } from '../services/pypiService';
 import { Info } from '../types';
 import { FetchWithTimeout } from '../utils/fetchWithTimeout';
 import { ExampleEnricher } from './exampleEnricher';
-import { ParsedDocumentation, SphinxParser } from './sphinxParser';
 
 export interface DocumentationSnippet {
     title: string;
@@ -23,10 +22,8 @@ export interface DocumentationSnippet {
     anchor: string;
 }
 
-export interface RichDocumentation extends ParsedDocumentation {
-    name: string;
-    url: string;
-}
+// Documentation fetcher - Developed by KiidxAtlas
+const _FETCHER_SIGNATURE = 'DocFetcher-KiidxAtlas';
 
 /**
  * Helper functions for working with documentation mappings
@@ -60,6 +57,21 @@ function getModuleDocumentationUrl(moduleName: string): string {
         'click': 'https://click.palletsprojects.com/en/stable/',
     };
 
+    // Prefer official Python docs for stdlib modules
+    const stdlib: Record<string, string> = {
+        json: 'https://docs.python.org/3/library/json.html',
+        datetime: 'https://docs.python.org/3/library/datetime.html',
+        os: 'https://docs.python.org/3/library/os.html',
+        math: 'https://docs.python.org/3/library/math.html',
+        re: 'https://docs.python.org/3/library/re.html',
+        typing: 'https://docs.python.org/3/library/typing.html',
+        pathlib: 'https://docs.python.org/3/library/pathlib.html',
+        itertools: 'https://docs.python.org/3/library/itertools.html',
+        functools: 'https://docs.python.org/3/library/functools.html',
+        operator: 'https://docs.python.org/3/library/operator.html'
+    };
+
+    if (stdlib[moduleName]) return stdlib[moduleName];
     return moduleUrls[moduleName] || `https://pypi.org/project/${moduleName}/`;
 }
 
@@ -79,6 +91,11 @@ function getDocumentationInfo(symbol: string): Info | null {
     // First check main MAP
     if (symbol in MAP) {
         return MAP[symbol];
+    }
+
+    // Map 'import' and 'from' keywords to the import system documentation
+    if (symbol === 'from' || symbol === 'import') {
+        return IMPORT_INFO;
     }
 
     // Then check MODULES
@@ -107,63 +124,22 @@ function buildFullUrlFromInfo(info: Info): string {
 export class DocumentationFetcher {
     private logger: Logger;
     private exampleEnricher: ExampleEnricher;
-    private pypiService: PyPIService;
-    private sphinxParser: SphinxParser;
 
-    constructor(private cacheManager: CacheManager, pypiService?: PyPIService) {
+    constructor(private cacheManager: CacheManager) {
         this.logger = Logger.getInstance();
         this.exampleEnricher = new ExampleEnricher();
-        this.pypiService = pypiService || new PyPIService();
-        this.sphinxParser = new SphinxParser();
     }
 
-    /**
-     * Fetch rich documentation by parsing the actual documentation page
-     * This provides much more detail than just the inventory entry
-     */
-    public async fetchRichDocumentation(url: string, symbolName: string): Promise<RichDocumentation | null> {
+    private isTestEnv(): boolean {
         try {
-            this.logger.debug(`📚 Fetching rich documentation from ${url}`);
-
-            // Check cache first
-            const cacheKey = `rich-doc:${url}`;
-            const cached = await this.cacheManager.get<RichDocumentation>(cacheKey);
-            if (cached) {
-                this.logger.debug(`✅ Found cached rich documentation for ${symbolName}`);
-                return cached.data;
+            const appRoot = (vscode.env as any)?.appRoot as string | undefined;
+            if (appRoot && appRoot.includes('.vscode-test')) {
+                return true;
             }
-
-            // Fetch the HTML page
-            const response = await FetchWithTimeout.fetch(url, { timeoutMs: 8000 });
-            if (!response.ok) {
-                this.logger.debug(`❌ Failed to fetch documentation: ${response.status}`);
-                return null;
-            }
-
-            const html = await response.text();
-
-            // Parse the Sphinx documentation
-            const parsed = this.sphinxParser.parseDocumentation(html);
-
-            const richDoc: RichDocumentation = {
-                name: symbolName,
-                url: url,
-                ...parsed
-            };
-
-            // Cache for 24 hours
-            await this.cacheManager.set(cacheKey, richDoc, '24h');
-
-            this.logger.debug(`✅ Successfully parsed rich documentation for ${symbolName}`);
-            this.logger.debug(`   - Parameters: ${parsed.parameters?.length || 0}`);
-            this.logger.debug(`   - Examples: ${parsed.examples?.length || 0}`);
-            this.logger.debug(`   - See Also: ${parsed.seeAlso?.length || 0}`);
-
-            return richDoc;
-        } catch (error) {
-            this.logger.debug(`Error fetching rich documentation: ${error}`);
-            return null;
+        } catch {
+            // ignore
         }
+        return !!(process as any).env?.VSCODE_TEST;
     }
 
     /**
@@ -177,15 +153,26 @@ export class DocumentationFetcher {
     ): Promise<DocumentationSnippet> {
         this.logger.debug(`Fetching documentation for symbol: ${symbol}, context: ${context}, hasEntry: ${!!entry}`);
 
-        // First, try the direct URL mapping system
+        // Choose best source. Prefer direct mapping when entry is a generic std:label.
         let docSnippet: DocumentationSnippet;
 
-        if (hasDocumentationMapping(symbol)) {
+        const preferDirect = hasDocumentationMapping(symbol) && (!entry || (entry as any).role === 'label');
+        if (preferDirect) {
             this.logger.debug(`Using direct URL mapping for symbol: ${symbol}`);
-            docSnippet = await this.fetchFromDirectMapping(symbol, maxLines);
-        }
-        // Fall back to intersphinx inventory entry if provided
-        else if (entry) {
+            // In test environment, avoid network calls and return minimal snippet
+            if (this.isTestEnv()) {
+                const mapping = getDocumentationInfo(symbol)!;
+                const fullUrl = buildFullUrlFromInfo(mapping);
+                docSnippet = {
+                    title: symbol,
+                    content: `Documentation for '${symbol}' - ${mapping.title}`,
+                    url: fullUrl,
+                    anchor: mapping.anchor || ''
+                };
+            } else {
+                docSnippet = await this.fetchFromDirectMapping(symbol, maxLines);
+            }
+        } else if (entry) {
             this.logger.debug(`Using intersphinx inventory for symbol: ${symbol}`);
             docSnippet = await this.fetchDocumentation(entry, maxLines);
         }
@@ -290,6 +277,16 @@ export class DocumentationFetcher {
             return cached.data;
         }
 
+        // Short-circuit in test environment to avoid network
+        if (this.isTestEnv()) {
+            return {
+                title: entry.name,
+                content: `See documentation for '${entry.name}'.`,
+                url: this.buildFullUrl(entry),
+                anchor: entry.anchor
+            };
+        }
+
         try {
             const snippet = await this.fetchAndExtractSnippet(entry, maxLines);
             await this.cacheManager.set(cacheKey, snippet);
@@ -354,23 +351,41 @@ export class DocumentationFetcher {
                 const section = this.extractAnchoredSection(html, anchor);
                 if (section) {
                     const md = this.htmlToMarkdown(section, maxLines, baseUrl, symbolName);
-                    this.logger.debug(`📄 Extracted markdown length: ${md.trim().length} chars`);
-                    this.logger.debug(`📄 Preview: ${md.trim().substring(0, 150)}...`);
-
                     // If the extracted markdown is very short (e.g. only a heading), try a paragraph fallback
-                    // Increased threshold from 40 to 100 to catch more cases
-                    if (md.trim().length < 100) {
-                        this.logger.debug(`⚠️ Markdown too short, trying paragraph fallback...`);
-                        const paraFallback = this.extractParagraphsAfterAnchor(html, anchor, 5); // Increased from 2 to 5 paragraphs
+                    if (md.trim().length < 40) {
+                        this.logger.debug(`Extracted markdown very short (${md.trim().length} chars), attempting paragraph fallback for anchor: ${anchor}`);
+                        const paraFallback = this.extractParagraphsAfterAnchor(html, anchor, 2);
                         if (paraFallback) {
-                            const fallbackMd = this.htmlToMarkdown(paraFallback, maxLines, baseUrl, symbolName);
-                            this.logger.debug(`✅ Paragraph fallback succeeded: ${fallbackMd.trim().length} chars`);
-                            return fallbackMd;
-                        } else {
-                            this.logger.debug(`⚠️ Paragraph fallback failed, using original short content`);
+                            return this.htmlToMarkdown(paraFallback, maxLines, baseUrl, symbolName);
                         }
                     }
                     return md;
+                }
+
+                // Smart fallback for built-in function anchors:
+                // Python docs use anchors like 'func-len', 'func-range', etc.
+                // If the provided anchor doesn't work on library/functions.html, try toggling 'func-' prefix
+                if (baseUrl.includes('/library/functions.html')) {
+                    let altAnchor: string | null = null;
+                    if (!anchor.startsWith('func-')) {
+                        altAnchor = `func-${anchor}`;
+                    } else {
+                        altAnchor = anchor.replace(/^func-/, '');
+                    }
+                    if (altAnchor) {
+                        this.logger.debug(`Primary anchor '${anchor}' not found; trying alternative '${altAnchor}'`);
+                        const altSection = this.extractAnchoredSection(html, altAnchor);
+                        if (altSection) {
+                            const md = this.htmlToMarkdown(altSection, maxLines, baseUrl, symbolName);
+                            if (md.trim().length < 40) {
+                                const paraFallback = this.extractParagraphsAfterAnchor(html, altAnchor, 2);
+                                if (paraFallback) {
+                                    return this.htmlToMarkdown(paraFallback, maxLines, baseUrl, symbolName);
+                                }
+                            }
+                            return md;
+                        }
+                    }
                 }
             }
 
@@ -447,12 +462,129 @@ export class DocumentationFetcher {
             };
         }
 
-        return {
-            title: operatorInfo,
-            content: `Documentation for operator '${operatorInfo}'.`,
-            url: 'https://docs.python.org/3/reference/expressions.html',
-            anchor: ''
-        };
+        // Map operators to page and anchor
+        type PageAnchor = { page: 'reference/expressions.html' | 'reference/simple_stmts.html'; anchor: string };
+        const pageAnchor: PageAnchor = (() => {
+            // Comparisons
+            if (['==', '!=', '<', '>', '<=', '>='].includes(operatorInfo)) {
+                return { page: 'reference/expressions.html', anchor: 'value-comparisons' };
+            }
+            // Identity / membership
+            if (operatorInfo === 'is') {
+                return { page: 'reference/expressions.html', anchor: 'identity-comparisons' };
+            }
+            if (operatorInfo === 'in') {
+                return { page: 'reference/expressions.html', anchor: 'membership-test-operations' };
+            }
+            // Boolean operators
+            if (operatorInfo === 'and' || operatorInfo === 'or' || operatorInfo === 'not') {
+                return { page: 'reference/expressions.html', anchor: 'boolean-operations' };
+            }
+            // Arithmetic
+            if (['+', '-', '*', '/', '//', '%'].includes(operatorInfo)) {
+                return { page: 'reference/expressions.html', anchor: 'binary-arithmetic-operations' };
+            }
+            if (operatorInfo === '**') {
+                return { page: 'reference/expressions.html', anchor: 'the-power-operator' };
+            }
+            // Bitwise
+            if (['&', '|', '^', '<<', '>>', '~'].includes(operatorInfo)) {
+                return { page: 'reference/expressions.html', anchor: operatorInfo === '~' ? 'unary-arithmetic-and-bitwise-operations' : 'binary-bitwise-operations' };
+            }
+            // Assignment operators live under simple statements
+            if (operatorInfo === '=') {
+                return { page: 'reference/simple_stmts.html', anchor: 'assignment-statements' };
+            }
+            if (['+=', '-=', '*=', '/=', '//=', '%=', '**=', '&=', '|=', '^=', '<<=', '>>='].includes(operatorInfo)) {
+                return { page: 'reference/simple_stmts.html', anchor: 'augmented-assignment-statements' };
+            }
+            // Default
+            return { page: 'reference/expressions.html', anchor: '' };
+        })();
+
+        const baseUrl = `https://docs.python.org/3/${pageAnchor.page}`;
+        const url = pageAnchor.anchor ? `${baseUrl}#${pageAnchor.anchor}` : baseUrl;
+        const cacheKey = `op-doc-v1-${operatorInfo}-${pageAnchor.page}#${pageAnchor.anchor}`;
+        const maxAge = CacheManager.hoursToMs(48);
+
+        // Return cached if fresh
+        const cached = await this.cacheManager.get<DocumentationSnippet>(cacheKey);
+        if (cached && !await this.cacheManager.isExpired(cacheKey, maxAge)) {
+            return cached.data;
+        }
+
+        // Test environment: return deterministic snippet without network
+        if (this.isTestEnv()) {
+            const summary = (() => {
+                if (['==', '!=', '<', '>', '<=', '>='].includes(operatorInfo)) return 'Compares values; calls __eq__/__ne__/__lt__/__gt__/__le__/__ge__ as appropriate.';
+                if (operatorInfo === 'is') return 'Tests object identity (same object in memory).';
+                if (operatorInfo === 'in') return 'Membership test; calls __contains__ when available.';
+                if (operatorInfo === 'and' || operatorInfo === 'or' || operatorInfo === 'not') return 'Boolean operations with short-circuit evaluation.';
+                if (['+', '-', '*', '/', '//', '%', '**'].includes(operatorInfo)) return 'Arithmetic operation.';
+                if (['&', '|', '^', '<<', '>>', '~'].includes(operatorInfo)) return 'Bitwise operation.';
+                if (operatorInfo === '=') return 'Assigns value to a target.';
+                if (['+=', '-=', '*=', '/=', '//=', '%=', '**=', '&=', '|=', '^=', '<<=', '>>='].includes(operatorInfo)) return 'Performs operation and assignment in one step.';
+                return 'See Python reference for details.';
+            })();
+            const snippet: DocumentationSnippet = {
+                title: operatorInfo,
+                content: summary,
+                url,
+                anchor: pageAnchor.anchor
+            };
+            await this.cacheManager.set(cacheKey, snippet);
+            return snippet;
+        }
+
+        try {
+            // Fetch the page and extract anchored section
+            this.logger.debug(`Fetching operator docs from: ${baseUrl} (anchor: ${pageAnchor.anchor})`);
+            const response = await FetchWithTimeout.fetch(baseUrl);
+            if (!response.ok) {
+                throw new Error(`Failed to fetch operator docs: ${response.status}`);
+            }
+            const html = await response.text();
+
+            let contentMd = '';
+            const maxLines = 25;
+            if (pageAnchor.anchor) {
+                const section = this.extractAnchoredSection(html, pageAnchor.anchor);
+                if (section) {
+                    contentMd = this.htmlToMarkdown(section, maxLines, baseUrl, operatorInfo);
+                    if (contentMd.trim().length < 40) {
+                        const para = await this.extractParagraphsAfterAnchor(html, pageAnchor.anchor, 2);
+                        if (para) {
+                            contentMd = this.htmlToMarkdown(para, maxLines, baseUrl, operatorInfo);
+                        }
+                    }
+                } else {
+                    // Anchor not found; fallback to main content
+                    const extracted = this.extractMainContent(html);
+                    contentMd = this.htmlToMarkdown(extracted, maxLines, baseUrl, operatorInfo);
+                }
+            } else {
+                const extracted = this.extractMainContent(html);
+                contentMd = this.htmlToMarkdown(extracted, maxLines, baseUrl, operatorInfo);
+            }
+
+            const snippet: DocumentationSnippet = {
+                title: operatorInfo,
+                content: contentMd,
+                url,
+                anchor: pageAnchor.anchor
+            };
+            await this.cacheManager.set(cacheKey, snippet);
+            return snippet;
+        } catch (error) {
+            this.logger.error(`Error fetching operator documentation for ${operatorInfo}:`, error as Error);
+            // Fallback minimal snippet with URL
+            return {
+                title: operatorInfo,
+                content: `See documentation for operator '${operatorInfo}'.`,
+                url,
+                anchor: pageAnchor.anchor
+            };
+        }
     }
 
     /**
@@ -527,7 +659,7 @@ export class DocumentationFetcher {
             try {
                 const readable = anchor.replace(/[-_]+/g, ' ').replace(/^the\s+/i, '').trim();
                 if (readable.length > 2) {
-                    const headerSearch = new RegExp(`<h[1-6][^>]*>[^<]*${this.escapeRegex(readable)}[^<]*<\/h[1-6]>`, 'i');
+                    const headerSearch = new RegExp(`<h[1-6][^>]*>[^<]*${this.escapeRegex(readable)}[^<]*</h[1-6]>`, 'i');
                     const headerMatch = html.match(headerSearch);
                     if (headerMatch) {
                         this.logger.debug(`Found header by readable anchor fallback: ${readable}`);
@@ -566,8 +698,8 @@ export class DocumentationFetcher {
 
         // The anchor might be on a small element like <span> or <a>
         // We need to find the containing section or meaningful content block
-        let sectionStart = this.findSectionStart(html, startIndex, anchor);
-        let sectionEnd = this.findSectionEnd(html, startIndex);
+        const sectionStart = this.findSectionStart(html, startIndex, anchor);
+        const sectionEnd = this.findSectionEnd(html, startIndex);
 
         this.logger.debug(`Section from ${sectionStart} to ${sectionEnd} (length: ${sectionEnd - sectionStart})`);
         this.logger.debug(`Section start preview: ${html.substring(sectionStart, sectionStart + 200)}...`);
@@ -583,9 +715,9 @@ export class DocumentationFetcher {
         this.logger.debug(`Using specialized data model extraction for: ${anchor}`);
 
         // Look backwards from the anchor to find the <dt> tag that defines this method
-        let searchStart = Math.max(0, anchorPosition - 2000);
-        let searchEnd = anchorPosition + 500;
-        let searchArea = html.substring(searchStart, searchEnd);
+        const searchStart = Math.max(0, anchorPosition - 2000);
+        const searchEnd = anchorPosition + 500;
+        const searchArea = html.substring(searchStart, searchEnd);
 
         // Find all <dt> tags in the search area
         const dtRegex = /<dt[^>]*>/gi;
@@ -638,7 +770,7 @@ export class DocumentationFetcher {
 
         // First, try to find the exact section header that mentions this keyword
         // Look for patterns like "8.3. The for statement" or "7.10. The continue statement"
-        const sectionHeaderRegex = new RegExp(`<h[1-6][^>]*>([^<]*\\b${anchor}\\b[^<]*statement[^<]*)<\/h[1-6]>`, 'gi');
+        const sectionHeaderRegex = new RegExp(`<h[1-6][^>]*>([^<]*\\b${anchor}\\b[^<]*statement[^<]*)</h[1-6]>`, 'gi');
         const headerMatch = sectionHeaderRegex.exec(searchArea);
 
         if (headerMatch) {
@@ -665,7 +797,7 @@ export class DocumentationFetcher {
         }
 
         // Fallback: Look for alternative header patterns
-        const alternativeHeaderRegex = new RegExp(`<h[1-6][^>]*>([^<]*\\b${anchor}\\b[^<]*)<\/h[1-6]>`, 'gi');
+        const alternativeHeaderRegex = new RegExp(`<h[1-6][^>]*>([^<]*\\b${anchor}\\b[^<]*)</h[1-6]>`, 'gi');
         const altHeaderMatch = alternativeHeaderRegex.exec(searchArea);
 
         if (altHeaderMatch) {
@@ -868,7 +1000,7 @@ export class DocumentationFetcher {
         // contextual paragraphs to avoid barren tooltips.
 
         // Simple HTML to markdown conversion
-        let text = html
+        const text = html
             // Remove script and style tags
             .replace(/<(?:script|style)[^>]*>.*?<\/(?:script|style)>/gis, '')
             // Convert links BEFORE removing other tags
@@ -964,19 +1096,5 @@ export class DocumentationFetcher {
 
     private escapeRegex(string: string): string {
         return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    }
-
-    /**
-     * Fetch PyPI package description as fallback for module documentation
-     */
-    public async fetchPyPIDescription(moduleName: string): Promise<string | null> {
-        return await this.pypiService.fetchSummary(moduleName);
-    }
-
-    /**
-     * Fetch PyPI package information (description and doc URL)
-     */
-    public async fetchPyPIInfo(moduleName: string): Promise<PyPIPackageInfo | null> {
-        return await this.pypiService.fetchPackageInfo(moduleName);
     }
 }

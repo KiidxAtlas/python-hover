@@ -1,6 +1,7 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import { SymbolResolver } from '../../resolvers/symbolResolver';
+import { createMockDocument } from '../unit/helpers/mockDocument';
 
 suite('SymbolResolver Test Suite', () => {
     let resolver: SymbolResolver;
@@ -104,85 +105,4 @@ suite('SymbolResolver Test Suite', () => {
     });
 });
 
-function createMockDocument(content: string): vscode.TextDocument {
-    const lines = content.split('\n');
-
-    return {
-        getText: (range?: vscode.Range) => {
-            if (!range) {
-                return content;
-            }
-            // Extract text from range
-            const line = lines[range.start.line] || '';
-            if (range.start.line === range.end.line) {
-                return line.substring(range.start.character, range.end.character);
-            }
-            // Multi-line range (not needed for our tests but good to have)
-            return content;
-        },
-        lineAt: (lineOrPosition: number | vscode.Position) => {
-            const lineNum = typeof lineOrPosition === 'number'
-                ? lineOrPosition
-                : lineOrPosition.line;
-            const lineText = lines[lineNum] || '';
-            return {
-                text: lineText,
-                range: new vscode.Range(lineNum, 0, lineNum, lineText.length),
-                lineNumber: lineNum,
-                isEmptyOrWhitespace: lineText.trim().length === 0,
-                firstNonWhitespaceCharacterIndex: lineText.length - lineText.trimStart().length,
-                rangeIncludingLineBreak: new vscode.Range(lineNum, 0, lineNum + 1, 0)
-            };
-        },
-        lineCount: lines.length,
-        uri: vscode.Uri.file('/test.py'),
-        fileName: '/test.py',
-        languageId: 'python',
-        version: 1,
-        isDirty: false,
-        isClosed: false,
-        save: async () => true,
-        eol: vscode.EndOfLine.LF,
-        positionAt: (offset: number) => {
-            let currentOffset = 0;
-            for (let i = 0; i < lines.length; i++) {
-                const lineLength = lines[i].length + 1; // +1 for newline
-                if (currentOffset + lineLength > offset) {
-                    return new vscode.Position(i, offset - currentOffset);
-                }
-                currentOffset += lineLength;
-            }
-            return new vscode.Position(lines.length - 1, lines[lines.length - 1].length);
-        },
-        offsetAt: (position: vscode.Position) => {
-            let offset = 0;
-            for (let i = 0; i < position.line && i < lines.length; i++) {
-                offset += lines[i].length + 1; // +1 for newline
-            }
-            return offset + position.character;
-        },
-        getWordRangeAtPosition: (position: vscode.Position, regex?: RegExp) => {
-            const line = lines[position.line] || '';
-            const wordRegex = regex || /[A-Za-z_][A-Za-z0-9_]*/g;
-            let match;
-
-            // Reset regex lastIndex
-            wordRegex.lastIndex = 0;
-
-            while ((match = wordRegex.exec(line)) !== null) {
-                const start = match.index;
-                const end = start + match[0].length;
-
-                if (start <= position.character && end > position.character) {
-                    return new vscode.Range(
-                        position.line, start,
-                        position.line, end
-                    );
-                }
-            }
-            return undefined;
-        },
-        validateRange: (range: vscode.Range) => range,
-        validatePosition: (position: vscode.Position) => position
-    } as any;
-}
+// createMockDocument imported from unit helpers
