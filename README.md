@@ -1,20 +1,51 @@
 <div align="center">
 
-# 🐍 Python Hover
+# 🐍 Python Hover — The Missing Manual for Your Code
 
-## **Enhanced Documentation for Modern Python Development**
+## **Never Leave VS Code for Documentation Again**
 
-**Instant, intelligent documentation for 300+ Python constructs and ANY library with Sphinx docs — right in your editor. No more context switching.**
+**Hover-based, context-aware documentation for 300+ Python constructs, 19+ pre-configured libraries, and literally ANY library with Sphinx docs. Offline. Cached. Blazingly fast.**
+
+> **Stop alt-tabbing to Stack Overflow. Stop searching ReadTheDocs. Stop losing focus. Hover and learn—instantly.**
 
 [![Visual Studio Marketplace](https://img.shields.io/visual-studio-marketplace/v/KiidxAtlas.python-hover?color=blue&label=VS%20Code%20Marketplace&logo=visual-studio-code&style=flat-square)](https://marketplace.visualstudio.com/items?itemName=KiidxAtlas.python-hover)
 [![Downloads](https://img.shields.io/visual-studio-marketplace/d/KiidxAtlas.python-hover?color=success&style=flat-square&logo=microsoft)](https://marketplace.visualstudio.com/items?itemName=KiidxAtlas.python-hover)
 [![Rating](https://img.shields.io/visual-studio-marketplace/r/KiidxAtlas.python-hover?color=orange&style=flat-square&logo=microsoft)](https://marketplace.visualstudio.com/items?itemName=KiidxAtlas.python-hover&ssr=false#review-details)
 [![License](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square&logo=open-source-initiative)](LICENSE)
-[![GitHub](https://img.shields.io/github/stars/KiidxAtlas/python-hover?style=flat-square&logo=github)](https://github.com/KiidxAtlas/python-hover)
+[![GitHub](https://img.shields.io/github/stars/KiidxAtlas/python-hover?style=flat-square&logo=github&color=gold)](https://github.com/KiidxAtlas/python-hover)
 
-**[📦 Install Now](https://marketplace.visualstudio.com/items?itemName=KiidxAtlas.python-hover)** • **[⭐ Rate & Review](https://marketplace.visualstudio.com/items?itemName=KiidxAtlas.python-hover&ssr=false#review-details)** • **[🐛 Report Issue](https://github.com/KiidxAtlas/python-hover/issues)** • **[📖 Documentation](https://github.com/KiidxAtlas/python-hover)**
+**[� Install Now](https://marketplace.visualstudio.com/items?itemName=KiidxAtlas.python-hover)** • **[⭐ Rate & Review](https://marketplace.visualstudio.com/items?itemName=KiidxAtlas.python-hover&ssr=false#review-details)** • **[🐛 Report Issue](https://github.com/KiidxAtlas/python-hover/issues)** • **[🎯 Why Python Hover?](#-the-problem)** • **[💬 Discuss](https://github.com/KiidxAtlas/python-hover/discussions)**
 
 </div>
+
+---
+
+## 🎯 **The Problem**
+
+Every Python developer faces this:
+
+```python
+import pandas as pd
+
+df = pd.read_csv('data.csv')
+result = df.groupby('category').agg(???)  # What parameters does agg() take?
+```
+
+Your choices:
+- ❌ Stop coding, open browser, search "pandas agg", lose focus
+- ❌ Try to remember from memory (hint: you won't)
+- ❌ Spend 30 seconds guessing with autocomplete
+- ✅ **Hover over `agg()` in Python Hover — documentation appears instantly**
+
+**Context matters.** You're not hovering over a generic function—you're hovering over a specific method on a Pandas DataFrame. Python Hover **understands that** and shows you exactly what you need.
+
+---
+
+## ✨ **The Solution: Python Hover**
+
+**A documentation engine that works like your brain.** Intelligent, contextual, offline-first.
+
+
 
 ---
 
