@@ -282,7 +282,7 @@ export class InventoryManager {
         if (mem) {
             return mem;
         }
-    const cacheKey = `inventory-${version}-v9`; // v9 to invalidate stale caches and include latest minimal entries
+        const cacheKey = `inventory-${version}-v9`; // v9 to invalidate stale caches and include latest minimal entries
         const maxAge = CacheManager.hoursToMs(24); // 24 hours
 
         this.logger.debug(`Getting inventory for version ${version}, cache key: ${cacheKey}`);
