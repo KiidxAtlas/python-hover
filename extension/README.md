@@ -10,15 +10,15 @@ The missing manual for Python—right where you code.
 [![Downloads](https://img.shields.io/visual-studio-marketplace/d/KiidxAtlas.python-hover?color=success&style=for-the-badge&logo=microsoft)](https://marketplace.visualstudio.com/items?itemName=KiidxAtlas.python-hover)
 [![Rating](https://img.shields.io/visual-studio-marketplace/r/KiidxAtlas.python-hover?color=orange&style=for-the-badge)](https://marketplace.visualstudio.com/items?itemName=KiidxAtlas.python-hover&ssr=false#review-details)
 
-[**Install**](https://marketplace.visualstudio.com/items?itemName=KiidxAtlas.python-hover) · [**Report Bug**](https://github.com/KiidxAtlas/python-hover/issues) · [**Request Feature**](https://github.com/KiidxAtlas/python-hover/discussions)
+[**Install**](https://marketplace.visualstudio.com/items?itemName=KiidxAtlas.python-hover) · [**Rate**](https://marketplace.visualstudio.com/items?itemName=KiidxAtlas.python-hover&ssr=false#review-details) · [**Report Bug**](https://github.com/KiidxAtlas/python-hover/issues) · [**Request Feature**](https://github.com/KiidxAtlas/python-hover/discussions)
 
 <br />
 
-If this helps you: [⭐ Star](https://github.com/KiidxAtlas/python-hover) · [☕ Buy me a coffee](https://buymeacoffee.com/kiidxatlas)
+If this saves you time: [☕ Buy me a coffee](https://buymeacoffee.com/kiidxatlas) · [⭐ Star](https://github.com/KiidxAtlas/python-hover)
 
 <br />
 
-![Python Hover Demo](media/media.gif)
+<img src="https://raw.githubusercontent.com/KiidxAtlas/python-hover/main/extension/media/media.gif" alt="Python Hover Demo" width="760" />
 
 </div>
 
@@ -264,3 +264,5 @@ Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 MIT License
 
 </div>
+
+
