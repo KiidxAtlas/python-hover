@@ -12,45 +12,39 @@ export class HoverRenderer {
         markdown.supportHtml = true;
 
         // --- Header ---
-        markdown.appendMarkdown(`### ${doc.title}`);
+        markdown.appendMarkdown(`# ${doc.title}\n\n`);
 
-        // Quick Link
-        if (doc.url && this.config.showQuickActions) {
-            markdown.appendMarkdown(` &nbsp; [$(link-external)](${doc.url} "Open Documentation")`);
-        }
-        markdown.appendMarkdown('\n');
+        // Kind + Icon
+        const kind = doc.kind ? `py:${doc.kind.toLowerCase()}` : 'py:function';
+        markdown.appendMarkdown(`$(${this.getIconForKind(doc.kind)}) ${kind}\n\n`);
 
-        // Meta Info (Kind • Badges)
-        const metaParts: string[] = [];
-        if (doc.kind) {
-            metaParts.push(`**${doc.kind}**`);
-        }
-
-        if (doc.badges && doc.badges.length > 0 && this.config.showColors) {
-            doc.badges.forEach(b => {
-                let icon = 'tag';
-                if (this.config.showEmojis) {
-                    switch (b.color) {
-                        case 'red': icon = 'error'; break;
-                        case 'orange': icon = 'warning'; break;
-                        case 'yellow': icon = 'issue-opened'; break;
-                        case 'blue': icon = 'verified'; break;
-                        case 'purple': icon = 'zap'; break;
-                        default: icon = 'tag'; break;
-                    }
-                }
-                metaParts.push(`$(${icon}) ${b.label}`);
-            });
+        // Links
+        const links: string[] = [];
+        if (doc.url) {
+            const isDevDocs = doc.url.includes('devdocs.io');
+            const label = isDevDocs ? 'DevDocs' : 'Docs';
+            links.push(`[$(book) ${label}](${this.sanitizeUrl(doc.url)})`);
         }
 
-        if (metaParts.length > 0) {
-            markdown.appendMarkdown(metaParts.join(' &nbsp;•&nbsp; '));
+        if (doc.title && (!doc.url || !doc.url.includes('devdocs.io'))) {
+            const devDocsUrl = `https://devdocs.io/#q=python%20${encodeURIComponent(doc.title)}`;
+            links.push(`[$(search) DevDocs](${this.sanitizeUrl(devDocsUrl)})`);
         }
 
-        markdown.appendMarkdown('\n\n---\n\n');
+        if (doc.url) {
+            const encodedUrl = encodeURIComponent(doc.url);
+            links.push(`[$(link) Copy URL](command:python-hover.copyUrl?${JSON.stringify(encodedUrl)})`);
+        }
+
+        if (links.length > 0) {
+            markdown.appendMarkdown(links.join(' &nbsp;•&nbsp; '));
+            markdown.appendMarkdown('\n\n');
+        }
 
         // --- Signature ---
         if (doc.signature && this.config.showSignatures) {
+            markdown.appendMarkdown(`</> **Signature**\n`);
+
             // If we have explicit overloads, render them smartly
             if (doc.overloads && doc.overloads.length > 1) {
                 // Show first overload
@@ -60,18 +54,27 @@ export class HoverRenderer {
                 const remaining = doc.overloads.length - 1;
                 const remainingText = doc.overloads.slice(1).join('\n');
 
-                // Note: VS Code MarkdownString doesn't support <details> well in all contexts,
-                // but it is supported in Hovers.
                 markdown.appendMarkdown(`<details><summary>Show ${remaining} more overloads</summary>\n\n`);
                 markdown.appendCodeblock(remainingText, 'python');
                 markdown.appendMarkdown('</details>\n\n');
             } else {
-                let sig = doc.signature;
-                // Prepend name if signature is just arguments (e.g. "(x, y)")
-                if (sig.startsWith('(')) {
-                    sig = `${doc.title}${sig}`;
+                let shortSig = doc.signature;
+                if (shortSig.startsWith('(')) {
+                    const shortName = doc.title.split('.').pop() || doc.title;
+                    shortSig = `${shortName}${doc.signature}`;
                 }
-                markdown.appendCodeblock(sig, 'python');
+
+                let fullSig = doc.signature;
+                if (fullSig.startsWith('(')) {
+                    fullSig = `${doc.title}${doc.signature}`;
+                }
+
+                let sigBlock = shortSig;
+                if (shortSig !== fullSig) {
+                    sigBlock = `${shortSig}\n${fullSig}`;
+                }
+
+                markdown.appendCodeblock(sigBlock, 'python');
                 markdown.appendMarkdown('\n');
             }
         }
@@ -86,14 +89,8 @@ export class HoverRenderer {
         // --- Content ---
         let content = doc.summary || doc.content;
         if (content) {
-            // Highlight specific notes and add icons
             content = content.replace(/CPython implementation detail:/g, '$(alert) **CPython implementation detail:**');
             content = content.replace(/(Note:|Warning:|Changed in version)/g, '**$1**');
-
-            // Apply blockquote to all lines to ensure uniform styling
-            // Split by newline, prefix each line with >
-            content = content.split('\n').map(line => `> ${line}`).join('\n');
-
             markdown.appendMarkdown(`${content}\n\n`);
         }
 
@@ -153,35 +150,26 @@ export class HoverRenderer {
         }
 
         // --- Footer ---
-        if (this.config.showBorders) {
-            markdown.appendMarkdown('---\n');
-        }
+        markdown.appendMarkdown('---\n');
+        markdown.appendMarkdown(`$(keyboard) **F12**: Go to definition | **Ctrl+Space**: IntelliSense\n\n`);
 
-        const links: string[] = [];
-        if (doc.links) {
-            Object.entries(doc.links).forEach(([label, url]) => {
-                let icon = 'link';
-                const lowerLabel = label.toLowerCase();
-                if (lowerLabel.includes('github') || lowerLabel.includes('repo')) icon = 'github';
-                else if (lowerLabel.includes('documentation') || lowerLabel.includes('docs')) icon = 'book';
-                else if (lowerLabel.includes('homepage') || lowerLabel.includes('home')) icon = 'home';
-                else if (lowerLabel.includes('pypi')) icon = 'package';
-                else if (lowerLabel.includes('issue') || lowerLabel.includes('bug')) icon = 'bug';
-                else if (lowerLabel.includes('changelog') || lowerLabel.includes('changes')) icon = 'history';
-                else if (lowerLabel.includes('devdocs')) icon = 'globe';
-
-                links.push(`[$(${icon}) ${label}](${this.sanitizeUrl(url)})`);
-            });
-        } else {
-            if (doc.url) links.push(`[$(book) Documentation](${this.sanitizeUrl(doc.url)})`);
-            if (doc.sourceUrl) links.push(`[$(file-code) Source](${this.sanitizeUrl(doc.sourceUrl)})`);
-        }
-
-        if (links.length > 0) {
-            markdown.appendMarkdown(links.join(' &nbsp;&nbsp; '));
-        }
+        const version = this.config.docsVersion === 'auto' ? '3.12' : this.config.docsVersion;
+        markdown.appendMarkdown(`Python ${version}`);
 
         return new vscode.Hover(markdown);
+    }
+
+    private getIconForKind(kind?: string): string {
+        if (!kind) return 'symbol-function';
+        switch (kind.toLowerCase()) {
+            case 'class': return 'symbol-class';
+            case 'module': return 'symbol-module';
+            case 'method': return 'symbol-method';
+            case 'property': return 'symbol-property';
+            case 'field': return 'symbol-field';
+            case 'variable': return 'symbol-variable';
+            default: return 'symbol-function';
+        }
     }
 
     private sanitizeUrl(url: string): string {

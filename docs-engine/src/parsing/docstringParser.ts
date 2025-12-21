@@ -340,7 +340,11 @@ export class DocstringParser {
             const line = lines[i].trim();
             // Skip reST title underlines (e.g. "=====", "-----")
             if (!/^[-=~^#*]+$/.test(line)) {
-                summaryLines.push(line);
+                // Skip signature lines (heuristic: contains "->" or starts with name(...) )
+                // e.g. "str(object='') -> str"
+                if (!line.includes('->') && !/^\w+\(.*\)$/.test(line)) {
+                    summaryLines.push(line);
+                }
             }
             i++;
         }

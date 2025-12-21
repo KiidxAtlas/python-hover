@@ -20,6 +20,12 @@ export class HoverDocBuilder {
         const examples = this.buildExamples(parsedDocstring, docs);
         const kind = this.inferKind(symbolInfo);
 
+        // Ensure we don't pass placeholder content in the legacy field
+        let legacyContent = docs?.content;
+        if (legacyContent && (legacyContent.startsWith('Documentation for') || legacyContent.startsWith('Documentation from'))) {
+            legacyContent = undefined;
+        }
+
         return {
             title: title,
             kind: kind,
@@ -35,7 +41,7 @@ export class HoverDocBuilder {
             badges: badges,
             source: docs?.source || ResolutionSource.Runtime,
             confidence: docs?.confidence || 0.5,
-            content: docs?.content, // Keep legacy content if needed
+            content: legacyContent, // Keep legacy content if needed (but filtered)
             overloads: symbolInfo.overloads,
             protocolHints: symbolInfo.protocolHints
         };
@@ -54,9 +60,25 @@ export class HoverDocBuilder {
     private buildSummary(parsed: ParsedDocstring, docs: HoverDoc | null, symbolInfo: SymbolInfo): string | undefined {
         // Priority: Scraped Sphinx Content > Runtime docstring > Docs inventory placeholder
 
-        if (docs && docs.content && !docs.content.startsWith('Documentation for') && !docs.content.startsWith('Documentation from')) {
-            // If docs.content is actual content (scraped from Sphinx or Static Typing), use it
-            return docs.content;
+        let content = docs?.content;
+
+        // Filter out placeholder content
+        if (content && (content.startsWith('Documentation for') || content.startsWith('Documentation from'))) {
+            content = undefined;
+        }
+
+        // Heuristic: If content is very short (likely just a title or signature) and we have a better docstring, use docstring.
+        if (content) {
+            const isShort = content.length < 100; // Arbitrary threshold for "short" content
+            const docstring = symbolInfo.docstring || '';
+            // If docstring is significantly longer/better than the scraped content
+            if (isShort && docstring.length > content.length * 1.5) {
+                content = undefined;
+            }
+        }
+
+        if (content) {
+            return content;
         }
 
         // For keywords, the parser might truncate too much (it expects function-like docstrings).
@@ -66,6 +88,11 @@ export class HoverDocBuilder {
         }
 
         if (parsed.summary) return parsed.summary;
+
+        // Fallback to raw docstring if parsing failed but we have one
+        if (symbolInfo.docstring) {
+            return symbolInfo.docstring;
+        }
 
         return undefined;
     }

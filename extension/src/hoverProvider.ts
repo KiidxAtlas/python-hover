@@ -170,13 +170,20 @@ export class HoverProvider implements vscode.HoverProvider {
                         }
 
                         // Convert slashes to dots
-                        const moduleName = relativePath.replace(/\//g, '.');
+                        let moduleName = relativePath.replace(/\//g, '.');
+
+                        // Special handling for os.path implementations
+                        if (moduleName === 'ntpath' || moduleName === 'posixpath' || moduleName === 'macpath') {
+                            moduleName = 'os.path';
+                        }
 
                         if (moduleName) {
-                            const newName = `${moduleName}.${lspSymbol.name}`;
-                            Logger.log(`Refined symbol name from path (${marker}): ${lspSymbol.name} -> ${newName}`);
-                            lspSymbol.name = newName;
-                            break; // Stop after first match
+                            if (moduleName !== lspSymbol.name) {
+                                const newName = `${moduleName}.${lspSymbol.name}`;
+                                Logger.log(`Refined symbol name from path (${marker}): ${lspSymbol.name} -> ${newName}`);
+                                lspSymbol.name = newName;
+                            }
+                            break; // Stop after first match (e.g. if site-packages matched, don't fall back to Lib)
                         }
                     }
                 }
@@ -273,6 +280,23 @@ export class HoverProvider implements vscode.HoverProvider {
 
             // Merge info (prefer runtime for some things, LSP for others)
             const symbolInfo = { ...lspSymbol, ...runtimeInfo };
+
+            // Fix Name/Title:
+            // If LSP gave us a qualified name (e.g. "os.chdir") and runtime gave us a simple name (e.g. "chdir"),
+            // we prefer the qualified name for the hover title.
+            if (runtimeInfo && lspSymbol.name.includes('.') && runtimeInfo.name && !runtimeInfo.name.includes('.')) {
+                // Special case: If runtime module is os.path, prefer it over ntpath/posixpath
+                if (runtimeInfo.module === 'os.path' && (lspSymbol.name.startsWith('ntpath.') || lspSymbol.name.startsWith('posixpath.'))) {
+                    symbolInfo.name = `os.path.${runtimeInfo.name}`;
+                    symbolInfo.qualname = `os.path.${runtimeInfo.name}`;
+                } else {
+                    symbolInfo.name = lspSymbol.name;
+                    // If qualname is also simple (matching the runtime name), update it too so HoverDocBuilder uses the full name
+                    if (symbolInfo.qualname === runtimeInfo.name) {
+                        symbolInfo.qualname = lspSymbol.name;
+                    }
+                }
+            }
 
             // 3. Normalize to DocKey
             const docKey = DocKeyBuilder.fromSymbol(symbolInfo);

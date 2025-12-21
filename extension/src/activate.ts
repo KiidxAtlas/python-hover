@@ -27,6 +27,15 @@ export function activate(context: vscode.ExtensionContext) {
         Logger.log('Registering HoverProvider...');
         const registration = vscode.languages.registerHoverProvider(selector, hoverProvider);
         context.subscriptions.push(registration);
+
+        // Register Copy URL command
+        context.subscriptions.push(vscode.commands.registerCommand('python-hover.copyUrl', async (url: string) => {
+            if (url) {
+                await vscode.env.clipboard.writeText(url);
+                vscode.window.showInformationMessage('URL copied to clipboard');
+            }
+        }));
+
         Logger.log('HoverProvider registered successfully.');
     } catch (e) {
         Logger.error('Failed to activate PyHover', e);

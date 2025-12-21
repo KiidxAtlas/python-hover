@@ -126,6 +126,21 @@ export class InventoryFetcher {
             if (packageInventory.has(key.name)) {
                 return packageInventory.get(key.name)!;
             }
+
+            // Strategy 4: Strip 'builtins.' prefix for builtins package
+            // Python docs usually index 'str', 'int', 'len' directly, not 'builtins.str'
+            if (packageName === 'builtins') {
+                const simpleName = key.qualname.replace(/^builtins\./, '');
+                if (packageInventory.has(simpleName)) {
+                    return packageInventory.get(simpleName)!;
+                }
+
+                // Also try without any prefix if name has one
+                const nameSimple = key.name.replace(/^builtins\./, '');
+                if (packageInventory.has(nameSimple)) {
+                    return packageInventory.get(nameSimple)!;
+                }
+            }
         }
 
         return null;
