@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.6.2] - 2025-12-21
+
+### 🐛 Remote/SSH Fix
+
+- Fixed Python helper failing on SSH/remote hosts when the configured interpreter path points to a Windows `C:\...python.exe`.
+- Added interpreter probing and fast-fail behavior so missing Python doesn’t cause hover timeouts.
+
 ## [0.6.0] - 2025-12-20
 
 ### 🚀 **Complete Architecture Rewrite**
