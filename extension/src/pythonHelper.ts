@@ -23,7 +23,7 @@ export class PythonHelper {
         if (cached) {
             try {
                 const info = JSON.parse(cached);
-                Logger.log(`PythonHelper: Cache hit for ${symbol}`);
+                // Logger.log(`PythonHelper: Cache hit for ${symbol}`);
                 return info;
             } catch (e) {
                 Logger.error(`PythonHelper: Failed to parse cached data for ${symbol}`, e);
@@ -84,6 +84,15 @@ export class PythonHelper {
                     resolve(null);
                 }
             });
+
+            // Timeout
+            setTimeout(() => {
+                if (!process.killed) {
+                    process.kill();
+                    Logger.error(`PythonHelper timed out resolving ${symbol}`);
+                    resolve(null);
+                }
+            }, 3000);
         });
     }
 
@@ -118,6 +127,14 @@ export class PythonHelper {
             // Write source to stdin
             process.stdin.write(source);
             process.stdin.end();
+
+            // Timeout
+            setTimeout(() => {
+                if (!process.killed) {
+                    process.kill();
+                    resolve(null);
+                }
+            }, 2000);
         });
     }
 
@@ -146,6 +163,14 @@ export class PythonHelper {
             });
 
             process.on('error', () => resolve('3'));
+
+            // Timeout
+            setTimeout(() => {
+                if (!process.killed) {
+                    process.kill();
+                    resolve('3');
+                }
+            }, 2000);
         });
     }
 

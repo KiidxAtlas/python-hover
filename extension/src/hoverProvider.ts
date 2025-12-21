@@ -18,7 +18,8 @@ export class HoverProvider implements vscode.HoverProvider {
     private pythonHelper: PythonHelper;
     private docBuilder: HoverDocBuilder;
     private aliasResolver: AliasResolver;
-    private isFetching = false;
+    private ready: Promise<void>;
+    private isProcessing = false;
 
     constructor(private lspClient: LspClient, private config: Config, diskCache: DiskCache) {
         this.renderer = new HoverRenderer(config);
@@ -36,38 +37,50 @@ export class HoverProvider implements vscode.HoverProvider {
         this.aliasResolver = new AliasResolver();
 
         // Initialize Python Version
-        this.initializePythonVersion();
+        this.ready = this.initializePythonVersion();
     }
 
     private async initializePythonVersion() {
-        const version = await this.pythonHelper.getPythonVersion();
-        Logger.log(`Detected Python Version: ${version}`);
-        this.docResolver.setPythonVersion(version);
+        try {
+            const version = await this.pythonHelper.getPythonVersion();
+            Logger.log(`Detected Python Version: ${version}`);
+            this.docResolver.setPythonVersion(version);
+            this.renderer.setDetectedVersion(version);
+        } catch (e) {
+            Logger.error('Failed to initialize Python version', e);
+        }
     }
 
     async provideHover(document: vscode.TextDocument, position: vscode.Position, token: vscode.CancellationToken): Promise<vscode.Hover | null> {
-        if (this.isFetching) {
+        if (this.isProcessing) {
             return null;
         }
-
-        Logger.log('HoverProvider triggered');
-        if (!this.config.isEnabled) {
-            Logger.log('HoverProvider disabled via config');
-            return null;
-        }
-
-        this.isFetching = true;
+        this.isProcessing = true;
         try {
+            await this.ready;
+
+            if (!this.config.isEnabled) {
+                return null;
+            }
+
             // 1. Resolve symbol via LSP
             let lspSymbol = await this.lspClient.resolveSymbol(document, position);
+            if (token.isCancellationRequested) return null;
 
-            // 1.1 AST Identification (Always try if LSP failed OR if we want to be robust)
-            // We now pass the document content to handle unsaved changes
-            const identifiedType = await this.pythonHelper.identify(
-                document.getText(),
-                position.line + 1, // AST uses 1-based lines
-                position.character
-            );
+            // 1.1 AST Identification
+            // Optimization: Only run AST if LSP failed to provide a qualified name or path
+            // This avoids spawning a python process for every hover when LSP is sufficient.
+            let identifiedType: string | null = null;
+            const shouldRunAst = !lspSymbol || !lspSymbol.path || !lspSymbol.name.includes('.');
+
+            if (shouldRunAst) {
+                // We now pass the document content to handle unsaved changes
+                identifiedType = await this.pythonHelper.identify(
+                    document.getText(),
+                    position.line + 1, // AST uses 1-based lines
+                    position.character
+                );
+            }
 
             if (identifiedType) {
                 Logger.log(`AST Identified type: ${identifiedType}`);
@@ -105,7 +118,7 @@ export class HoverProvider implements vscode.HoverProvider {
             }
 
             if (!lspSymbol) {
-                Logger.log('LSP failed to resolve symbol');
+                // Logger.log('LSP failed to resolve symbol');
                 return null;
             }
 
@@ -189,7 +202,7 @@ export class HoverProvider implements vscode.HoverProvider {
                 }
             }
 
-            Logger.log('LSP Symbol:', lspSymbol);
+            // Logger.log('LSP Symbol:', lspSymbol);
 
             // 1.2 Typeshed Enrichment
             // If the path points to a .pyi file, try to parse it for better signature/overloads
@@ -197,7 +210,7 @@ export class HoverProvider implements vscode.HoverProvider {
                 try {
                     const typeshedInfo = await TypeshedParser.parse(lspSymbol.path, lspSymbol.name);
                     if (typeshedInfo) {
-                        Logger.log('Typeshed Info:', typeshedInfo);
+                        // Logger.log('Typeshed Info:', typeshedInfo);
                         if (typeshedInfo.signature) {
                             lspSymbol.signature = typeshedInfo.signature;
                         }
@@ -220,10 +233,12 @@ export class HoverProvider implements vscode.HoverProvider {
                 lspSymbol.name = resolvedName;
             }
 
+            if (token.isCancellationRequested) return null;
+
             // 2. Introspect via Python Helper (Runtime)
             // This enriches the static analysis with runtime info (e.g. installed version, real path)
             const runtimeInfo = await this.pythonHelper.resolveRuntime(lspSymbol.name);
-            Logger.log('Runtime Info:', runtimeInfo);
+            // Logger.log('Runtime Info:', runtimeInfo);
 
             // Check for local user symbols to avoid false positive lookups
             const isLocalPath = lspSymbol.path &&
@@ -300,19 +315,24 @@ export class HoverProvider implements vscode.HoverProvider {
 
             // 3. Normalize to DocKey
             const docKey = DocKeyBuilder.fromSymbol(symbolInfo);
-            Logger.log('DocKey:', docKey);
+            // Logger.log('DocKey:', docKey);
+
+            if (token.isCancellationRequested) return null;
 
             // 4. Resolve Docs (Canonical Linking)
             const docs = await this.docResolver.resolve(docKey);
-            Logger.log('Resolved Docs:', docs);
+            // Logger.log('Resolved Docs:', docs);
 
             // 5. Build Standardized Hover Doc
             const hoverDoc = this.docBuilder.build(symbolInfo, docs);
 
             // 6. Render
             return this.renderer.render(hoverDoc);
+        } catch (e) {
+            Logger.error('HoverProvider failed', e);
+            return null;
         } finally {
-            this.isFetching = false;
+            this.isProcessing = false;
         }
     }
 }

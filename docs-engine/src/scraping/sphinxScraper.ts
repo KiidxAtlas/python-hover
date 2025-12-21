@@ -32,7 +32,7 @@ export class SphinxScraper {
 
     private fetchHtml(url: string): Promise<string> {
         return new Promise((resolve, reject) => {
-            https.get(url, (res) => {
+            const req = https.get(url, { timeout: 5000 }, (res) => {
                 if (res.statusCode !== 200) {
                     reject(new Error(`Status code ${res.statusCode}`));
                     return;
@@ -42,6 +42,13 @@ export class SphinxScraper {
                 res.on('end', () => resolve(data));
                 res.on('error', reject);
             });
+
+            req.on('timeout', () => {
+                req.destroy();
+                reject(new Error('Request timed out'));
+            });
+
+            req.on('error', reject);
         });
     }
 
@@ -93,18 +100,6 @@ export class SphinxScraper {
         let content = '';
 
         if (tagName === 'dt') {
-            // Definition list item. Includes <dd> following it.
-            // Find next <dt> or </dl>
-            const rest = html.substring(startIndex);
-            const nextDt = rest.indexOf('<dt', 1); // Skip current
-            const endDl = rest.indexOf('</dl>');
-
-            let end = rest.length;
-            if (nextDt !== -1) end = Math.min(end, nextDt);
-            if (endDl !== -1) end = Math.min(end, endDl);
-
-            content = rest.substring(0, end);
-        } else if (tagName === 'section') {
             // Definition list item. Includes <dd> following it.
             // Find next <dt> or </dl>
             const rest = html.substring(startIndex);

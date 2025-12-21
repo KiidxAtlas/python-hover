@@ -88,13 +88,17 @@ export class InventoryFetcher {
 
     private checkUrlExists(url: string): Promise<boolean> {
         return new Promise((resolve) => {
-            const req = https.request(url, { method: 'HEAD' }, (res) => {
+            const req = https.request(url, { method: 'HEAD', timeout: 5000 }, (res) => {
                 // Accept 200 OK or 3xx Redirects (which fetchBuffer handles)
                 if (res.statusCode && (res.statusCode === 200 || (res.statusCode >= 300 && res.statusCode < 400))) {
                     resolve(true);
                 } else {
                     resolve(false);
                 }
+            });
+            req.on('timeout', () => {
+                req.destroy();
+                resolve(false);
             });
             req.on('error', () => resolve(false));
             req.end();
@@ -194,7 +198,7 @@ export class InventoryFetcher {
             return Promise.reject(new Error('Too many redirects'));
         }
         return new Promise((resolve, reject) => {
-            https.get(url, (res) => {
+            const req = https.get(url, { timeout: 5000 }, (res) => {
                 if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
                     const newUrl = new URL(res.headers.location, url).toString();
                     Logger.log(`Following redirect for ${url} to ${newUrl}`);
@@ -211,7 +215,14 @@ export class InventoryFetcher {
                 res.on('data', (chunk) => chunks.push(chunk));
                 res.on('end', () => resolve(Buffer.concat(chunks)));
                 res.on('error', reject);
-            }).on('error', reject);
+            });
+
+            req.on('timeout', () => {
+                req.destroy();
+                reject(new Error('Request timed out'));
+            });
+
+            req.on('error', reject);
         });
     }
 }

@@ -1,5 +1,4 @@
 import * as https from 'https';
-import { Logger } from '../../extension/src/logger';
 import { DocKey, HoverDoc, ResolutionSource } from '../../shared/types';
 
 export class PyPiClient {
@@ -36,7 +35,7 @@ export class PyPiClient {
 
             return { url: bestUrl, links };
         } catch (e) {
-            Logger.log(`PyPI lookup failed for ${packageName}: ${e}`);
+            // Logger.log(`PyPI lookup failed for ${packageName}: ${e}`);
             return { url: null, links: {} };
         }
     }
@@ -63,7 +62,7 @@ export class PyPiClient {
 
     private fetchJson(url: string): Promise<any> {
         return new Promise((resolve, reject) => {
-            https.get(url, (res) => {
+            const req = https.get(url, { timeout: 5000 }, (res) => {
                 if (res.statusCode !== 200) {
                     reject(new Error(`Status code: ${res.statusCode}`));
                     return;
@@ -77,7 +76,14 @@ export class PyPiClient {
                         reject(e);
                     }
                 });
-            }).on('error', reject);
+            });
+
+            req.on('timeout', () => {
+                req.destroy();
+                reject(new Error('Request timed out'));
+            });
+
+            req.on('error', reject);
         });
     }
 }

@@ -3,7 +3,13 @@ import { HoverDoc } from '../../../shared/types';
 import { Config } from '../config';
 
 export class HoverRenderer {
+    private detectedVersion: string | undefined;
+
     constructor(private config: Config) { }
+
+    setDetectedVersion(version: string) {
+        this.detectedVersion = version;
+    }
 
     render(doc: HoverDoc): vscode.Hover {
         const markdown = new vscode.MarkdownString();
@@ -69,8 +75,10 @@ export class HoverRenderer {
                     fullSig = `${doc.title}${doc.signature}`;
                 }
 
-                let sigBlock = shortSig;
-                if (shortSig !== fullSig) {
+                // Simplify: If fullSig contains shortSig (and they are different), just show fullSig
+                // This avoids "func(a, b)\nmodule.func(a, b)" redundancy
+                let sigBlock = fullSig;
+                if (shortSig !== fullSig && !fullSig.includes(shortSig)) {
                     sigBlock = `${shortSig}\n${fullSig}`;
                 }
 
@@ -153,7 +161,10 @@ export class HoverRenderer {
         markdown.appendMarkdown('---\n');
         markdown.appendMarkdown(`$(keyboard) **F12**: Go to definition | **Ctrl+Space**: IntelliSense\n\n`);
 
-        const version = this.config.docsVersion === 'auto' ? '3.12' : this.config.docsVersion;
+        let version = this.config.docsVersion;
+        if (version === 'auto') {
+            version = this.detectedVersion || '3.12';
+        }
         markdown.appendMarkdown(`Python ${version}`);
 
         return new vscode.Hover(markdown);

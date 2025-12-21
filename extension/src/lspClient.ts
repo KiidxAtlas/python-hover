@@ -1,6 +1,14 @@
 import * as vscode from 'vscode';
 
 export class LspClient {
+    private async executeCommandWithTimeout<T>(command: string, ...args: any[]): Promise<T | undefined> {
+        const timeoutMs = 2000; // 2 seconds timeout for LSP calls
+        return Promise.race([
+            vscode.commands.executeCommand<T>(command, ...args),
+            new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), timeoutMs))
+        ]);
+    }
+
     async resolveSymbol(document: vscode.TextDocument, position: vscode.Position): Promise<any> {
         // Try to get word range, but don't fail immediately if not found (might be a symbol like [ or {)
         const range = document.getWordRangeAtPosition(position, /[a-zA-Z0-9_.]+/);
@@ -19,7 +27,7 @@ export class LspClient {
         // 1. Get Definition (for path)
         let definitionLocation: vscode.Location | undefined;
         try {
-            const definitions = await vscode.commands.executeCommand<vscode.Location[] | vscode.LocationLink[]>('vscode.executeDefinitionProvider', document.uri, position);
+            const definitions = await this.executeCommandWithTimeout<vscode.Location[] | vscode.LocationLink[]>('vscode.executeDefinitionProvider', document.uri, position);
             if (definitions && definitions.length > 0) {
                 const loc = definitions[0];
                 if ('uri' in loc) {
@@ -54,7 +62,7 @@ export class LspClient {
 
         // 2. Get Hover (for signature)
         try {
-            const hovers = await vscode.commands.executeCommand<vscode.Hover[]>('vscode.executeHoverProvider', document.uri, position);
+            const hovers = await this.executeCommandWithTimeout<vscode.Hover[]>('vscode.executeHoverProvider', document.uri, position);
             if (hovers && hovers.length > 0) {
                 for (const hover of hovers) {
                     for (const content of hover.contents) {
@@ -136,7 +144,7 @@ export class LspClient {
             // We need to open the document to get symbols.
             // executeDocumentSymbolProvider works on a URI, so the doc doesn't need to be open in editor,
             // but VS Code needs to be able to read it.
-            const symbols = await vscode.commands.executeCommand<vscode.DocumentSymbol[]>('vscode.executeDocumentSymbolProvider', location.uri);
+            const symbols = await this.executeCommandWithTimeout<vscode.DocumentSymbol[]>('vscode.executeDocumentSymbolProvider', location.uri);
             if (!symbols) return null;
 
             // Recursive function to find the symbol containing the position
