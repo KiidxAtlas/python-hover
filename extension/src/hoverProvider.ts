@@ -67,6 +67,51 @@ export class HoverProvider implements vscode.HoverProvider {
             let lspSymbol = await this.lspClient.resolveSymbol(document, position);
             if (token.isCancellationRequested) return null;
 
+            const isImportModuleHover = (() => {
+                try {
+                    const line = document.lineAt(position.line).text;
+                    const col = position.character;
+
+                    // from X import Y  -> hovering within X
+                    const fromIdx = line.indexOf('from ');
+                    const importIdx = line.indexOf(' import ');
+                    if (fromIdx !== -1 && importIdx !== -1 && col >= fromIdx + 5 && col <= importIdx) {
+                        return true;
+                    }
+
+                    // import X, Y as z  -> hovering after 'import '
+                    const importStart = line.match(/^\s*import\s+/);
+                    if (importStart && col >= importStart[0].length) {
+                        return true;
+                    }
+                } catch {
+                    // ignore
+                }
+                return false;
+            })();
+
+            const normalizeImportModuleName = (name: string): string => {
+                const parts = name.split('.').filter(Boolean);
+                if (parts.length >= 2 && parts[parts.length - 1] === parts[parts.length - 2]) {
+                    parts.pop();
+                }
+
+                // Strip python version prefixes like python3.11.* or 3.11.* if they got introduced.
+                if (parts.length >= 2 && /^python\d+$/.test(parts[0]) && /^\d+$/.test(parts[1])) {
+                    parts.splice(0, 2);
+                }
+                if (parts.length >= 2 && /^\d+$/.test(parts[0]) && /^\d+$/.test(parts[1])) {
+                    parts.splice(0, 2);
+                }
+
+                return parts.join('.');
+            };
+
+            if (lspSymbol && isImportModuleHover && typeof lspSymbol.name === 'string') {
+                lspSymbol.name = normalizeImportModuleName(lspSymbol.name);
+                lspSymbol.kind = 'module';
+            }
+
             // 1.1 AST Identification
             // Optimization: Only run AST if LSP failed to provide a qualified name or path
             // This avoids spawning a python process for every hover when LSP is sufficient.
@@ -166,7 +211,7 @@ export class HoverProvider implements vscode.HoverProvider {
             // 1.1.6 Refine Name from Path (Generic fix for stdlib and third-party)
             // If the name is simple (e.g. "join") and we have a path to a library file,
             // we can try to prepend the module name.
-            if (lspSymbol.name && !lspSymbol.name.includes('.') && lspSymbol.path) {
+            if (!isImportModuleHover && lspSymbol.name && !lspSymbol.name.includes('.') && lspSymbol.path) {
                 const normalizedPath = lspSymbol.path.replace(/\\/g, '/');
                 // Common roots for python libraries
                 const markers = ['/site-packages/', '/dist-packages/', '/Lib/', '/lib/'];
@@ -175,6 +220,16 @@ export class HoverProvider implements vscode.HoverProvider {
                     const index = normalizedPath.lastIndexOf(marker);
                     if (index !== -1) {
                         let relativePath = normalizedPath.substring(index + marker.length);
+
+                        // Strip interpreter-version folders from stdlib paths.
+                        // Examples:
+                        // - /usr/lib/python3.11/base64.py -> base64
+                        // - /usr/lib/python3.12/asyncio/__init__.py -> asyncio
+                        relativePath = relativePath.replace(/^python\d+(?:\.\d+)?\//, '');
+                        // Some environments may surface a bare version folder.
+                        // - .../stdlib/3.11/base64.pyi -> base64
+                        relativePath = relativePath.replace(/^\d+\.\d+\//, '');
+
                         // Remove extension
                         relativePath = relativePath.replace(/\.(py|pyi)$/, '');
                         // Handle __init__

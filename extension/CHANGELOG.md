@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.6.3] - 2025-12-21
+
+### 🐛 Import Hover Fix
+
+- Fixed module hovers like `import base64` resolving to duplicated names (e.g. `base64.base64`) which broke DevDocs search.
+- Improved module name normalization for stdlib paths that include `python3.x` prefixes.
+
 ## [0.6.2] - 2025-12-21
 
 ### 🐛 Remote/SSH Fix

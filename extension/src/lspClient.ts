@@ -47,16 +47,28 @@ export class LspClient {
         // If we have a definition, try to resolve the real name from the definition file
         // This fixes issues where hovering 'ls.append' returns 'ls.append' instead of 'list.append'
         if (definitionLocation) {
-            let realName = await this.resolveNameFromLocation(definitionLocation);
-            if (realName) {
-                // Try to prepend module name if we can guess it from the path
-                // This fixes issues where hovering 'plt.plot' returns 'plot' (from pyplot.pyi) instead of 'matplotlib.pyplot.plot'
+            const resolved = await this.resolveNameFromLocation(definitionLocation);
+            if (resolved) {
+                let realName = resolved.name;
+                const kind = this.mapSymbolKind(resolved.kind);
+                if (kind) {
+                    result.kind = kind;
+                }
+
+                // Try to prepend module name if we can guess it from the path.
+                // This fixes issues where hovering 'plt.plot' returns 'plot' (from pyplot.pyi)
+                // instead of 'matplotlib.pyplot.plot'.
                 const moduleName = this.getModuleNameFromPath(definitionLocation.uri.fsPath);
                 if (moduleName) {
-                    // If it's builtins, we can optionally skip the prefix, but prepending is usually safer for the resolver
-                    realName = `${moduleName}.${realName}`;
+                    // If the definition symbol is a module, the correct fully qualified name *is* the module.
+                    if (resolved.kind === vscode.SymbolKind.Module) {
+                        result.name = moduleName;
+                    } else {
+                        result.name = `${moduleName}.${realName}`;
+                    }
+                } else {
+                    result.name = realName;
                 }
-                result.name = realName;
             }
         }
 
@@ -126,6 +138,14 @@ export class LspClient {
             const index = path.lastIndexOf(marker);
             if (index !== -1) {
                 let relativePath = path.substring(index + marker.length);
+
+                // Strip version folders that appear in stdlib/typeshed layouts.
+                // Examples:
+                // - .../typeshed-fallback/stdlib/3.11/base64.pyi -> base64
+                // - .../lib/python3.11/base64.py -> base64
+                relativePath = relativePath.replace(/^python\d+(?:\.\d+)?\//, '');
+                relativePath = relativePath.replace(/^\d+\.\d+\//, '');
+
                 // Remove extension
                 relativePath = relativePath.replace(/\.(py|pyi)$/, '');
                 // Handle __init__
@@ -133,13 +153,43 @@ export class LspClient {
                     relativePath = relativePath.substring(0, relativePath.length - '/__init__'.length);
                 }
                 // Replace slashes with dots
-                return relativePath.replace(/\//g, '.');
+                let moduleName = relativePath.replace(/\//g, '.');
+
+                // Extra safety: strip any dotted python version prefix that survived path normalization.
+                // Examples:
+                // - python3.11.base64 -> base64
+                // - 3.11.base64 -> base64
+                moduleName = moduleName.replace(/^python\d+\.(\d+)\./, '');
+                moduleName = moduleName.replace(/^\d+\.\d+\./, '');
+
+                return moduleName;
             }
         }
         return null;
     }
 
-    private async resolveNameFromLocation(location: vscode.Location): Promise<string | null> {
+    private mapSymbolKind(kind: vscode.SymbolKind): string | undefined {
+        switch (kind) {
+            case vscode.SymbolKind.Module:
+                return 'module';
+            case vscode.SymbolKind.Class:
+                return 'class';
+            case vscode.SymbolKind.Method:
+                return 'method';
+            case vscode.SymbolKind.Function:
+                return 'function';
+            case vscode.SymbolKind.Property:
+                return 'property';
+            case vscode.SymbolKind.Field:
+                return 'field';
+            case vscode.SymbolKind.Variable:
+                return 'variable';
+            default:
+                return undefined;
+        }
+    }
+
+    private async resolveNameFromLocation(location: vscode.Location): Promise<{ name: string; kind: vscode.SymbolKind } | null> {
         try {
             // We need to open the document to get symbols.
             // executeDocumentSymbolProvider works on a URI, so the doc doesn't need to be open in editor,
@@ -148,22 +198,22 @@ export class LspClient {
             if (!symbols) return null;
 
             // Recursive function to find the symbol containing the position
-            const findSymbolPath = (symbols: vscode.DocumentSymbol[]): string[] | null => {
+            const findSymbolPath = (symbols: vscode.DocumentSymbol[]): { names: string[]; kind: vscode.SymbolKind } | null => {
                 for (const symbol of symbols) {
                     if (symbol.range.contains(location.range.start)) {
                         const childPath = findSymbolPath(symbol.children);
                         if (childPath) {
-                            return [symbol.name, ...childPath];
+                            return { names: [symbol.name, ...childPath.names], kind: childPath.kind };
                         }
-                        return [symbol.name];
+                        return { names: [symbol.name], kind: symbol.kind };
                     }
                 }
                 return null;
             };
 
-            const path = findSymbolPath(symbols);
-            if (path) {
-                return path.join('.');
+            const found = findSymbolPath(symbols);
+            if (found) {
+                return { name: found.names.join('.'), kind: found.kind };
             }
         } catch (e) {
             console.error('Failed to resolve symbol from location', e);
