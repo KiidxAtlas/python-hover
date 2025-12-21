@@ -1,0 +1,22 @@
+{
+    "compilerOptions": {
+        "module": "commonjs",
+        "target": "es2020",
+        "outDir": "out",
+        "lib": [
+            "es2020"
+        ],
+        "sourceMap": true,
+        "rootDir": "..",
+        "strict": true
+    },
+    "include": [
+        "src/**/*",
+        "../docs-engine/**/*",
+        "../shared/**/*"
+    ],
+    "exclude": [
+        "node_modules",
+        ".vscode-test"
+    ]
+}

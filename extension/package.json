@@ -1,0 +1,295 @@
+{
+    "name": "python-hover",
+    "displayName": "🐍 Python Hover - Enhanced Documentation",
+    "description": "Instant Python documentation with 300+ constructs, 19+ libraries (NumPy, Pandas, FastAPI, Django, PyTorch, aiohttp, Click), practical examples, and smart context detection. Zero context switching!",
+    "version": "0.6.0",
+    "publisher": "KiidxAtlas",
+    "author": {
+        "name": "KiidxAtlas",
+        "url": "https://github.com/KiidxAtlas"
+    },
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/KiidxAtlas/python-hover.git"
+    },
+    "bugs": {
+        "url": "https://github.com/KiidxAtlas/python-hover/issues"
+    },
+    "homepage": "https://github.com/KiidxAtlas/python-hover#readme",
+    "icon": "media/icon.png",
+    "engines": {
+        "vscode": "^1.85.0"
+    },
+    "galleryBanner": {
+        "color": "#1e415e",
+        "theme": "dark"
+    },
+    "categories": [
+        "Programming Languages",
+        "Education",
+        "Data Science",
+        "Snippets",
+        "Other"
+    ],
+    "keywords": [
+        "python",
+        "hover",
+        "documentation",
+        "intellisense",
+        "examples",
+        "learning",
+        "reference",
+        "methods",
+        "built-ins",
+        "type-hints",
+        "education",
+        "productivity",
+        "numpy",
+        "pandas",
+        "matplotlib"
+    ],
+    "activationEvents": [
+        "onLanguage:python"
+    ],
+    "main": "./out/extension/src/activate.js",
+    "contributes": {
+        "commands": [
+            {
+                "command": "python-hover.showStatusNotification",
+                "title": "Show PyHover Status Notification"
+            },
+            {
+                "command": "python-hover.toggleOnlineDiscovery",
+                "title": "Toggle Online Discovery",
+                "category": "Python Hover"
+            },
+            {
+                "command": "python-hover.clearCache",
+                "title": "Clear Documentation Cache",
+                "category": "Python Hover"
+            }
+        ],
+        "configuration": {
+            "title": "Python Hover",
+            "properties": {
+                "python-hover.enable": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Enable Python Hover documentation lookups."
+                },
+                "python-hover.onlineDiscovery": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Enable online documentation discovery (PyPI, ReadTheDocs). If disabled, only local and static documentation will be used."
+                },
+                "python-hover.docsVersion": {
+                    "type": "string",
+                    "default": "auto",
+                    "description": "Python version to use for documentation. Use 'auto' for automatic detection or specify a version like '3.11'."
+                },
+                "python-hover.maxSnippetLines": {
+                    "type": "number",
+                    "default": 12,
+                    "minimum": 1,
+                    "maximum": 100,
+                    "description": "Maximum number of lines to show in hover snippets."
+                },
+                "python-hover.fontSize": {
+                    "type": "string",
+                    "enum": [
+                        "small",
+                        "medium",
+                        "large"
+                    ],
+                    "default": "medium",
+                    "description": "Font size for hover content."
+                },
+                "python-hover.showEmojis": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show emoji icons in hover tooltips."
+                },
+                "python-hover.showColors": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Enable colored sections in hover tooltips."
+                },
+                "python-hover.showBorders": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show borders between sections."
+                },
+                "python-hover.cacheTTL.inventoryDays": {
+                    "type": "number",
+                    "default": 7,
+                    "minimum": 1,
+                    "description": "Number of days to cache inventory files."
+                },
+                "python-hover.cacheTTL.snippetHours": {
+                    "type": "number",
+                    "default": 48,
+                    "minimum": 1,
+                    "description": "Number of hours to cache documentation snippets."
+                },
+                "python-hover.enableKeywordDocs": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Enable keyword documentation."
+                },
+                "python-hover.enhancedMethodResolution": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Enable smart method resolution to better detect method context."
+                },
+                "python-hover.showPracticalExamples": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show practical code examples in hover documentation."
+                },
+                "python-hover.showRelatedMethods": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show related methods and alternatives."
+                },
+                "python-hover.showVersionInfo": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show Python version information when available."
+                },
+                "python-hover.enableDebugLogging": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Enable verbose debug logging in the console (for troubleshooting)."
+                },
+                "python-hover.requestTimeout": {
+                    "type": "number",
+                    "default": 10000,
+                    "minimum": 1000,
+                    "maximum": 60000,
+                    "description": "Timeout in milliseconds for HTTP requests to documentation sites (default: 10 seconds)."
+                },
+                "python-hover.openDocsInEditor": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Open documentation links in VS Code's Simple Browser instead of external browser."
+                },
+                "python-hover.telemetry": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Enable telemetry data collection."
+                },
+                "python-hover.debounceDelay": {
+                    "type": "number",
+                    "default": 150,
+                    "minimum": 0,
+                    "maximum": 1000,
+                    "description": "Delay in milliseconds before showing hover documentation (reduces flicker when moving cursor quickly)."
+                },
+                "python-hover.versionCacheTTL": {
+                    "type": "number",
+                    "default": 30,
+                    "minimum": 5,
+                    "maximum": 300,
+                    "description": "How long to cache Python version detection (in seconds)."
+                },
+                "python-hover.customLibraries": {
+                    "type": "array",
+                    "default": [],
+                    "description": "Custom library documentation sources. Add your own libraries with Intersphinx inventory URLs.",
+                    "items": {
+                        "type": "object",
+                        "required": [
+                            "name",
+                            "inventoryUrl",
+                            "baseUrl"
+                        ],
+                        "properties": {
+                            "name": {
+                                "type": "string",
+                                "description": "Library name (e.g., 'mylib')"
+                            },
+                            "inventoryUrl": {
+                                "type": "string",
+                                "description": "URL to the Intersphinx objects.inv file"
+                            },
+                            "baseUrl": {
+                                "type": "string",
+                                "description": "Base URL for documentation (e.g., 'https://mylib.readthedocs.io/en/latest/')"
+                            }
+                        }
+                    }
+                },
+                "python-hover.experimental.autoDetectLibraries": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Automatically detect and fetch documentation for third-party libraries imported in your code."
+                },
+                "python-hover.ui.showParameterTables": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Display function parameters in formatted tables for easier reading."
+                },
+                "python-hover.ui.showSignatures": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show function/method signatures prominently at the top of hovers."
+                },
+                "python-hover.ui.showDeprecationWarnings": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show prominent warnings for deprecated APIs with suggested alternatives."
+                },
+                "python-hover.ui.showReturnTypes": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Display return type information prominently in hover tooltips."
+                },
+                "python-hover.ui.showQuickActions": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show quick action links (docs, copy, insert) at the top of hover tooltips."
+                },
+                "python-hover.ui.showSeeAlso": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show 'See Also' section with related functions and methods."
+                },
+                "python-hover.ui.showPerformanceHints": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Show time/space complexity information when available (experimental)."
+                },
+                "python-hover.ui.showKeyboardHints": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show keyboard shortcut hints at the bottom of hover tooltips."
+                },
+                "python-hover.ui.maxContentLength": {
+                    "type": "number",
+                    "default": 800,
+                    "minimum": 200,
+                    "maximum": 2000,
+                    "description": "Maximum character length for hover content before smart truncation with 'Read more...' link."
+                }
+            }
+        }
+    },
+    "scripts": {
+        "vscode:prepublish": "npm run compile",
+        "compile": "tsc -p ./",
+        "watch": "tsc -watch -p ./",
+        "pretest": "npm run compile && npm run lint",
+        "lint": "eslint src --ext ts",
+        "test": "node ./out/test/runTest.js",
+        "package": "vsce package"
+    },
+    "devDependencies": {
+        "@types/vscode": "^1.85.0",
+        "@types/node": "18.x",
+        "@typescript-eslint/eslint-plugin": "^6.15.0",
+        "@typescript-eslint/parser": "^6.15.0",
+        "eslint": "^8.56.0",
+        "typescript": "^5.3.3"
+    }
+}

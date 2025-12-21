@@ -1,42 +1,19 @@
 {
-  "version": "2.0.0",
-  "tasks": [
-    {
-      "type": "npm",
-      "script": "compile",
-      "group": {
-        "kind": "build",
-        "isDefault": true
-      },
-      "problemMatcher": [],
-      "label": "npm: compile",
-      "detail": "webpack"
-    },
-    {
-      "type": "npm",
-      "script": "watch",
-      "group": "build",
-      "problemMatcher": [],
-      "isBackground": true,
-      "label": "npm: watch",
-      "detail": "webpack --watch"
-    },
-    {
-      "label": "test:unit:watch",
-      "type": "shell",
-      "command": "npm run test:unit:watch",
-      "group": {
-        "kind": "test",
-        "isDefault": true
-      },
-      "problemMatcher": []
-    },
-    {
-      "label": "test:integration",
-      "type": "shell",
-      "command": "npm test",
-      "group": "test",
-      "problemMatcher": []
-    }
-  ]
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "type": "npm",
+            "script": "compile",
+            "path": "extension",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "label": "npm: compile",
+            "presentation": {
+                "reveal": "never"
+            },
+            "problemMatcher": "$tsc"
+        }
+    ]
 }
