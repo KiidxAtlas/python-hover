@@ -138,6 +138,12 @@ export class Config {
         // The Python extension updates 'python.defaultInterpreterPath' or we can rely on the environment path.
         // For a more advanced integration, we would consume the Python Extension API.
         const pythonConfig = vscode.workspace.getConfiguration('python');
-        return pythonConfig.get<string>('defaultInterpreterPath') || pythonConfig.get<string>('pythonPath') || 'python';
+        const configured = pythonConfig.get<string>('defaultInterpreterPath') || pythonConfig.get<string>('pythonPath');
+        if (configured && configured.trim().length > 0) {
+            return configured;
+        }
+
+        // Prefer python3 on non-Windows hosts.
+        return process.platform === 'win32' ? 'python' : 'python3';
     }
 }
