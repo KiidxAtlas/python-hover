@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.6.6] - 2026-01-02
+
+### 🐛 Critical Fix
+
+- **Fixed Python helper not found** — The python-helper folder was missing from the packaged extension, causing "No such file or directory" errors for all hover lookups.
+
+---
+
 ## [0.6.5] - 2026-01-02
 
 ### ✨ UI/UX Improvements

@@ -16,9 +16,9 @@ export class PythonHelper {
         this.pythonPath = pythonPath;
         this.diskCache = diskCache;
         // Running from out/extension/src/pythonHelper.js
-        // python-helper is at the project root (pyhover/python-helper/)
-        // Path: out/extension/src -> out/extension -> out -> extension -> pyhover (4 levels)
-        this.helperPath = path.resolve(__dirname, '../../../../python-helper/helper.py');
+        // python-helper is at extension/python-helper/
+        // Path: out/extension/src -> out/extension -> out -> extension (3 levels up, then into python-helper)
+        this.helperPath = path.resolve(__dirname, '../../../python-helper/helper.py');
     }
 
     private looksLikeWindowsPath(p: string): boolean {
