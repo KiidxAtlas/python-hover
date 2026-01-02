@@ -38,6 +38,17 @@ export class InventoryFetcher {
         this.pythonVersion = version;
     }
 
+    /**
+     * Normalize a URL to use HTTPS protocol.
+     * VS Code Remote environments require HTTPS connections.
+     */
+    private normalizeToHttps(url: string): string {
+        if (url.startsWith('http://')) {
+            return url.replace('http://', 'https://');
+        }
+        return url;
+    }
+
     private async resolveBaseUrl(packageName: string, version?: string, isStdlib?: boolean): Promise<string> {
         // 1. Stdlib
         if (isStdlib || packageName === 'builtins' || packageName === 'python') {
@@ -52,8 +63,8 @@ export class InventoryFetcher {
         // 3. Dynamic PyPI Lookup + Probing
         const pypiUrl = await this.pypiClient.getPackageUrl(packageName);
         if (pypiUrl) {
-            // Remove trailing slash
-            const cleanUrl = pypiUrl.replace(/\/$/, '');
+            // Remove trailing slash and normalize to HTTPS
+            const cleanUrl = this.normalizeToHttps(pypiUrl.replace(/\/$/, ''));
 
             // Probe common inventory locations
             const candidates = [
@@ -87,8 +98,11 @@ export class InventoryFetcher {
     }
 
     private checkUrlExists(url: string): Promise<boolean> {
+        // Ensure URL uses HTTPS (required for VS Code Remote environments)
+        const httpsUrl = this.normalizeToHttps(url);
+
         return new Promise((resolve) => {
-            const req = https.request(url, { method: 'HEAD', timeout: 5000 }, (res) => {
+            const req = https.request(httpsUrl, { method: 'HEAD', timeout: 5000 }, (res) => {
                 // Accept 200 OK or 3xx Redirects (which fetchBuffer handles)
                 if (res.statusCode && (res.statusCode === 200 || (res.statusCode >= 300 && res.statusCode < 400))) {
                     resolve(true);
@@ -197,11 +211,16 @@ export class InventoryFetcher {
         if (redirectCount > 5) {
             return Promise.reject(new Error('Too many redirects'));
         }
+
+        // Ensure URL uses HTTPS (required for VS Code Remote environments)
+        const httpsUrl = this.normalizeToHttps(url);
+
         return new Promise((resolve, reject) => {
-            const req = https.get(url, { timeout: 5000 }, (res) => {
+            const req = https.get(httpsUrl, { timeout: 5000 }, (res) => {
                 if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-                    const newUrl = new URL(res.headers.location, url).toString();
-                    Logger.log(`Following redirect for ${url} to ${newUrl}`);
+                    // Normalize redirect URL to HTTPS as well
+                    const newUrl = this.normalizeToHttps(new URL(res.headers.location, httpsUrl).toString());
+                    Logger.log(`Following redirect for ${httpsUrl} to ${newUrl}`);
                     this.fetchBuffer(newUrl, redirectCount + 1).then(resolve).catch(reject);
                     return;
                 }

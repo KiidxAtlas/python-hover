@@ -4,15 +4,28 @@ import { DiskCache } from '../cache/diskCache';
 
 export class SphinxScraper {
     private diskCache: DiskCache;
+    private timeout: number;
 
-    constructor(diskCache: DiskCache) {
+    constructor(diskCache: DiskCache, timeout: number = 5000) {
         this.diskCache = diskCache;
+        this.timeout = timeout;
+    }
+
+    /**
+     * Normalize a URL to use HTTPS protocol.
+     * VS Code Remote environments require HTTPS connections.
+     */
+    private normalizeToHttps(url: string): string {
+        if (url.startsWith('http://')) {
+            return url.replace('http://', 'https://');
+        }
+        return url;
     }
 
     async fetchContent(url: string): Promise<string | null> {
         try {
-            const [baseUrl, anchor] = url.split('#');
-            if (!anchor) return null;
+            const normalizedUrl = this.normalizeToHttps(url);
+            const [baseUrl, anchor] = normalizedUrl.split('#');
 
             // Check cache for the HTML page
             const cachedHtml = this.diskCache.get(baseUrl);
@@ -23,17 +36,95 @@ export class SphinxScraper {
                 this.diskCache.set(baseUrl, html);
             }
 
-            return this.extractSection(html!, anchor, baseUrl);
+            // If there's an anchor, extract that specific section
+            if (anchor) {
+                return this.extractSection(html!, anchor, baseUrl);
+            }
+
+            // No anchor - this is likely a module page. Extract the page summary.
+            return this.extractPageSummary(html!, baseUrl);
         } catch (e) {
             Logger.error(`SphinxScraper failed for ${url}:`, e);
             return null;
         }
     }
 
+    /**
+     * Extract the summary/introduction from a module documentation page.
+     * This is used when there's no anchor in the URL.
+     */
+    private extractPageSummary(html: string, pageUrl: string): string | null {
+        // Strategy 1: Look for the first paragraph after the main heading
+        // Python docs structure: <section><h1>module name</h1><p>description...</p>
+
+        // Find the main content section
+        const sectionMatch = /<section[^>]*id=["']module-[^"']*["'][^>]*>([\s\S]*?)<\/section>/i.exec(html);
+        if (sectionMatch) {
+            const sectionContent = sectionMatch[1];
+            // Extract first few paragraphs (skip the heading)
+            const paragraphs: string[] = [];
+            const pRegex = /<p[^>]*>([\s\S]*?)<\/p>/gi;
+            let pMatch;
+            let count = 0;
+            while ((pMatch = pRegex.exec(sectionContent)) !== null && count < 3) {
+                const text = this.htmlToMarkdown(pMatch[1], pageUrl).trim();
+                if (text && text.length > 20) { // Skip very short paragraphs
+                    paragraphs.push(text);
+                    count++;
+                }
+            }
+            if (paragraphs.length > 0) {
+                return paragraphs.join('\n\n');
+            }
+        }
+
+        // Strategy 2: Look for any <p> after <h1>
+        const h1Index = html.search(/<h1[^>]*>/i);
+        if (h1Index !== -1) {
+            const afterH1 = html.substring(h1Index);
+            const h1End = afterH1.indexOf('</h1>');
+            if (h1End !== -1) {
+                const content = afterH1.substring(h1End + 5);
+                // Get first 2-3 paragraphs
+                const paragraphs: string[] = [];
+                const pRegex = /<p[^>]*>([\s\S]*?)<\/p>/gi;
+                let pMatch;
+                let count = 0;
+                while ((pMatch = pRegex.exec(content)) !== null && count < 3) {
+                    const text = this.htmlToMarkdown(pMatch[1], pageUrl).trim();
+                    if (text && text.length > 20) {
+                        paragraphs.push(text);
+                        count++;
+                    }
+                }
+                if (paragraphs.length > 0) {
+                    return paragraphs.join('\n\n');
+                }
+            }
+        }
+
+        // Strategy 3: Just get the first substantial paragraph on the page
+        const pRegex = /<p[^>]*>([\s\S]*?)<\/p>/gi;
+        let pMatch;
+        while ((pMatch = pRegex.exec(html)) !== null) {
+            const text = this.htmlToMarkdown(pMatch[1], pageUrl).trim();
+            if (text && text.length > 50) {
+                return text;
+            }
+        }
+
+        return null;
+    }
+
     private fetchHtml(url: string): Promise<string> {
+        const httpsUrl = this.normalizeToHttps(url);
         return new Promise((resolve, reject) => {
-            const req = https.get(url, { timeout: 5000 }, (res) => {
-                if (res.statusCode !== 200) {
+            const req = https.get(httpsUrl, { timeout: this.timeout }, (res) => {                // Handle redirects
+                if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                    const redirectUrl = this.normalizeToHttps(new URL(res.headers.location, httpsUrl).toString());
+                    this.fetchHtml(redirectUrl).then(resolve).catch(reject);
+                    return;
+                } if (res.statusCode !== 200) {
                     reject(new Error(`Status code ${res.statusCode}`));
                     return;
                 }

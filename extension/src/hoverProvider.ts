@@ -20,6 +20,8 @@ export class HoverProvider implements vscode.HoverProvider {
     private aliasResolver: AliasResolver;
     private ready: Promise<void>;
     private isProcessing = false;
+    private lastHoverTime = 0;
+    private pendingHover: NodeJS.Timeout | null = null;
 
     constructor(private lspClient: LspClient, private config: Config, diskCache: DiskCache) {
         this.renderer = new HoverRenderer(config);
@@ -52,6 +54,26 @@ export class HoverProvider implements vscode.HoverProvider {
     }
 
     async provideHover(document: vscode.TextDocument, position: vscode.Position, token: vscode.CancellationToken): Promise<vscode.Hover | null> {
+        // Debounce rapid hover requests
+        const debounceMs = this.config.debounceDelay;
+        if (debounceMs > 0) {
+            const now = Date.now();
+            if (now - this.lastHoverTime < debounceMs) {
+                // Wait for debounce period
+                await new Promise<void>((resolve) => {
+                    if (this.pendingHover) {
+                        clearTimeout(this.pendingHover);
+                    }
+                    this.pendingHover = setTimeout(() => {
+                        this.pendingHover = null;
+                        resolve();
+                    }, debounceMs);
+                });
+                if (token.isCancellationRequested) return null;
+            }
+            this.lastHoverTime = Date.now();
+        }
+
         if (this.isProcessing) {
             return null;
         }
@@ -296,10 +318,22 @@ export class HoverProvider implements vscode.HoverProvider {
             // Logger.log('Runtime Info:', runtimeInfo);
 
             // Check for local user symbols to avoid false positive lookups
-            const isLocalPath = lspSymbol.path &&
-                !lspSymbol.path.includes('site-packages') &&
-                !lspSymbol.path.includes('dist-packages') &&
-                !/[\\/]Lib[\\/]/.test(lspSymbol.path); // Check for stdlib Lib folder
+            // This detection must work for both local and remote (VS Code Server) environments
+            const isLibraryPath = (p: string): boolean => {
+                const normalized = p.replace(/\\/g, '/').toLowerCase();
+                return (
+                    normalized.includes('/site-packages/') ||
+                    normalized.includes('/dist-packages/') ||
+                    /\/lib\/python\d/.test(normalized) ||       // Linux: /lib/python3.x/
+                    /\/lib\/python\//.test(normalized) ||       // Some distros
+                    /\/libs\//.test(normalized) ||              // Windows: Libs folder
+                    /[\\/]lib[\\/]/i.test(p) ||                 // Windows: Lib folder
+                    normalized.includes('/typeshed/') ||        // Typeshed stubs
+                    normalized.includes('/stubs/')              // Other stub packages
+                );
+            };
+
+            const isLocalPath = lspSymbol.path && !isLibraryPath(lspSymbol.path);
 
             if ((!runtimeInfo || !runtimeInfo.module) && isLocalPath) {
                 Logger.log('Symbol detected as local user code. Skipping remote documentation lookup.');
@@ -333,23 +367,57 @@ export class HoverProvider implements vscode.HoverProvider {
                     }
                 }
 
+                // Build helpful content for local symbols even without docstrings
+                if (!content && lspSymbol.signature) {
+                    // Extract type info from signature if available
+                    const returnMatch = lspSymbol.signature.match(/->\s*(.+)$/);
+                    if (returnMatch) {
+                        content = `Returns \`${returnMatch[1].trim()}\``;
+                    }
+                }
+
+                // Add source file info as a helpful note
+                let notes: string[] = [];
+                if (lspSymbol.path) {
+                    const fileName = lspSymbol.path.replace(/\\/g, '/').split('/').pop();
+                    notes.push(`Defined in \`${fileName}\``);
+                }
+
                 // For local symbols, we rely on LSP/Typeshed signature and potentially local docstring
                 // We do NOT want to show "Documentation not found" or query PyPI.
                 const localDoc: HoverDoc = {
                     title: lspSymbol.name,
                     content: content,
+                    summary: content || (lspSymbol.kind ? `Local ${lspSymbol.kind}` : 'Local symbol'),
                     signature: lspSymbol.signature,
                     kind: lspSymbol.kind,
                     source: ResolutionSource.Local,
                     confidence: 1.0,
                     overloads: lspSymbol.overloads,
-                    protocolHints: lspSymbol.protocolHints
+                    protocolHints: lspSymbol.protocolHints,
+                    notes: notes.length > 0 ? notes : undefined,
+                    sourceUrl: lspSymbol.path ? lspSymbol.path : undefined
                 };
                 return this.renderer.render(localDoc);
             }
 
             // Merge info (prefer runtime for some things, LSP for others)
             const symbolInfo = { ...lspSymbol, ...runtimeInfo };
+
+            // Handle keywords specially - they have rich docstrings from pydoc.help()
+            // and don't need Sphinx inventory lookup
+            if (runtimeInfo?.kind === 'keyword' && runtimeInfo.docstring) {
+                Logger.log(`Keyword detected: ${lspSymbol.name}`);
+                const keywordDoc: HoverDoc = {
+                    title: lspSymbol.name,
+                    content: runtimeInfo.docstring,
+                    kind: 'keyword',
+                    source: ResolutionSource.Runtime,
+                    confidence: 1.0,
+                    url: `https://docs.python.org/3/reference/simple_stmts.html#${lspSymbol.name}`
+                };
+                return this.renderer.render(keywordDoc);
+            }
 
             // Fix Name/Title:
             // If LSP gave us a qualified name (e.g. "os.chdir") and runtime gave us a simple name (e.g. "chdir"),

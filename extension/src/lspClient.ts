@@ -40,7 +40,7 @@ export class LspClient {
                 }
             }
         } catch (e) {
-            console.error('Definition lookup failed', e);
+            // Definition lookup failed - this is common for some symbols, don't spam logs
         }
 
         // 1.1 Refine Name using Definition (Reverse Lookup)
@@ -112,7 +112,7 @@ export class LspClient {
                 }
             }
         } catch (e) {
-            console.error('Hover lookup failed', e);
+            // Hover lookup failed - this is common for some symbols, don't spam logs
         }
 
         return result;
@@ -216,7 +216,7 @@ export class LspClient {
                 return { name: found.names.join('.'), kind: found.kind };
             }
         } catch (e) {
-            console.error('Failed to resolve symbol from location', e);
+            // Failed to resolve symbol from location - common for some symbols
         }
         return null;
     }

@@ -15,9 +15,10 @@ export class PythonHelper {
     constructor(pythonPath: string = 'python', diskCache: DiskCache) {
         this.pythonPath = pythonPath;
         this.diskCache = diskCache;
-        // Assuming we are running from out/extension/src/pythonHelper.js
-        // and python-helper is at the root of the extension
-        this.helperPath = path.resolve(__dirname, '../../../python-helper/helper.py');
+        // Running from out/extension/src/pythonHelper.js
+        // python-helper is at the project root (pyhover/python-helper/)
+        // Path: out/extension/src -> out/extension -> out -> extension -> pyhover (4 levels)
+        this.helperPath = path.resolve(__dirname, '../../../../python-helper/helper.py');
     }
 
     private looksLikeWindowsPath(p: string): boolean {

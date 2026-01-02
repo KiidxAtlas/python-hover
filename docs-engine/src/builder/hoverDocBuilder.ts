@@ -81,10 +81,9 @@ export class HoverDocBuilder {
             return content;
         }
 
-        // For keywords, the parser might truncate too much (it expects function-like docstrings).
-        // Use the specialized help text parser for keywords.
+        // For keywords, use the raw docstring directly - the renderer will format it
         if (symbolInfo.kind === 'keyword') {
-            return this.parser.parseHelpText(symbolInfo.docstring || '').summary;
+            return symbolInfo.docstring || undefined;
         }
 
         if (parsed.summary) return parsed.summary;

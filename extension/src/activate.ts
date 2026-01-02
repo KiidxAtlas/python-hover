@@ -15,9 +15,16 @@ export function activate(context: vscode.ExtensionContext) {
         const lspClient = new LspClient();
         const statusBarManager = new StatusBarManager(context);
 
-        // Initialize Cache
+        // Initialize Cache with TTL from settings
         const globalStoragePath = context.globalStorageUri.fsPath;
-        const diskCache = new DiskCache(globalStoragePath, () => statusBarManager.update());
+        const diskCache = new DiskCache(
+            globalStoragePath,
+            () => statusBarManager.update(),
+            {
+                inventoryDays: config.inventoryCacheDays,
+                snippetHours: config.snippetCacheHours
+            }
+        );
 
         const hoverProvider = new HoverProvider(lspClient, config, diskCache);
 
@@ -34,6 +41,13 @@ export function activate(context: vscode.ExtensionContext) {
                 await vscode.env.clipboard.writeText(url);
                 vscode.window.showInformationMessage('URL copied to clipboard');
             }
+        }));
+
+        // Register Clear Cache command
+        context.subscriptions.push(vscode.commands.registerCommand('python-hover.clearCache', () => {
+            diskCache.clear();
+            vscode.window.showInformationMessage('PyHover cache cleared.');
+            Logger.log('Cache cleared via command.');
         }));
 
         Logger.log('HoverProvider registered successfully.');

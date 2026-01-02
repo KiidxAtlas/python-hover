@@ -11,12 +11,18 @@ export class SearchFallback {
         // It aggregates docs for Python, Pandas, NumPy, etc.
         const url = this.getDevDocsUrl(key);
 
+        // Build a helpful summary instead of "not found"
+        const modulePart = key.module ? ` in \`${key.module}\`` : '';
+        const summary = key.isStdlib
+            ? `Python standard library symbol${modulePart}.`
+            : `Symbol from \`${key.package}\`${modulePart}.`;
+
         return {
-            title: key.name,
-            content: `Documentation not found in local inventory.`,
+            title: key.qualname || key.name,
+            summary: summary,
             url: url,
             source: ResolutionSource.DevDocs,
-            confidence: 0.5
+            confidence: 0.3
         };
     }
 }

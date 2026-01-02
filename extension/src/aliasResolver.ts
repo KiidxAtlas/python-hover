@@ -19,7 +19,17 @@ export class AliasResolver {
 
     private parseAliases(text: string): Map<string, string> {
         const aliases = new Map<string, string>();
-        const lines = text.split('\n');
+
+        // Normalize multi-line imports by joining lines ending with backslash
+        // and handling parenthesized imports: from X import (A, B, C)
+        let normalizedText = text.replace(/\\\n\s*/g, ' ');
+
+        // Handle parenthesized imports by removing newlines inside parentheses
+        normalizedText = normalizedText.replace(/\(\s*([^)]+)\s*\)/g, (match, content) => {
+            return '(' + content.replace(/\n\s*/g, ' ').replace(/\s+/g, ' ') + ')';
+        });
+
+        const lines = normalizedText.split('\n');
 
         for (const line of lines) {
             const trimmed = line.trim();
@@ -28,35 +38,40 @@ export class AliasResolver {
             }
 
             // 1. import X as Y
-            const importAsMatch = /^import\s+([\w.]+)\s+as\s+([\w.]+)$/.exec(trimmed);
+            const importAsMatch = /^import\s+([\w.]+)\s+as\s+([\w.]+)/.exec(trimmed);
             if (importAsMatch) {
                 aliases.set(importAsMatch[2], importAsMatch[1]);
                 continue;
             }
 
-            // 2. from X import Y as Z
+            // 2. from X import Y as Z (single import)
             const fromImportAsMatch = /^from\s+([\w.]+)\s+import\s+([\w.]+)\s+as\s+([\w.]+)$/.exec(trimmed);
             if (fromImportAsMatch) {
                 aliases.set(fromImportAsMatch[3], `${fromImportAsMatch[1]}.${fromImportAsMatch[2]}`);
                 continue;
             }
 
-            // 3. from X import Y
-            // This is trickier because of multiple imports: from X import A, B, C
+            // 3. from X import Y, Z or from X import (Y, Z)
+            // This handles multiple imports: from X import A, B, C
+            // And parenthesized: from X import (A, B, C)
             if (trimmed.startsWith('from')) {
-                const fromMatch = /^from\s+([\w.]+)\s+import\s+(.+)$/.exec(trimmed);
+                const fromMatch = /^from\s+([\w.]+)\s+import\s+\(?(.+?)\)?$/.exec(trimmed);
                 if (fromMatch) {
                     const module = fromMatch[1];
-                    const imports = fromMatch[2].split(',');
+                    // Remove trailing parenthesis if present and split by comma
+                    const importList = fromMatch[2].replace(/\)$/, '');
+                    const imports = importList.split(',');
                     for (const imp of imports) {
                         const cleanImp = imp.trim();
+                        if (!cleanImp) continue;
+
                         // Handle "A as B" inside the list
                         const asMatch = /^([\w.]+)\s+as\s+([\w.]+)$/.exec(cleanImp);
                         if (asMatch) {
                             aliases.set(asMatch[2], `${module}.${asMatch[1]}`);
                         } else {
                             // Simple "A"
-                            // Only add if it doesn't contain spaces (sanity check)
+                            // Only add if it's a valid identifier
                             if (/^[\w.]+$/.test(cleanImp)) {
                                 aliases.set(cleanImp, `${module}.${cleanImp}`);
                             }

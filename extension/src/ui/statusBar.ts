@@ -3,6 +3,10 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { Logger } from '../logger';
 
+interface StatusMenuItem extends vscode.QuickPickItem {
+    action: string;
+}
+
 export class StatusBarManager {
     private statusBarItem: vscode.StatusBarItem;
     private context: vscode.ExtensionContext;
@@ -27,57 +31,111 @@ export class StatusBarManager {
     private registerCommands() {
         this.context.subscriptions.push(vscode.commands.registerCommand('python-hover.showStatusNotification', async () => {
             const version = this.getVersion();
+            const cacheSize = this.getCacheSizeInMB();
             const config = vscode.workspace.getConfiguration('python-hover');
             const onlineDiscovery = config.get<boolean>('onlineDiscovery', true);
 
-            const toggleAction = onlineDiscovery ? 'Disable Online' : 'Enable Online';
-            const openOutputAction = 'Output';
-            const openCacheAction = 'Cache Folder';
-            const clearCacheAction = 'Clear Cache';
-            const supportAction = 'Support';
-
-            const selection = await vscode.window.showInformationMessage(
-                `PyHover v${version}`,
-                toggleAction,
-                openOutputAction,
-                openCacheAction,
-                clearCacheAction,
-                supportAction
-            );
-
-            if (selection === toggleAction) {
-                await config.update('onlineDiscovery', !onlineDiscovery, vscode.ConfigurationTarget.Global);
-                // Status bar updates via listener
-            } else if (selection === openOutputAction) {
-                Logger.show();
-            } else if (selection === openCacheAction) {
-                this.openCacheLocation();
-            } else if (selection === clearCacheAction) {
-                // Clear cache without confirmation as requested
-                const cachePath = this.getCachePath();
-                try {
-                    if (fs.existsSync(cachePath)) {
-                        fs.rmSync(cachePath, { recursive: true, force: true });
-                        vscode.window.showInformationMessage('PyHover cache cleared.');
-                    } else {
-                        vscode.window.showInformationMessage('Cache is already empty.');
-                    }
-                    this.updateStatusBar();
-                } catch (error) {
-                    vscode.window.showErrorMessage(`Failed to clear cache: ${error}`);
+            const items: StatusMenuItem[] = [
+                {
+                    label: onlineDiscovery ? '$(globe) Online Mode' : '$(circle-slash) Offline Mode',
+                    description: onlineDiscovery ? 'Fetching docs from web' : 'Using local cache only',
+                    detail: 'Click to toggle online/offline mode',
+                    action: 'toggle'
+                },
+                {
+                    label: '$(output) View Logs',
+                    description: 'Open extension output',
+                    action: 'output'
+                },
+                {
+                    label: '$(folder) Open Cache',
+                    description: cacheSize,
+                    action: 'cache'
+                },
+                {
+                    label: '$(trash) Clear Cache',
+                    description: 'Delete all cached documentation',
+                    action: 'clear'
+                },
+                {
+                    label: '',
+                    kind: vscode.QuickPickItemKind.Separator,
+                    action: ''
+                },
+                {
+                    label: '$(github) GitHub',
+                    description: 'Report issues & contribute',
+                    action: 'github'
+                },
+                {
+                    label: '$(heart) Support',
+                    description: 'Buy me a coffee ☕',
+                    action: 'support'
                 }
-            } else if (selection === supportAction) {
-                vscode.env.openExternal(vscode.Uri.parse('https://buymeacoffee.com/kiidxatlas'));
-            }
+            ];
+
+            const quickPick = vscode.window.createQuickPick<StatusMenuItem>();
+            quickPick.title = `PyHover v${version}`;
+            quickPick.placeholder = 'Select an action...';
+            quickPick.items = items;
+            quickPick.matchOnDescription = true;
+
+            quickPick.onDidAccept(async () => {
+                const selected = quickPick.selectedItems[0];
+                quickPick.hide();
+
+                if (!selected) return;
+
+                switch (selected.action) {
+                    case 'toggle':
+                        await config.update('onlineDiscovery', !onlineDiscovery, vscode.ConfigurationTarget.Global);
+                        const newState = !onlineDiscovery ? 'enabled' : 'disabled';
+                        vscode.window.showInformationMessage(`Online discovery ${newState}`);
+                        break;
+                    case 'output':
+                        Logger.show();
+                        break;
+                    case 'cache':
+                        this.openCacheLocation();
+                        break;
+                    case 'clear':
+                        await this.clearCacheQuick();
+                        break;
+                    case 'github':
+                        vscode.env.openExternal(vscode.Uri.parse('https://github.com/KiidxAtlas/python-hover'));
+                        break;
+                    case 'support':
+                        vscode.env.openExternal(vscode.Uri.parse('https://buymeacoffee.com/kiidxatlas'));
+                        break;
+                }
+            });
+
+            quickPick.onDidHide(() => quickPick.dispose());
+            quickPick.show();
         }));
 
-        // Keep the toggle command for keybindings if needed, but it's not used by status bar anymore
+        // Keep the toggle command for keybindings
         this.context.subscriptions.push(vscode.commands.registerCommand('python-hover.toggleOnlineDiscovery', async () => {
             const config = vscode.workspace.getConfiguration('python-hover');
             const onlineDiscovery = config.get<boolean>('onlineDiscovery', true);
             await config.update('onlineDiscovery', !onlineDiscovery, vscode.ConfigurationTarget.Global);
             vscode.window.showInformationMessage(`Online Discovery ${!onlineDiscovery ? 'Enabled' : 'Disabled'}`);
         }));
+    }
+
+    private async clearCacheQuick() {
+        const cachePath = this.getCachePath();
+        try {
+            if (fs.existsSync(cachePath)) {
+                fs.rmSync(cachePath, { recursive: true, force: true });
+                vscode.window.showInformationMessage('$(check) Cache cleared');
+            } else {
+                vscode.window.showInformationMessage('Cache is already empty');
+            }
+            this.updateStatusBar();
+        } catch (error) {
+            vscode.window.showErrorMessage(`Failed to clear cache: ${error}`);
+        }
     }
 
 
@@ -126,14 +184,28 @@ export class StatusBarManager {
     }
 
     private updateStatusBar() {
-        const version = this.getVersion();
         const cacheSize = this.getCacheSizeInMB();
         const config = vscode.workspace.getConfiguration('python-hover');
         const onlineDiscovery = config.get<boolean>('onlineDiscovery', true);
 
-        const icon = onlineDiscovery ? '$(globe)' : '$(circle-slash)';
-        this.statusBarItem.text = `${icon} PyHover ${version} (${cacheSize})`;
-        this.statusBarItem.tooltip = `PyHover Status: ${onlineDiscovery ? 'Online' : 'Offline'} (Click to toggle)`;
+        // Clean, minimal status bar text
+        const icon = onlineDiscovery ? '$(python)' : '$(python)$(circle-slash)';
+        this.statusBarItem.text = `${icon} ${cacheSize}`;
+
+        // Rich tooltip with full details
+        const mode = onlineDiscovery ? '🌐 Online' : '📴 Offline';
+        this.statusBarItem.tooltip = new vscode.MarkdownString(
+            `**PyHover** v${this.getVersion()}\n\n` +
+            `${mode} · Cache: ${cacheSize}\n\n` +
+            `_Click for options_`
+        );
+        this.statusBarItem.tooltip.supportThemeIcons = true;
+
+        // Color indicator for offline mode
+        this.statusBarItem.backgroundColor = onlineDiscovery
+            ? undefined
+            : new vscode.ThemeColor('statusBarItem.warningBackground');
+
         this.statusBarItem.show();
     }
 
@@ -149,28 +221,5 @@ export class StatusBarManager {
             fs.mkdirSync(cachePath, { recursive: true });
         }
         vscode.env.openExternal(vscode.Uri.file(cachePath));
-    }
-
-    private async clearCache() {
-        const cachePath = this.getCachePath();
-        const confirm = await vscode.window.showWarningMessage(
-            'Are you sure you want to clear the PyHover cache?',
-            'Yes',
-            'No'
-        );
-
-        if (confirm === 'Yes') {
-            try {
-                if (fs.existsSync(cachePath)) {
-                    fs.rmSync(cachePath, { recursive: true, force: true });
-                    vscode.window.showInformationMessage('PyHover cache cleared.');
-                } else {
-                    vscode.window.showInformationMessage('Cache is already empty.');
-                }
-                this.updateStatusBar();
-            } catch (error) {
-                vscode.window.showErrorMessage(`Failed to clear cache: ${error}`);
-            }
-        }
     }
 }

@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.6.4] - 2026-01-02
+
+### ✨ UI/UX Improvements
+
+- **Redesigned Hover UI** — Clean visual hierarchy with section headers, icons, and better spacing
+- **New Status Bar** — Minimal design with quick-pick menu for all actions
+- **Improved Keyword Docs** — Rich formatting for Python keywords with BNF syntax, examples, and PEP links
+- **DevDocs Integration** — More reliable search-based links to DevDocs
+
+### 🐛 Bug Fixes
+
+- Fixed DevDocs links returning wrong results for common names like `from`, `class`
+- Fixed VS Code Remote/SSH compatibility issues with HTTPS protocol
+- Removed unused code and test files for cleaner package
+
+### 📝 Documentation
+
+- Completely rewritten README with better onboarding and feature highlights
+- Added "What Developers Say" section and clearer CTAs
+
+---
+
 ## [0.6.3] - 2025-12-21
 
 ### 🐛 Import Hover Fix

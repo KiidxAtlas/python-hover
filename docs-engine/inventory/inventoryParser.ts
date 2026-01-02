@@ -21,7 +21,7 @@ export class InventoryParser {
         const headerEndIndex = buffer.indexOf(headerEndMarker);
 
         if (headerEndIndex === -1) {
-            console.error('Invalid objects.inv format: Header marker not found');
+            Logger.log('Invalid objects.inv format: Header marker not found');
             return inventory;
         }
 
@@ -89,7 +89,7 @@ export class InventoryParser {
             }
 
         } catch (e) {
-            console.error('Failed to decompress objects.inv:', e);
+            Logger.error('Failed to decompress objects.inv:', e);
         }
 
         return inventory;
