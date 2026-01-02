@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
-## [0.6.4] - 2026-01-02
+## [0.6.5] - 2026-01-02
 
 ### ✨ UI/UX Improvements
 
