@@ -31,6 +31,7 @@ export interface HoverDoc {
     notes?: string[];
     examples?: string[];
     url?: string;
+    devdocsUrl?: string;
     sourceUrl?: string;
     links?: Record<string, string>;
     badges?: Badge[];

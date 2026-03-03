@@ -50,7 +50,7 @@ export class DocResolver {
             // 0. Static Data (Fastest, Offline)
             const staticDoc = this.staticResolver.resolve(key);
             if (staticDoc) {
-                return staticDoc;
+                return { ...staticDoc, devdocsUrl: this.fallback.getDevDocsUrl(key) ?? undefined };
             }
 
             // 1. Sphinx objects.inv (Best)
@@ -84,28 +84,24 @@ export class DocResolver {
                     }
                 }
 
-                // Merge PyPI links into Inventory doc so we get the best of both worlds:
-                // Specific deep-link from Sphinx, and project metadata from PyPI.
-                const links = pypiDoc?.links || {};
-                links['DevDocs'] = this.fallback.getDevDocsUrl(key);
-                if (inventoryDoc.url) {
-                    links['Documentation'] = inventoryDoc.url;
-                }
-
                 return {
                     ...inventoryDoc,
-                    content: scrapedContent || inventoryDoc.content, // Prefer scraped content
+                    content: scrapedContent || inventoryDoc.content,
                     source: ResolutionSource.Sphinx,
                     confidence: 1.0,
-                    links: links
+                    links: pypiDoc?.links,
+                    devdocsUrl: this.fallback.getDevDocsUrl(key) ?? undefined,
                 };
             }
 
             // 3. PyPI Docs / Homepage (Fallback if no Sphinx)
             if (pypiDoc) {
-                const links = pypiDoc.links || {};
-                links['DevDocs'] = this.fallback.getDevDocsUrl(key);
-                return { ...pypiDoc, links, source: ResolutionSource.PyPI, confidence: 0.8 };
+                return {
+                    ...pypiDoc,
+                    source: ResolutionSource.PyPI,
+                    confidence: 0.8,
+                    devdocsUrl: this.fallback.getDevDocsUrl(key) ?? undefined,
+                };
             }
 
             // 3. Fallback Search (DevDocs, etc.)

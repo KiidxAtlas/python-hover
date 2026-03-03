@@ -2,6 +2,13 @@
 import { Badge, HoverDoc, ParameterInfo, ResolutionSource, SymbolInfo } from '../../../shared/types';
 import { DocstringParser, ParsedDocstring } from '../parsing/docstringParser';
 
+const PLACEHOLDER_MSGS = [
+    'Documentation for',
+    'Documentation from',
+    'No documentation found.',
+    'Documentation lookup failed.',
+];
+
 export class HoverDocBuilder {
     private parser: DocstringParser;
 
@@ -22,7 +29,7 @@ export class HoverDocBuilder {
 
         // Ensure we don't pass placeholder content in the legacy field
         let legacyContent = docs?.content;
-        if (legacyContent && (legacyContent.startsWith('Documentation for') || legacyContent.startsWith('Documentation from'))) {
+        if (legacyContent && PLACEHOLDER_MSGS.some(p => legacyContent!.startsWith(p) || legacyContent === p)) {
             legacyContent = undefined;
         }
 
@@ -37,11 +44,12 @@ export class HoverDocBuilder {
             notes: parsedDocstring.notes,
             examples: examples,
             url: docs?.url,
+            devdocsUrl: docs?.devdocsUrl,
             links: docs?.links,
             badges: badges,
             source: docs?.source || ResolutionSource.Runtime,
             confidence: docs?.confidence || 0.5,
-            content: legacyContent, // Keep legacy content if needed (but filtered)
+            content: legacyContent,
             overloads: symbolInfo.overloads,
             protocolHints: symbolInfo.protocolHints
         };
@@ -61,9 +69,7 @@ export class HoverDocBuilder {
         // Priority: Scraped Sphinx Content > Runtime docstring > Docs inventory placeholder
 
         let content = docs?.content;
-
-        // Filter out placeholder content
-        if (content && (content.startsWith('Documentation for') || content.startsWith('Documentation from'))) {
+        if (content && PLACEHOLDER_MSGS.some(p => content!.startsWith(p) || content === p)) {
             content = undefined;
         }
 
@@ -120,34 +126,26 @@ export class HoverDocBuilder {
 
     private buildBadges(symbolInfo: SymbolInfo, parsed: ParsedDocstring): Badge[] {
         const badges: Badge[] = [];
+        const doc = (symbolInfo.docstring || '').toLowerCase();
+        const sig = symbolInfo.signature || '';
 
         if (symbolInfo.isStdlib) {
             badges.push({ label: 'stdlib', color: 'blue' });
         }
 
-        // Heuristics for other badges
-        const doc = (symbolInfo.docstring || '').toLowerCase();
-
-        // Deprecation
-        if (doc.includes('deprecated') || doc.includes('.. deprecated::')) {
+        // Deprecation — very reliable signal
+        if (doc.includes('.. deprecated::') || /\bdeprecated\b/.test(doc)) {
             badges.push({ label: 'deprecated', color: 'red' });
         }
 
-        // Async
-        if (doc.includes('async') || (symbolInfo.signature && symbolInfo.signature.startsWith('async'))) {
+        // Async — check signature first, then docstring
+        if (sig.startsWith('async def') || sig.startsWith('async ')) {
             badges.push({ label: 'async', color: 'purple' });
         }
 
-        // Purity / Side Effects
-        const impureKeywords = ['inplace', 'mutate', 'set', 'update', 'write', 'delete', 'save'];
-        if (impureKeywords.some(k => doc.includes(k))) {
-            badges.push({ label: 'side-effects', color: 'orange', tooltip: 'This function likely mutates state.' });
-        }
-
-        // I/O
-        const ioKeywords = ['path', 'file', 'socket', 'requests', 'open', 'read', 'write'];
-        if (ioKeywords.some(k => doc.includes(k))) {
-            badges.push({ label: 'i/o', color: 'yellow', tooltip: 'This function performs I/O operations.' });
+        // Generator — return type hint is the most reliable signal
+        if (/[-:]\s*(Generator|Iterator|Iterable|AsyncGenerator|AsyncIterator)\b/.test(sig)) {
+            badges.push({ label: 'generator', color: 'teal' });
         }
 
         return badges;

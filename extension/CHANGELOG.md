@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.6.7] - 2026-03-03
+
+### ✨ New Features
+
+- **Keyword & operator hovers now link to the correct docs.python.org section** — Every Python keyword and operator (`if`, `elif`, `else`, `for`, `while`, `try`, `except`, `finally`, `with`, `def`, `class`, `async`, `match`, `case`, `pass`, `del`, `return`, `raise`, `break`, `continue`, `import`, `from`, `global`, `nonlocal`, `assert`, `yield`, `lambda`, `await`, `not`, `and`, `or`, `in`, `is`) links directly to its specific section anchor, not just the top of the page.
+- **Operator hovers** — `not`, `and`, `or`, `in`, `is` now link to `expressions.html#boolean-operations` / `membership-test-operations` / `identity-comparisons` respectively.
+- **Built-in constant hovers** — `None`, `True`, `False`, `Ellipsis`, `...`, `__debug__`, `__name__` link to `library/constants.html#<name>`.
+
+### 🔗 DevDocs Improvements
+
+- **Scoped DevDocs links** — Completely rewrote DevDocs URL generation. URLs now use the `#q=docset term` format which scopes the search to a **single documentation set** only, eliminating cross-language results (e.g. Haxe's Python-target API docs no longer bleed through).
+- **`devdocsUrl` field** — Added a dedicated `devdocsUrl` field to `HoverDoc` so the primary URL and DevDocs URL are independent; both buttons (`[Docs]` and `[DevDocs]`) now appear side-by-side when available.
+- **Fixed DevDocs button not appearing** — `hoverDocBuilder` was manually reconstructing the `HoverDoc` return object field-by-field and silently dropping `devdocsUrl`. Fixed.
+- **Known package map** — Added `DEVDOCS_DOC_SETS` mapping for numpy, pandas, scipy, matplotlib, scikit-learn, flask, django, fastapi, tensorflow, pytorch, sqlalchemy, redis, requests, httpx, aiohttp, beautifulsoup, lxml, pydantic, attrs. Unknown packages return `null` (no DevDocs button) rather than a potentially wrong URL.
+
+### 🐛 Bug Fixes
+
+- **Keyword URL was hardcoded** — The keyword fast-path in `hoverProvider` was building `simple_stmts.html#<keyword>` for every keyword (sending `elif`, `for`, `while`, `not` etc. to `simple_stmts.html#elif` which has no anchor). Now calls the doc resolver to get the correct page and anchor from the static MAP.
+- **Duplicate `PLACEHOLDER_MSGS`** — Removed duplicate constant defined twice in `hoverDocBuilder`.
+
+---
+
 ## [0.6.6] - 2026-01-02
 
 ### 🐛 Critical Fix

@@ -43,6 +43,14 @@ export function activate(context: vscode.ExtensionContext) {
             }
         }));
 
+        // Register Copy Signature command
+        context.subscriptions.push(vscode.commands.registerCommand('python-hover.copySignature', async (sig: string) => {
+            if (sig) {
+                await vscode.env.clipboard.writeText(sig);
+                vscode.window.showInformationMessage('Signature copied to clipboard');
+            }
+        }));
+
         // Register Clear Cache command
         context.subscriptions.push(vscode.commands.registerCommand('python-hover.clearCache', () => {
             diskCache.clear();

@@ -99,8 +99,11 @@ export class HoverRenderer {
         const icon = this.getIconForKind(doc.kind);
         const kindLabel = this.formatKindLabel(doc.kind);
 
-        // Title as heading for larger font
-        md.appendMarkdown(`## $(${icon}) ${doc.title}\n\n`);
+        // Strip 'builtins.' prefix — users don't need to see the module implementation detail
+        const displayTitle = doc.title.replace(/^builtins\./, '');
+
+        // ### is better-proportioned than ## inside a hover panel
+        md.appendMarkdown(`### $(${icon}) ${displayTitle}\n\n`);
 
         // Badge row with colored icons
         const badges: string[] = [];
@@ -136,27 +139,29 @@ export class HoverRenderer {
             actions.push(`[$(link-external) Definition](command:editor.action.revealDefinition "Jump to source")`);
         }
 
-        // Documentation link
+        // Primary documentation link (Sphinx, docs.python.org, PyPI, etc.)
         if (doc.url) {
-            const isDevDocs = doc.url.includes('devdocs.io');
-            const label = isDevDocs ? 'DevDocs' : 'Docs';
-            actions.push(`[$(book) ${label}](${this.sanitizeUrl(doc.url)} "Open documentation")`);
+            actions.push(`[$(book) Docs](${this.sanitizeUrl(doc.url)} "Open documentation")`);
         }
 
-        // DevDocs search - use simple symbol name for best results
-        if (doc.title && (!doc.url || !doc.url.includes('devdocs.io'))) {
-            // Extract just the final symbol name (no module prefix like "builtins.")
-            const simpleName = doc.title.includes('.')
-                ? doc.title.split('.').pop()!
-                : doc.title;
-            const query = encodeURIComponent(`python ${simpleName}`);
-            actions.push(`[$(search) DevDocs](https://devdocs.io/#q=${query} "Search DevDocs")`);
+        // DevDocs scoped search — always shown when available (non-local symbols).
+        // The URL is pre-computed with a single-doc-set scope (e.g. #q=python str or
+        // #q=numpy ndarray.mean) so it selects only the relevant doc set, not all of them.
+        if (doc.devdocsUrl && doc.source !== ResolutionSource.Local) {
+            actions.push(`[$(search) DevDocs](${this.sanitizeUrl(doc.devdocsUrl)} "Search DevDocs")`);
         }
 
-        // Copy URL action
+        // Copy signature (useful for quickly pasting a function call template)
+        if (doc.signature) {
+            const sig = doc.signature.startsWith('(') ? `${doc.title}${doc.signature}` : doc.signature;
+            const encoded = encodeURIComponent(sig);
+            actions.push(`[$(copy) Copy sig](command:python-hover.copySignature?${JSON.stringify(encoded)} "Copy signature")`);
+        }
+
+        // Copy URL
         if (doc.url) {
             const encoded = encodeURIComponent(doc.url);
-            actions.push(`[$(copy) Copy](command:python-hover.copyUrl?${JSON.stringify(encoded)} "Copy to clipboard")`);
+            actions.push(`[$(link) Copy URL](command:python-hover.copyUrl?${JSON.stringify(encoded)} "Copy docs URL")`);
         }
 
         if (actions.length > 0) {
@@ -165,21 +170,20 @@ export class HoverRenderer {
     }
 
     private renderSignature(md: vscode.MarkdownString, doc: HoverDoc): void {
-        md.appendMarkdown(`$(code) **Signature**\n`);
-
         if (doc.overloads && doc.overloads.length > 1) {
-            // Multiple overloads: show first, collapse rest
-            md.appendCodeblock(doc.overloads[0], 'python');
-
-            const remaining = doc.overloads.length - 1;
-            md.appendMarkdown(`<details><summary>$(unfold) ${remaining} more overload${remaining > 1 ? 's' : ''}</summary>\n\n`);
-            md.appendCodeblock(doc.overloads.slice(1).join('\n'), 'python');
-            md.appendMarkdown('</details>\n\n');
+            // VS Code hover panels don't support <details> — stack code blocks instead
+            const maxShow = 3;
+            doc.overloads.slice(0, maxShow).forEach(o => md.appendCodeblock(o, 'python'));
+            if (doc.overloads.length > maxShow) {
+                const extra = doc.overloads.length - maxShow;
+                md.appendMarkdown(`*+${extra} more overload${extra > 1 ? 's' : ''} — see docs*\n\n`);
+            }
         } else {
-            // Single signature
             let sig = doc.signature!;
+            // Qualify bare signatures like (x, y) → MethodName(x, y)
             if (sig.startsWith('(')) {
-                sig = `${doc.title}${sig}`;
+                const displayTitle = doc.title.replace(/^builtins\./, '');
+                sig = `${displayTitle}${sig}`;
             }
             md.appendCodeblock(sig, 'python');
         }
@@ -210,6 +214,10 @@ export class HoverRenderer {
             this.renderKeywordContent(md, content);
             return;
         }
+
+        // Strip RST directives that may have leaked from scraped Sphinx content
+        content = this.cleanRstArtifacts(content);
+        if (!content.trim()) return;
 
         // Enhance with semantic callouts
         content = this.enhanceContent(content);
@@ -466,7 +474,6 @@ export class HoverRenderer {
     private renderFooter(md: vscode.MarkdownString, doc: HoverDoc): void {
         md.appendMarkdown('---\n\n');
 
-        // Python version and keyboard hints on same line
         let version = this.config.docsVersion;
         if (version === 'auto') {
             version = this.detectedVersion || '3.12';
@@ -475,7 +482,8 @@ export class HoverRenderer {
         const footerParts: string[] = [];
         footerParts.push(`$(tag) Python ${version}`);
 
-        if (this.config.showKeyboardHints) {
+        // Skip keyboard hints for local symbols — they already have a Definition quick action
+        if (this.config.showKeyboardHints && doc.source !== ResolutionSource.Local) {
             footerParts.push(`\`F12\` Definition`);
             footerParts.push(`\`Ctrl+Space\` IntelliSense`);
         }
@@ -627,7 +635,7 @@ export class HoverRenderer {
             truncated = truncated.substring(0, bestBreak);
         }
 
-        return truncated + '\n\n---';
+        return truncated.trimEnd() + ' …';
     }
 
     private escapeTableCell(text: string): string {
@@ -636,6 +644,40 @@ export class HoverRenderer {
             .replace(/\n/g, ' ')
             .replace(/\r/g, '')
             .trim();
+    }
+
+    /**
+     * Strips RST directives and markup that may have leaked from scraped Sphinx pages.
+     * Converts directives to their markdown equivalents where possible.
+     */
+    private cleanRstArtifacts(text: string): string {
+        // Convert known directives to markdown equivalents
+        text = text.replace(/\.\. note::\s*/gi, '**Note:** ');
+        text = text.replace(/\.\. warning::\s*/gi, '**Warning:** ');
+        text = text.replace(/\.\. caution::\s*/gi, '**Caution:** ');
+        text = text.replace(/\.\. important::\s*/gi, '**Important:** ');
+        text = text.replace(/\.\. tip::\s*/gi, '**Tip:** ');
+        text = text.replace(/\.\. deprecated::\s*(\S+)/gi, '**Deprecated since $1:** ');
+        text = text.replace(/\.\. versionadded::\s*(\S+)/gi, '**New in $1:** ');
+        text = text.replace(/\.\. versionchanged::\s*(\S+)/gi, '**Changed in $1:** ');
+
+        // Strip unrecognised block directives (.. code-block::, .. seealso::, etc.)
+        text = text.replace(/^[ \t]*\.\.\s+[\w-]+::.*$/gm, '');
+
+        // Strip RST role markup :role:`text` → `text`
+        text = text.replace(/:(?:func|class|meth|mod|attr|exc|data|const|type|obj):`([^`]+)`/g, '`$1`');
+
+        // Strip RST emphasis/strong that can look like *word* or **word** (already markdown-compatible; leave as-is)
+        // Strip RST substitution references |name| → name
+        text = text.replace(/\|([^|\n]+)\|_?/g, '$1');
+
+        // Strip anonymous hyperlink markers __
+        text = text.replace(/__[ \t]*$/gm, '');
+
+        // Collapse excessive blank lines left by stripped directives
+        text = text.replace(/\n{3,}/g, '\n\n');
+
+        return text.trim();
     }
 
     private sanitizeUrl(url: string): string {

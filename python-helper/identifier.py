@@ -17,13 +17,13 @@ def identify_at_position(source, line, col):
     # Keep track of parents to reconstruct qualified names
     parents = {}
     for node in ast.walk(tree):
-        for child in ast.iter_fields(node):
-            if isinstance(child, list):
-                for item in child:
+        for _field, value in ast.iter_fields(node):
+            if isinstance(value, list):
+                for item in value:
                     if isinstance(item, ast.AST):
                         parents[item] = node
-            elif isinstance(child, ast.AST):
-                parents[child] = node
+            elif isinstance(value, ast.AST):
+                parents[value] = node
 
     for node in ast.walk(tree):
         # Ensure node has position info (Python 3.8+)
@@ -58,6 +58,11 @@ def identify_at_position(source, line, col):
     if not target_node:
         return None
 
+    # ast.Expr is a statement wrapper (e.g. a bare expression on its own line).
+    # It has the exact same bounds as its child, so unwrap it to get the real expression.
+    if isinstance(target_node, ast.Expr):
+        target_node = target_node.value
+
     return _map_node_to_type(target_node, parents)
 
 
@@ -77,18 +82,36 @@ def _map_node_to_type(node, parents):
         return "f-string"
 
     if isinstance(node, ast.Constant):
+        if isinstance(node.value, bool):  # bool before int — bool is a subclass of int
+            return "bool"
+        if isinstance(node.value, int):
+            return "int"
+        if isinstance(node.value, float):
+            return "float"
+        if isinstance(node.value, complex):
+            return "complex"
         if isinstance(node.value, str):
             return "str"
-        if isinstance(node.value, bool):
-            return "bool"
-        if isinstance(node.value, (int, float)):
-            return type(node.value).__name__
+        if isinstance(node.value, bytes):
+            return "bytes"
         if node.value is None:
             return "None"
+        if node.value is ...:
+            return "Ellipsis"
 
     # Python < 3.8 Str/Num/NameConstant
     if hasattr(ast, "Str") and isinstance(node, ast.Str):
         return "str"
+
+    # Class Definitions
+    if isinstance(node, ast.ClassDef):
+        name = node.name
+        curr = node
+        while curr in parents:
+            curr = parents[curr]
+            if isinstance(curr, ast.ClassDef):
+                name = f"{curr.name}.{name}"
+        return name
 
     # Function Definitions - Try to reconstruct qualified name
     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -102,5 +125,4 @@ def _map_node_to_type(node, parents):
                 name = f"{curr.name}.{name}"
         return name
 
-    return None
     return None

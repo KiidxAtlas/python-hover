@@ -1,8 +1,8 @@
 {
     "name": "python-hover",
     "displayName": "🐍 Python Hover - Enhanced Documentation",
-    "description": "Instant Python documentation with 300+ constructs, 19+ libraries (NumPy, Pandas, FastAPI, Django, PyTorch, aiohttp, Click), practical examples, and smart context detection. Zero context switching!",
-    "version": "0.6.6",
+    "description": "Instant Python documentation on hover. Covers 300+ constructs, all keywords/operators with correct anchors, NumPy, Pandas, FastAPI, Django, PyTorch, Flask, Pydantic, SQLAlchemy, Requests and more. Scoped DevDocs links, smart context detection, zero config.",
+    "version": "0.6.7",
     "publisher": "KiidxAtlas",
     "author": {
         "name": "KiidxAtlas",
@@ -37,17 +37,28 @@
         "hover",
         "documentation",
         "intellisense",
+        "autocomplete",
         "examples",
         "learning",
         "reference",
         "methods",
         "built-ins",
         "type-hints",
+        "typing",
         "education",
         "productivity",
         "numpy",
         "pandas",
-        "matplotlib"
+        "matplotlib",
+        "flask",
+        "django",
+        "fastapi",
+        "pytorch",
+        "pydantic",
+        "sqlalchemy",
+        "requests",
+        "devdocs",
+        "sphinx"
     ],
     "activationEvents": [
         "onLanguage:python"

@@ -20,8 +20,6 @@ export class HoverProvider implements vscode.HoverProvider {
     private aliasResolver: AliasResolver;
     private ready: Promise<void>;
     private isProcessing = false;
-    private lastHoverTime = 0;
-    private pendingHover: NodeJS.Timeout | null = null;
 
     constructor(private lspClient: LspClient, private config: Config, diskCache: DiskCache) {
         this.renderer = new HoverRenderer(config);
@@ -54,26 +52,6 @@ export class HoverProvider implements vscode.HoverProvider {
     }
 
     async provideHover(document: vscode.TextDocument, position: vscode.Position, token: vscode.CancellationToken): Promise<vscode.Hover | null> {
-        // Debounce rapid hover requests
-        const debounceMs = this.config.debounceDelay;
-        if (debounceMs > 0) {
-            const now = Date.now();
-            if (now - this.lastHoverTime < debounceMs) {
-                // Wait for debounce period
-                await new Promise<void>((resolve) => {
-                    if (this.pendingHover) {
-                        clearTimeout(this.pendingHover);
-                    }
-                    this.pendingHover = setTimeout(() => {
-                        this.pendingHover = null;
-                        resolve();
-                    }, debounceMs);
-                });
-                if (token.isCancellationRequested) return null;
-            }
-            this.lastHoverTime = Date.now();
-        }
-
         if (this.isProcessing) {
             return null;
         }
@@ -89,48 +67,10 @@ export class HoverProvider implements vscode.HoverProvider {
             let lspSymbol = await this.lspClient.resolveSymbol(document, position);
             if (token.isCancellationRequested) return null;
 
-            const isImportModuleHover = (() => {
-                try {
-                    const line = document.lineAt(position.line).text;
-                    const col = position.character;
-
-                    // from X import Y  -> hovering within X
-                    const fromIdx = line.indexOf('from ');
-                    const importIdx = line.indexOf(' import ');
-                    if (fromIdx !== -1 && importIdx !== -1 && col >= fromIdx + 5 && col <= importIdx) {
-                        return true;
-                    }
-
-                    // import X, Y as z  -> hovering after 'import '
-                    const importStart = line.match(/^\s*import\s+/);
-                    if (importStart && col >= importStart[0].length) {
-                        return true;
-                    }
-                } catch {
-                    // ignore
-                }
-                return false;
-            })();
-
-            const normalizeImportModuleName = (name: string): string => {
-                const parts = name.split('.').filter(Boolean);
-                if (parts.length >= 2 && parts[parts.length - 1] === parts[parts.length - 2]) {
-                    parts.pop();
-                }
-
-                // Strip python version prefixes like python3.11.* or 3.11.* if they got introduced.
-                if (parts.length >= 2 && /^python\d+$/.test(parts[0]) && /^\d+$/.test(parts[1])) {
-                    parts.splice(0, 2);
-                }
-                if (parts.length >= 2 && /^\d+$/.test(parts[0]) && /^\d+$/.test(parts[1])) {
-                    parts.splice(0, 2);
-                }
-
-                return parts.join('.');
-            };
+            const isImportModuleHover = this.isImportModuleHover(document, position);
 
             if (lspSymbol && isImportModuleHover && typeof lspSymbol.name === 'string') {
-                lspSymbol.name = normalizeImportModuleName(lspSymbol.name);
+                lspSymbol.name = this.normalizeImportModuleName(lspSymbol.name);
                 lspSymbol.kind = 'module';
             }
 
@@ -152,14 +92,22 @@ export class HoverProvider implements vscode.HoverProvider {
             if (identifiedType) {
                 Logger.log(`AST Identified type: ${identifiedType}`);
 
+                // Canonicalize: f-string evaluates to str; Ellipsis is the builtin constant
+                const TYPE_CANON: Record<string, string> = { 'f-string': 'str' };
+                const canonType = TYPE_CANON[identifiedType] ?? identifiedType;
+
+                // Constants (None, Ellipsis) are singletons, not classes
+                const CONSTANTS = new Set(['None', 'Ellipsis']);
+
                 // Check if it's a literal/builtin type
-                const isLiteral = ['list', 'dict', 'set', 'tuple', 'str', 'int', 'float', 'bool', 'None', 'f-string'].includes(identifiedType);
+                const isLiteral = ['list', 'dict', 'set', 'tuple', 'str', 'int', 'float',
+                    'bool', 'bytes', 'complex', 'None', 'Ellipsis', 'f-string'].includes(identifiedType);
 
                 if (isLiteral) {
-                    // For literals, we want to force the builtin type lookup
+                    // For literals, force the builtin type lookup
                     lspSymbol = {
-                        name: identifiedType,
-                        kind: 'class',
+                        name: canonType,
+                        kind: CONSTANTS.has(canonType) ? 'constant' : 'class',
                         module: 'builtins',
                         path: 'builtins'
                     };
@@ -317,23 +265,7 @@ export class HoverProvider implements vscode.HoverProvider {
             const runtimeInfo = await this.pythonHelper.resolveRuntime(lspSymbol.name);
             // Logger.log('Runtime Info:', runtimeInfo);
 
-            // Check for local user symbols to avoid false positive lookups
-            // This detection must work for both local and remote (VS Code Server) environments
-            const isLibraryPath = (p: string): boolean => {
-                const normalized = p.replace(/\\/g, '/').toLowerCase();
-                return (
-                    normalized.includes('/site-packages/') ||
-                    normalized.includes('/dist-packages/') ||
-                    /\/lib\/python\d/.test(normalized) ||       // Linux: /lib/python3.x/
-                    /\/lib\/python\//.test(normalized) ||       // Some distros
-                    /\/libs\//.test(normalized) ||              // Windows: Libs folder
-                    /[\\/]lib[\\/]/i.test(p) ||                 // Windows: Lib folder
-                    normalized.includes('/typeshed/') ||        // Typeshed stubs
-                    normalized.includes('/stubs/')              // Other stub packages
-                );
-            };
-
-            const isLocalPath = lspSymbol.path && !isLibraryPath(lspSymbol.path);
+            const isLocalPath = lspSymbol.path && !this.isLibraryPath(lspSymbol.path);
 
             if ((!runtimeInfo || !runtimeInfo.module) && isLocalPath) {
                 Logger.log('Symbol detected as local user code. Skipping remote documentation lookup.');
@@ -408,13 +340,24 @@ export class HoverProvider implements vscode.HoverProvider {
             // and don't need Sphinx inventory lookup
             if (runtimeInfo?.kind === 'keyword' && runtimeInfo.docstring) {
                 Logger.log(`Keyword detected: ${lspSymbol.name}`);
+                // Resolve the correct URL via the static MAP (compound_stmts / simple_stmts /
+                // expressions) instead of blindly pointing at simple_stmts.html#<name>.
+                const docKey = DocKeyBuilder.fromSymbol({
+                    name: lspSymbol.name,
+                    module: 'builtins',
+                    path: 'builtins',
+                    kind: 'keyword',
+                    isStdlib: true
+                });
+                const resolvedDoc = await this.docResolver.resolve(docKey);
                 const keywordDoc: HoverDoc = {
                     title: lspSymbol.name,
                     content: runtimeInfo.docstring,
                     kind: 'keyword',
                     source: ResolutionSource.Runtime,
                     confidence: 1.0,
-                    url: `https://docs.python.org/3/reference/simple_stmts.html#${lspSymbol.name}`
+                    url: resolvedDoc?.url,
+                    devdocsUrl: resolvedDoc?.devdocsUrl,
                 };
                 return this.renderer.render(keywordDoc);
             }
@@ -457,5 +400,66 @@ export class HoverProvider implements vscode.HoverProvider {
         } finally {
             this.isProcessing = false;
         }
+    }
+
+    // ─── Private Helpers ────────────────────────────────────────────────────────
+
+    /** Returns true when the cursor is on a module name inside an import statement. */
+    private isImportModuleHover(document: vscode.TextDocument, position: vscode.Position): boolean {
+        try {
+            const line = document.lineAt(position.line).text;
+            const col = position.character;
+
+            // from X import Y  →  hovering within X
+            const fromIdx = line.indexOf('from ');
+            const importIdx = line.indexOf(' import ');
+            if (fromIdx !== -1 && importIdx !== -1 && col >= fromIdx + 5 && col <= importIdx) {
+                return true;
+            }
+
+            // import X, Y as Z  →  hovering after 'import '
+            const importStart = line.match(/^\s*import\s+/);
+            if (importStart && col >= importStart[0].length) {
+                return true;
+            }
+        } catch {
+            // ignore parse errors
+        }
+        return false;
+    }
+
+    /** Strips duplicate path segments and version prefixes from an import module name. */
+    private normalizeImportModuleName(name: string): string {
+        const parts = name.split('.').filter(Boolean);
+
+        // Remove trailing duplicate segment (e.g. os.path.path → os.path)
+        if (parts.length >= 2 && parts[parts.length - 1] === parts[parts.length - 2]) {
+            parts.pop();
+        }
+
+        // Strip interpreter-version prefixes like python3.11 or 3.11
+        if (parts.length >= 2 && /^python\d+$/.test(parts[0]) && /^\d+$/.test(parts[1])) {
+            parts.splice(0, 2);
+        }
+        if (parts.length >= 2 && /^\d+$/.test(parts[0]) && /^\d+$/.test(parts[1])) {
+            parts.splice(0, 2);
+        }
+
+        return parts.join('.');
+    }
+
+    /** Returns true if the given file path belongs to an installed library (not user code). */
+    private isLibraryPath(p: string): boolean {
+        const normalized = p.replace(/\\/g, '/').toLowerCase();
+        return (
+            normalized.includes('/site-packages/') ||
+            normalized.includes('/dist-packages/') ||
+            /\/lib\/python\d/.test(normalized) ||
+            /\/lib\/python\//.test(normalized) ||
+            /\/libs\//.test(normalized) ||
+            /[/\\]lib[/\\]/i.test(p) ||
+            normalized.includes('/typeshed/') ||
+            normalized.includes('/stubs/')
+        );
     }
 }

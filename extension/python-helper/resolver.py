@@ -193,4 +193,3 @@ def _is_stdlib(module_name):
         return False
     except:
         return False
-        return False

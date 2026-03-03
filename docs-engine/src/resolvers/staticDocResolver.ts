@@ -18,7 +18,7 @@ export class StaticDocResolver {
             const info = MAP[key.name];
             const doc: HoverDoc = {
                 title: info.title,
-                // content: info.title, // Removed to allow runtime docstring to take precedence for summary
+                kind: info.kind,
                 source: ResolutionSource.Static,
                 confidence: 1.0,
                 url: `https://docs.python.org/${this.pythonVersion}/${info.url}${info.anchor ? '#' + info.anchor : ''}`
