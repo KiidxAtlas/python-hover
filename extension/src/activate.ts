@@ -178,7 +178,7 @@ export function activate(context: vscode.ExtensionContext) {
 
                 qp.onDidAccept(() => {
                     const sel = qp.selectedItems[0] as BrowseItem;
-                    if (sel?.url) { vscode.env.openExternal(vscode.Uri.parse(sel.url)); }
+                    if (sel?.url) { docsPanel.show(sel.url); }
                     qp.hide();
                 });
                 qp.onDidHide(() => qp.dispose());

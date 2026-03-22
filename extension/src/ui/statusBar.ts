@@ -47,10 +47,9 @@ export class StatusBarManager {
         const cfg = vscode.workspace.getConfiguration('python-hover');
         const online = cfg.get<boolean>('onlineDiscovery', true);
         const version = this.getVersion();
-
-        this.item.text = `${online ? '$(globe)' : '$(circle-slash)'} PyHover`;
-
         const cacheSize = this.getCacheSizeInMB();
+
+        this.item.text = `${online ? '$(globe)' : '$(circle-slash)'} PyHover  $(database) ${cacheSize}`;
         const mode = online ? '$(globe) Online' : '$(circle-slash) Offline';
         const tt = new vscode.MarkdownString(
             `**PyHover** v${version}\n\n` +

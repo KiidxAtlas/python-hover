@@ -62,21 +62,19 @@ export class HoverRenderer {
     private renderHeader(md: vscode.MarkdownString, doc: HoverDoc): void {
         const icon = this.getIconForKind(doc.kind);
         const rawTitle = doc.title.replace(/^builtins\./, '');
-        const displayTitle = rawTitle.replace(/__/g, '\\_\\_');
 
-        md.appendMarkdown(`### $(${icon}) ${displayTitle}\n\n`);
+        md.appendMarkdown(`### $(${icon}) \`${rawTitle}\`\n\n`);
 
-        // ── Compact badge row ─────────────────────────────────────────────────
+        // ── Badge row using only confirmed-working markdown primitives ──────────
         const chips: string[] = [];
 
         const kindLabel = this.formatKindLabel(doc.kind);
         chips.push(`\`${kindLabel}\``);
 
-        // Source chip — only show when it adds real value to the user
+        // Source chip
         if (doc.source === ResolutionSource.Local) {
             chips.push(`$(home) local`);
         } else if (doc.source === ResolutionSource.Sphinx && doc.url) {
-            // Show the docs hostname (e.g. numpy.org, pandas.pydata.org)
             try {
                 const host = new URL(doc.url).hostname.replace(/^www\./, '');
                 if (host && !host.includes('docs.python.org')) {
@@ -85,20 +83,19 @@ export class HoverRenderer {
             } catch { /* skip */ }
         }
 
-        // Meaningful attribute badges only
+        // Attribute badges
         if (doc.badges) {
             for (const badge of doc.badges) {
                 chips.push(`$(${this.getBadgeIcon(badge.label)}) ${badge.label}`);
             }
         }
 
-        // Installed version — show inline in badge row for non-module hovers,
-        // the module exports section handles it for module hovers.
+        // Installed version
         if (doc.installedVersion && doc.kind !== 'module') {
             chips.push(`$(versions) v${doc.installedVersion}`);
         }
 
-        md.appendMarkdown(chips.join('  ·  ') + '\n\n');
+        md.appendMarkdown(chips.join(' \u00a0\u00b7\u00a0 ') + '\n\n');
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -170,10 +167,10 @@ export class HoverRenderer {
 
     private renderCallouts(md: vscode.MarkdownString, doc: HoverDoc): void {
         if (doc.protocolHints && doc.protocolHints.length > 0) {
-            doc.protocolHints.forEach(h => md.appendMarkdown(`$(lightbulb) *${h}*\n\n`));
+            doc.protocolHints.forEach(h => md.appendMarkdown(`> $(lightbulb) *${h}*\n\n`));
         }
         if (doc.notes && doc.notes.length > 0) {
-            doc.notes.forEach(n => md.appendMarkdown(`$(info) ${n}\n\n`));
+            doc.notes.forEach(n => md.appendMarkdown(`> $(info) ${n}\n\n`));
         }
     }
 
@@ -192,6 +189,7 @@ export class HoverRenderer {
 
         this.renderVersionCompatibility(md, content);
 
+        content = this.cleanPydocDump(content);
         content = this.cleanRstArtifacts(content);
         if (!content.trim()) return;
 
@@ -257,7 +255,7 @@ export class HoverRenderer {
                 /["|\[\]()]/.test(trimmed.slice(trimmed.indexOf(':') + 1));
             const looksLikeBnf = /^[\|\(\)\[\]"'\s\w.*+]+$/.test(trimmed) &&
                 (trimmed.startsWith('|') || trimmed.startsWith('(') ||
-                 trimmed.startsWith('"') || /^[a-z_]+\s+::=/.test(trimmed));
+                    trimmed.startsWith('"') || /^[a-z_]+\s+::=/.test(trimmed));
 
             if (hasBnf || hasPydocBnf) {
                 section = 'bnf';
@@ -315,38 +313,22 @@ export class HoverRenderer {
 
     private renderParameters(md: vscode.MarkdownString, doc: HoverDoc): void {
         const params = doc.parameters!;
+        md.appendMarkdown(`---\n\n`);
         md.appendMarkdown(`**$(list-unordered) Parameters**\n\n`);
-        if (this.config.showParameterTables && params.length >= 3) {
-            this.renderParameterTable(md, params);
-        } else {
-            this.renderParameterList(md, params);
-        }
-    }
-
-    private renderParameterTable(md: vscode.MarkdownString, params: HoverDoc['parameters']): void {
-        if (!params) return;
-        md.appendMarkdown('| Parameter | Type | Description |\n');
-        md.appendMarkdown('|:----------|:-----|:------------|\n');
-        const maxRows = 8;
-        params.slice(0, maxRows).forEach(p => {
-            const name = p.default !== undefined ? `${p.name}=${p.default}` : p.name;
-            md.appendMarkdown(`| \`${name}\` | \`${p.type || '—'}\` | ${this.escapeTableCell(p.description || '')} |\n`);
-        });
-        if (params.length > maxRows) md.appendMarkdown(`\n*…and ${params.length - maxRows} more*\n`);
-        md.appendMarkdown('\n');
+        this.renderParameterList(md, params);
     }
 
     private renderParameterList(md: vscode.MarkdownString, params: HoverDoc['parameters']): void {
         if (!params) return;
-        const maxItems = 6;
+        const maxItems = 8;
         params.slice(0, maxItems).forEach(p => {
-            const typeStr = p.type ? `: \`${p.type}\`` : '';
+            const typeStr = p.type ? ` \`${p.type}\`` : '';
             const defStr = p.default !== undefined ? ` = \`${p.default}\`` : '';
             md.appendMarkdown(`- **\`${p.name}\`**${typeStr}${defStr}`);
             if (p.description) md.appendMarkdown(` — ${p.description}`);
             md.appendMarkdown('\n');
         });
-        if (params.length > maxItems) md.appendMarkdown(`\n*+${params.length - maxItems} more*\n`);
+        if (params.length > maxItems) md.appendMarkdown(`\n*+${params.length - maxItems} more params — see docs*\n`);
         md.appendMarkdown('\n');
     }
 
@@ -356,13 +338,14 @@ export class HoverRenderer {
 
     private renderReturns(md: vscode.MarkdownString, doc: HoverDoc): void {
         const ret = doc.returns!;
-        md.appendMarkdown(`**$(arrow-right) Returns**`);
-        if (ret.type) md.appendMarkdown(` \`${ret.type}\``);
+        md.appendMarkdown(`---\n\n`);
+        md.appendMarkdown(`**$(arrow-right) Returns** \`${ret.type || 'unspecified'}\``);
         if (ret.description) md.appendMarkdown(` — ${ret.description}`);
         md.appendMarkdown('\n\n');
     }
 
     private renderRaises(md: vscode.MarkdownString, doc: HoverDoc): void {
+        md.appendMarkdown(`---\n\n`);
         md.appendMarkdown(`**$(alert) Raises**\n\n`);
         doc.raises!.forEach(exc => {
             md.appendMarkdown(`- \`${exc.type}\``);
@@ -373,6 +356,7 @@ export class HoverRenderer {
     }
 
     private renderExamples(md: vscode.MarkdownString, doc: HoverDoc): void {
+        md.appendMarkdown(`---\n\n`);
         md.appendMarkdown(`**$(play) Example**\n\n`);
         const example = doc.examples![0];
         const lines = example.split('\n');
@@ -400,7 +384,7 @@ export class HoverRenderer {
         }
 
         md.appendMarkdown(`**$(symbol-field) Key exports**\n\n`);
-        md.appendMarkdown(exports.map(n => `\`${n}\``).join('  ·  ') + '\n\n');
+        md.appendMarkdown(exports.map(n => `\`${n}\``).join(' \u00a0 ') + '\n\n');
 
         if (doc.exportCount && doc.exportCount > exports.length) {
             const args = encodeURIComponent(JSON.stringify(doc.module || doc.title));
@@ -442,19 +426,8 @@ export class HoverRenderer {
         let version = this.config.docsVersion;
         if (version === 'auto') version = this.detectedVersion || '3';
 
-        const info: string[] = [`$(tag) Python ${version}`];
-        if (this.config.showKeyboardHints
-            && doc.source !== ResolutionSource.Local
-            && doc.kind !== 'keyword'
-            && doc.kind !== 'constant'
-            && doc.kind !== 'module') {
-            info.push('`F12` Go to def');
-            info.push('`Ctrl+Space` IntelliSense');
-        }
-
-        // Combine utils and version info on same line
-        const footerParts = [...utils, ...info];
-        md.appendMarkdown(footerParts.join('  ·  '));
+        const footerParts = [...utils, `$(tag) *Python ${version}*`];
+        md.appendMarkdown(footerParts.join(' \u00a0\u00b7\u00a0 '));
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -550,8 +523,43 @@ export class HoverRenderer {
         return text.trim();
     }
 
-    private escapeTableCell(text: string): string {
-        return text.replace(/\|/g, '\\|').replace(/\n/g, ' ').replace(/\r/g, '').trim();
+    /**
+     * Strip raw pydoc class/object dumps that slip through when `pydoc.help()`
+     * or `inspect.getdoc()` returns the class-level docstring for constants.
+     *
+     * Detects patterns like:
+     *   "Help on NoneType object:\n\nclass NoneType(object)\n | Methods defined here: ..."
+     *   "class bool(int)\n | bool(x) -> bool | ..."
+     *   Pipe-separated method listings
+     */
+    private cleanPydocDump(text: string): string {
+        // Strip "Help on X object:" prefix
+        text = text.replace(/^Help on \w+ object:\s*/i, '');
+
+        // Detect pipe-separated pydoc class dump and extract only the first sentence
+        if (/^class\s+\w+.*\|/s.test(text) || /\|\s+Methods defined here:/s.test(text)) {
+            // Try to grab the class docstring (first meaningful line after the class declaration)
+            const match = text.match(/^class\s+\w+[^|]*\|\s*(.+?)(?:\s*\||$)/s);
+            if (match?.[1]) {
+                const firstLine = match[1].trim().replace(/\|/g, '').trim();
+                if (firstLine && !firstLine.startsWith('Methods defined')) {
+                    return firstLine;
+                }
+            }
+            // If no usable content, return empty
+            return '';
+        }
+
+        // Strip leftover pipe-continuation lines from pydoc output
+        if (text.includes(' |  ') && text.split(' |  ').length > 3) {
+            const lines = text.split(/\s*\|\s*/).filter(l => l.trim());
+            // Take only the first meaningful sentence
+            if (lines.length > 0) {
+                return lines[0].trim();
+            }
+        }
+
+        return text;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -584,4 +592,10 @@ export class HoverRenderer {
         };
         return m[label.toLowerCase()] ?? 'info';
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // NOTE: VS Code hover sanitizer strips ALL style/class attributes from HTML.
+    // Only standard Markdown, $(icon) codicons, and unstyled HTML tags work.
+    // Do NOT add inline CSS — it will be silently removed.
+    // ─────────────────────────────────────────────────────────────────────────
 }

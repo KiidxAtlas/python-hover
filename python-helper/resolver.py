@@ -16,8 +16,13 @@ def resolve_symbol(symbol_name):
     Resolves a symbol to its documentation and metadata.
     """
     try:
+        # None, True, False are syntactic keywords in Python 3 but are better
+        # resolved as builtin constants (inspect.getdoc) rather than through
+        # pydoc.help() which dumps the entire NoneType/bool class.
+        _KEYWORD_CONSTANTS = {"None", "True", "False"}
+
         # 0. Check if it's a keyword
-        if keyword.iskeyword(symbol_name):
+        if keyword.iskeyword(symbol_name) and symbol_name not in _KEYWORD_CONSTANTS:
             # Capture help() output for the keyword
             capture = io.StringIO()
             original_stdout = sys.stdout

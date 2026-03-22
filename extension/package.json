@@ -2,7 +2,7 @@
     "name": "python-hover",
     "displayName": "🐍 Python Hover - Enhanced Documentation",
     "description": "Instant Python documentation on hover. Covers 300+ constructs, all keywords/operators with correct anchors, NumPy, Pandas, FastAPI, Django, PyTorch, Flask, Pydantic, SQLAlchemy, Requests and more. Scoped DevDocs links, smart context detection, zero config.",
-    "version": "0.6.8",
+    "version": "0.6.9",
     "publisher": "KiidxAtlas",
     "author": {
         "name": "KiidxAtlas",
