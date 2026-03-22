@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { LspSymbol } from '../../shared/types';
 
 export class LspClient {
     private async executeCommandWithTimeout<T>(command: string, ...args: any[]): Promise<T | undefined> {
@@ -9,41 +10,57 @@ export class LspClient {
         ]);
     }
 
-    async resolveSymbol(document: vscode.TextDocument, position: vscode.Position): Promise<any> {
-        // Try to get word range, but don't fail immediately if not found (might be a symbol like [ or {)
-        const range = document.getWordRangeAtPosition(position, /[a-zA-Z0-9_.]+/);
+    async resolveSymbol(document: vscode.TextDocument, position: vscode.Position): Promise<LspSymbol | null> {
+        // Get the full dotted word at position (e.g. "os.path.join")
+        const fullRange = document.getWordRangeAtPosition(position, /[a-zA-Z0-9_.]+/);
+
+        // Compute a cursor-aware initial name: take only the prefix up to the segment
+        // the cursor is on.  E.g. cursor on "path" in "os.path.join" → "os.path".
+        // The LSP providers receive the exact cursor position and resolve correctly
+        // regardless; this just gives us a better fallback when definition lookup fails.
         let word = '';
-        if (range) {
-            word = document.getText(range);
+        if (fullRange) {
+            const fullText = document.getText(fullRange);
+            const offsetInWord = position.character - fullRange.start.character;
+            const afterCursor = fullText.substring(offsetInWord);
+            const nextDotIdx = afterCursor.indexOf('.');
+            const segmentEnd = nextDotIdx === -1 ? fullText.length : offsetInWord + nextDotIdx;
+            word = fullText.substring(0, segmentEnd);
         }
 
-        // If no word found, we might be on a symbol. Return null to let AST identifier handle it.
         if (!word) {
             return null;
         }
 
-        const result: any = { name: word };
+        const result: LspSymbol = { name: word };
 
-        // 1. Get Definition (for path)
+        // 1 + 2. Run definition lookup and hover provider concurrently.
+        //   Definition → path + kind (then we do a sequential reverse-lookup from it)
+        //   Hover provider → signature + docstring (fully independent)
+        const [definitions, hovers] = await Promise.all([
+            this.executeCommandWithTimeout<vscode.Location[] | vscode.LocationLink[]>(
+                'vscode.executeDefinitionProvider', document.uri, position
+            ).catch(() => undefined),
+            this.executeCommandWithTimeout<vscode.Hover[]>(
+                'vscode.executeHoverProvider', document.uri, position
+            ).catch(() => undefined),
+        ]);
+
+        // 1. Process definition result
         let definitionLocation: vscode.Location | undefined;
-        try {
-            const definitions = await this.executeCommandWithTimeout<vscode.Location[] | vscode.LocationLink[]>('vscode.executeDefinitionProvider', document.uri, position);
-            if (definitions && definitions.length > 0) {
-                const loc = definitions[0];
-                if ('uri' in loc) {
-                    definitionLocation = loc;
-                    result.path = loc.uri.fsPath;
-                } else if ('targetUri' in loc) {
-                    definitionLocation = new vscode.Location(loc.targetUri, loc.targetRange);
-                    result.targetUri = loc.targetUri.fsPath;
-                    result.path = loc.targetUri.fsPath;
-                }
+        if (definitions && definitions.length > 0) {
+            const loc = definitions[0];
+            if ('uri' in loc) {
+                definitionLocation = loc;
+                result.path = loc.uri.fsPath;
+            } else if ('targetUri' in loc) {
+                definitionLocation = new vscode.Location(loc.targetUri, loc.targetRange);
+                result.targetUri = loc.targetUri.fsPath;
+                result.path = loc.targetUri.fsPath;
             }
-        } catch (e) {
-            // Definition lookup failed - this is common for some symbols, don't spam logs
         }
 
-        // 1.1 Refine Name using Definition (Reverse Lookup)
+        // 1.1 Refine Name using Definition (Reverse Lookup — still sequential; depends on step 1)
         // If we have a definition, try to resolve the real name from the definition file
         // This fixes issues where hovering 'ls.append' returns 'ls.append' instead of 'list.append'
         if (definitionLocation) {
@@ -72,9 +89,8 @@ export class LspClient {
             }
         }
 
-        // 2. Get Hover (for signature)
+        // 2. Process hover result (already resolved concurrently above)
         try {
-            const hovers = await this.executeCommandWithTimeout<vscode.Hover[]>('vscode.executeHoverProvider', document.uri, position);
             if (hovers && hovers.length > 0) {
                 for (const hover of hovers) {
                     for (const content of hover.contents) {
@@ -221,7 +237,7 @@ export class LspClient {
         return null;
     }
 
-    private fixNameMismatch(result: any, signature: string) {
+    private fixNameMismatch(result: LspSymbol, signature: string) {
         if (!result.name) { return; }
 
         let signatureName = '';

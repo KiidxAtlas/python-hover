@@ -1,5 +1,6 @@
 import { DocKey, HoverDoc, ResolutionSource } from '../../../shared/types';
 import { MAP } from '../../data/documentationUrls';
+import { STDLIB_MODULES } from '../../data/stdlibModules';
 
 export class StaticDocResolver {
     private pythonVersion: string;
@@ -13,18 +14,35 @@ export class StaticDocResolver {
     }
 
     resolve(key: DocKey): HoverDoc | null {
-        // 1. Check for Keywords/Operators/Builtins in MAP
+        // 1. Keywords / operators / builtins
         if (MAP[key.name]) {
             const info = MAP[key.name];
-            const doc: HoverDoc = {
+            return {
                 title: info.title,
                 kind: info.kind,
                 source: ResolutionSource.Static,
                 confidence: 1.0,
                 url: `https://docs.python.org/${this.pythonVersion}/${info.url}${info.anchor ? '#' + info.anchor : ''}`
             };
+        }
 
-            return doc;
+        // 2. Stdlib modules — instant offline hover for `import os`, `import pathlib`, etc.
+        // Only match the exact name — never fall back to key.module, which would
+        // incorrectly return the MODULE page for any symbol inside that module
+        // (e.g. list → builtins.html, typing.List → "Support for type hints…").
+        if (key.isStdlib) {
+            const modInfo = STDLIB_MODULES[key.name];
+            if (modInfo) {
+                return {
+                    title: key.name,
+                    kind: 'module',
+                    summary: modInfo.summary,
+                    content: modInfo.summary,
+                    source: ResolutionSource.Static,
+                    confidence: 1.0,
+                    url: `https://docs.python.org/${this.pythonVersion}/${modInfo.url}`
+                };
+            }
         }
 
         return null;

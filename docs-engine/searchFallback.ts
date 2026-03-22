@@ -33,7 +33,7 @@ const DEVDOCS_DOC_SETS: Record<string, string> = {
     'httpx': 'httpx',
     'aiohttp': 'aiohttp',
     // Async
-    'asyncio': 'python',   // stdlib module — scope to Python docs
+    'asyncio': 'python~3',   // stdlib module — scope to Python docs
     // DOM / HTML parsing
     'bs4': 'beautiful_soup',
     'beautifulsoup4': 'beautiful_soup',
@@ -63,7 +63,7 @@ export class SearchFallback {
 
         // ── stdlib ────────────────────────────────────────────────────────
         if (key.isStdlib || !key.package || key.package === 'builtins') {
-            return `https://devdocs.io/#q=${encodeURIComponent(`python ${cleanName}`)}`;
+            return `https://devdocs.io/#q=${encodeURIComponent(`python~3 ${cleanName}`)}`;
         }
 
         // ── known third-party ─────────────────────────────────────────────
@@ -76,9 +76,9 @@ export class SearchFallback {
         }
 
         // ── unknown package ───────────────────────────────────────────────
-        // We can't reliably scope, so return null; the caller can decide whether
-        // to show the button at all or omit it entirely.
-        return null;
+        // Fall back scoped to Python 3 docs — prevents cross-language results
+        // (e.g. haxe~python appearing for "python isinstance").
+        return `https://devdocs.io/#q=${encodeURIComponent(`python~3 ${cleanName}`)}`;
     }
 
     async search(key: DocKey): Promise<HoverDoc> {
@@ -90,9 +90,18 @@ export class SearchFallback {
             ? `Python standard library symbol${modulePart}.`
             : `Symbol from \`${key.package}\`${modulePart}.`;
 
+        // For stdlib symbols, construct the module page URL so the hover always
+        // shows a working Docs link even when the Sphinx inventory fails to load.
+        let url: string | undefined;
+        if (key.isStdlib && key.module && key.module !== 'builtins') {
+            const topModule = key.module.split('.')[0];
+            url = `https://docs.python.org/3/library/${topModule}.html`;
+        }
+
         return {
             title: key.qualname || key.name,
             summary: summary,
+            url,
             devdocsUrl: devdocsUrl ?? undefined,
             source: ResolutionSource.DevDocs,
             confidence: 0.3

@@ -9,3 +9,8 @@ vsc-extension-quickstart.md
 **/*.ts
 !out/**/*
 !python-helper/**/*
+# Re-exclude after !out/**/* negation
+out/**/*.map
+out/**/*.ts
+# Exclude demo GIF — README links via GitHub raw URL, not local path
+media/media.gif

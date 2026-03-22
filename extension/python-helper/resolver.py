@@ -1,3 +1,4 @@
+import ast
 import builtins
 import importlib
 import importlib.metadata
@@ -116,10 +117,32 @@ def _describe(obj, module_name, name):
     else:
         final_module = defined_module or module_name
 
+    docstring = inspect.getdoc(obj)
+
+    # Discard docstring if it is the parent module's own docstring (not the object's).
+    # This happens with typing aliases where __doc__ is not overridden per-symbol.
+    if docstring and not inspect.ismodule(obj) and module_name:
+        try:
+            parent_mod = importlib.import_module(module_name)
+            parent_doc = inspect.getdoc(parent_mod)
+            if parent_doc and docstring.strip() == parent_doc.strip():
+                docstring = None
+        except Exception:
+            pass
+
     try:
-        signature = str(inspect.signature(obj)) if callable(obj) else None
-    except ValueError:
-        # Some builtins (like dict) might fail signature inspection
+        # Suppress signatures for all typing module objects regardless of Python version.
+        # Typing constructs (_GenericAlias, _SpecialForm, etc.) inherit __call__ from
+        # their implementation class, producing misleading (*args, **kwargs) signatures.
+        # Since typing constructs are used as annotation forms (List[int]), not called
+        # directly, we never want to show a callable signature for them.
+        if getattr(obj, "__module__", None) == "typing":
+            signature = None
+        elif callable(obj):
+            signature = str(inspect.signature(obj))
+        else:
+            signature = None
+    except (ValueError, TypeError):
         signature = None
 
     url = (
@@ -129,7 +152,7 @@ def _describe(obj, module_name, name):
     )
 
     return {
-        "docstring": inspect.getdoc(obj),
+        "docstring": docstring,
         "signature": signature,
         "module": final_module,
         "qualname": getattr(
@@ -160,6 +183,102 @@ def _get_stdlib_url(module_name, qualname, obj):
 
     # Standard library modules
     return f"{base}/{module_name}.html#{qualname}"
+
+
+def get_docstring_from_source(source: str, symbol_name: str) -> dict:
+    """
+    Extract the docstring for a function or class from source code using AST.
+    Used for local user-defined symbols that can't be imported.
+
+    symbol_name may be a simple name ("my_func") or a dotted qualified name
+    ("MyClass.my_method").
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as e:
+        return {"error": f"SyntaxError: {e}"}
+
+    parts = symbol_name.split(".")
+    node = _find_ast_node(tree.body, parts)
+    if node is None:
+        return {"error": f"Symbol '{symbol_name}' not found in source"}
+
+    docstring = ast.get_docstring(node)
+    signature = _ast_signature(node)
+    kind = "class" if isinstance(node, ast.ClassDef) else "function"
+
+    return {
+        "docstring": docstring,
+        "signature": signature,
+        "kind": kind,
+        "qualname": symbol_name,
+        "module": None,
+        "is_stdlib": False,
+    }
+
+
+def _find_ast_node(stmts, parts):
+    """Recursively walk the AST to find a function/class matching the dotted path."""
+    if not parts:
+        return None
+    name = parts[0]
+    for node in stmts:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if node.name == name:
+                if len(parts) == 1:
+                    return node
+                if isinstance(node, ast.ClassDef):
+                    return _find_ast_node(node.body, parts[1:])
+    return None
+
+
+def _ast_signature(node) -> str | None:
+    """Build a rough signature string from an AST function node."""
+    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return None
+    try:
+        args = node.args
+        params = []
+
+        # positional-only (Python 3.8+)
+        for i, arg in enumerate(args.posonlyargs):
+            default_offset = len(args.posonlyargs) - len(args.defaults)
+            idx = i - default_offset
+            if idx >= 0 and idx < len(args.defaults):
+                params.append(f"{arg.arg}={ast.unparse(args.defaults[idx])}")
+            else:
+                params.append(arg.arg)
+        if args.posonlyargs:
+            params.append("/")
+
+        # regular args
+        reg_defaults_start = len(args.args) - len(args.defaults)
+        for i, arg in enumerate(args.args):
+            default_idx = i - reg_defaults_start
+            if default_idx >= 0 and default_idx < len(args.defaults):
+                params.append(f"{arg.arg}={ast.unparse(args.defaults[default_idx])}")
+            else:
+                params.append(arg.arg)
+
+        if args.vararg:
+            params.append(f"*{args.vararg.arg}")
+        elif args.kwonlyargs:
+            params.append("*")
+
+        for i, arg in enumerate(args.kwonlyargs):
+            if i < len(args.kw_defaults) and args.kw_defaults[i] is not None:
+                params.append(f"{arg.arg}={ast.unparse(args.kw_defaults[i])}")
+            else:
+                params.append(arg.arg)
+
+        if args.kwarg:
+            params.append(f"**{args.kwarg.arg}")
+
+        ret = f" -> {ast.unparse(node.returns)}" if node.returns else ""
+        prefix = "async def" if isinstance(node, ast.AsyncFunctionDef) else "def"
+        return f"{prefix} {node.name}({', '.join(params)}){ret}"
+    except Exception:
+        return None
 
 
 def _is_stdlib(module_name):

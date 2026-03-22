@@ -51,7 +51,9 @@ export class HoverDocBuilder {
             confidence: docs?.confidence || 0.5,
             content: legacyContent,
             overloads: symbolInfo.overloads,
-            protocolHints: symbolInfo.protocolHints
+            protocolHints: symbolInfo.protocolHints,
+            seeAlso: docs?.seeAlso,
+            module: symbolInfo.module || docs?.module,
         };
     }
 

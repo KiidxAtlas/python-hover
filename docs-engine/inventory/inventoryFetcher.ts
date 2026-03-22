@@ -5,18 +5,94 @@ import { PyPiClient } from '../pypi/pypiClient';
 import { DiskCache } from '../src/cache/diskCache';
 import { InventoryParser } from './inventoryParser';
 
+/**
+ * Pre-verified Sphinx documentation base URLs for popular packages.
+ * Skips PyPI lookup + HEAD probe for these, giving instant inventory resolution.
+ * Format: packageName → base URL (without trailing slash, without /objects.inv).
+ */
+const KNOWN_DOCS_URLS: Record<string, string> = {
+    // Scientific / data
+    'numpy': 'https://numpy.org/doc/stable',
+    'pandas': 'https://pandas.pydata.org/docs',
+    'scipy': 'https://docs.scipy.org/doc/scipy',
+    'matplotlib': 'https://matplotlib.org/stable',
+    'seaborn': 'https://seaborn.pydata.org',
+    'statsmodels': 'https://www.statsmodels.org/stable',
+    'sympy': 'https://docs.sympy.org/latest',
+    'networkx': 'https://networkx.org/documentation/stable',
+    'pillow': 'https://pillow.readthedocs.io/en/stable',
+    'pil': 'https://pillow.readthedocs.io/en/stable',
+    // ML / AI
+    'sklearn': 'https://scikit-learn.org/stable',
+    'scikit-learn': 'https://scikit-learn.org/stable',
+    'torch': 'https://pytorch.org/docs/stable',
+    'tensorflow': 'https://www.tensorflow.org/api_docs/python',
+    'keras': 'https://keras.io/api',
+    'xgboost': 'https://xgboost.readthedocs.io/en/stable',
+    'lightgbm': 'https://lightgbm.readthedocs.io/en/stable',
+    // Web frameworks
+    'flask': 'https://flask.palletsprojects.com/en/latest',
+    'django': 'https://docs.djangoproject.com/en/stable',
+    'fastapi': 'https://fastapi.tiangolo.com',
+    'starlette': 'https://www.starlette.io',
+    'aiohttp': 'https://docs.aiohttp.org/en/stable',
+    'tornado': 'https://www.tornadoweb.org/en/stable',
+    // HTTP / networking
+    'requests': 'https://requests.readthedocs.io/en/latest',
+    'httpx': 'https://www.python-httpx.org',
+    'urllib3': 'https://urllib3.readthedocs.io/en/stable',
+    // Data validation / settings
+    'pydantic': 'https://docs.pydantic.dev/latest',
+    'attrs': 'https://www.attrs.org/en/stable',
+    'marshmallow': 'https://marshmallow.readthedocs.io/en/stable',
+    // Database
+    'sqlalchemy': 'https://docs.sqlalchemy.org/en/14',
+    'alembic': 'https://alembic.sqlalchemy.org/en/latest',
+    'pymongo': 'https://pymongo.readthedocs.io/en/stable',
+    'redis': 'https://redis-py.readthedocs.io/en/stable',
+    // CLI / config
+    'click': 'https://click.palletsprojects.com/en/latest',
+    'rich': 'https://rich.readthedocs.io/en/stable',
+    'typer': 'https://typer.tiangolo.com',
+    // Testing
+    'pytest': 'https://docs.pytest.org/en/stable',
+    'hypothesis': 'https://hypothesis.readthedocs.io/en/latest',
+    // Async / concurrency
+    'anyio': 'https://anyio.readthedocs.io/en/stable',
+    'trio': 'https://trio.readthedocs.io/en/stable',
+    // Utilities
+    'arrow': 'https://arrow.readthedocs.io/en/latest',
+    'pendulum': 'https://pendulum.eustace.io/docs',
+    'boto3': 'https://boto3.amazonaws.com/v1/documentation/api/latest',
+    'botocore': 'https://botocore.amazonaws.com/v1/documentation/api/latest',
+    'cryptography': 'https://cryptography.readthedocs.io/en/latest',
+    'paramiko': 'https://docs.paramiko.org/en/stable',
+    'celery': 'https://docs.celeryq.dev/en/stable',
+};
+
+/** Packages to eagerly load on warmup (most commonly used). */
+const WARMUP_PACKAGES = [
+    'numpy', 'pandas', 'requests', 'flask', 'django', 'fastapi',
+    'sklearn', 'matplotlib', 'sqlalchemy', 'pydantic', 'pytest', 'click',
+    // Load the Python stdlib inventory eagerly so typing, asyncio, etc.
+    // are available on first hover without waiting for a network round-trip.
+    'typing', 'asyncio', 'builtins',
+];
+
 export class InventoryFetcher {
     private parser: InventoryParser;
     private pypiClient: PyPiClient;
     private cache: Map<string, Map<string, HoverDoc>>; // Map<Package, Map<Symbol, Doc>>
     private packageBaseUrls: Map<string, string>; // Cache for resolved base URLs
+    /** In-flight load promises — concurrent callers share one promise instead of spawning duplicates. */
+    private loadingPromises: Map<string, Promise<void>> = new Map();
     private diskCache: DiskCache;
     private pythonVersion: string;
     private allowNetwork: boolean;
 
     constructor(diskCache: DiskCache, pythonVersion: string = '3', customLibraries: any[] = [], allowNetwork: boolean = true) {
         this.parser = new InventoryParser();
-        this.pypiClient = new PyPiClient();
+        this.pypiClient = new PyPiClient(diskCache);
         this.cache = new Map();
         this.packageBaseUrls = new Map();
         this.diskCache = diskCache;
@@ -49,42 +125,68 @@ export class InventoryFetcher {
         return url;
     }
 
+    /**
+     * Eagerly load inventories for a set of packages in the background.
+     * Call this after extension activation so first-hover latency is near zero
+     * for the most common packages.
+     */
+    warmup(packages: string[] = WARMUP_PACKAGES): void {
+        for (const pkg of packages) {
+            if (this.cache.has(pkg)) continue; // already loaded
+            // Fire-and-forget: errors are swallowed inside loadInventory
+            this.loadInventory(pkg).catch(() => {});
+        }
+    }
+
     private async resolveBaseUrl(packageName: string, version?: string, isStdlib?: boolean): Promise<string> {
         // 1. Stdlib
         if (isStdlib || packageName === 'builtins' || packageName === 'python') {
             return `https://docs.python.org/${this.pythonVersion}`;
         }
 
-        // 2. Check cache
+        // 2. Check in-memory URL cache
         if (this.packageBaseUrls.has(packageName)) {
             return this.packageBaseUrls.get(packageName)!;
         }
 
-        // 3. Dynamic PyPI Lookup + Probing
+        // 3. Known pre-verified URLs (skips PyPI lookup + HEAD probing)
+        const knownUrl = KNOWN_DOCS_URLS[packageName.toLowerCase()];
+        if (knownUrl) {
+            this.packageBaseUrls.set(packageName, knownUrl);
+            return knownUrl;
+        }
+
+        // 4. Dynamic PyPI Lookup + Probing
         const pypiUrl = await this.pypiClient.getPackageUrl(packageName);
         if (pypiUrl) {
             // Remove trailing slash and normalize to HTTPS
             const cleanUrl = this.normalizeToHttps(pypiUrl.replace(/\/$/, ''));
 
-            // Probe common inventory locations
+            // Probe all candidate inventory locations concurrently (vs sequential 5s × 8)
             const candidates = [
                 `${cleanUrl}/objects.inv`,
                 `${cleanUrl}/docs/objects.inv`,
                 `${cleanUrl}/en/stable/objects.inv`,
                 `${cleanUrl}/en/latest/objects.inv`,
                 `${cleanUrl}/api/objects.inv`,
-                // Common for numpy/scipy/matplotlib
                 `${cleanUrl}/doc/stable/objects.inv`,
                 `${cleanUrl}/doc/objects.inv`,
                 `${cleanUrl}/stable/objects.inv`,
             ];
 
-            for (const url of candidates) {
-                if (await this.checkUrlExists(url)) {
-                    const baseUrl = url.replace('/objects.inv', '');
-                    this.packageBaseUrls.set(packageName, baseUrl);
-                    return baseUrl;
-                }
+            try {
+                const baseUrl = await Promise.any(
+                    candidates.map(url =>
+                        this.checkUrlExists(url).then(exists => {
+                            if (!exists) throw new Error('not found');
+                            return url.replace('/objects.inv', '');
+                        })
+                    )
+                );
+                this.packageBaseUrls.set(packageName, baseUrl);
+                return baseUrl;
+            } catch {
+                // All probes failed — fall through to ReadTheDocs fallback
             }
 
             // If probing failed but we have a URL, maybe it's just the base?
@@ -122,9 +224,15 @@ export class InventoryFetcher {
     async findInInventory(key: DocKey): Promise<HoverDoc | null> {
         const packageName = key.package;
 
-        // 1. Check in-memory cache
+        // 1. Check in-memory cache; if missing, load — but share the in-flight promise so
+        //    concurrent callers don't each trigger a separate download/parse.
         if (!this.cache.has(packageName)) {
-            await this.loadInventory(packageName, key.version, key.isStdlib);
+            if (!this.loadingPromises.has(packageName)) {
+                const p = this.loadInventory(packageName, key.version, key.isStdlib);
+                this.loadingPromises.set(packageName, p);
+                p.finally(() => this.loadingPromises.delete(packageName));
+            }
+            await this.loadingPromises.get(packageName);
         }
 
         const packageInventory = this.cache.get(packageName);
@@ -174,6 +282,19 @@ export class InventoryFetcher {
                 const data = JSON.parse(cached);
                 const inventory = new Map<string, HoverDoc>(Object.entries(data));
                 this.cache.set(packageName, inventory);
+
+                // Restore the base URL so module-overview hovers can build a Docs link.
+                // When loading from disk cache we return early and never call resolveBaseUrl,
+                // so packageBaseUrls would stay empty without this.
+                if (!this.packageBaseUrls.has(packageName)) {
+                    const knownUrl = KNOWN_DOCS_URLS[packageName.toLowerCase()];
+                    if (knownUrl) {
+                        this.packageBaseUrls.set(packageName, knownUrl);
+                    } else if (isStdlib || packageName === 'builtins' || packageName === 'python') {
+                        this.packageBaseUrls.set(packageName, `https://docs.python.org/${this.pythonVersion}`);
+                    }
+                }
+
                 Logger.log(`Loaded inventory for ${packageName} from disk cache`);
                 return;
             } catch (e) {
@@ -202,9 +323,103 @@ export class InventoryFetcher {
             this.diskCache.set(cacheKey, JSON.stringify(obj));
         } catch (e) {
             Logger.log(`Failed to load inventory for ${packageName} from ${inventoryUrl}: ${e}`);
+
+            // For stdlib, retry with the canonical /3/ URL in case the versioned URL
+            // is unavailable (e.g. pre-release Python where docs aren't published yet).
+            if (isStdlib && !inventoryUrl.includes('/docs.python.org/3/')) {
+                const fallbackBase = 'https://docs.python.org/3';
+                const fallbackUrl = `${fallbackBase}/objects.inv`;
+                try {
+                    Logger.log(`Retrying stdlib inventory with canonical URL: ${fallbackUrl}`);
+                    const buffer = await this.fetchBuffer(fallbackUrl);
+                    const inventory = this.parser.parse(buffer, fallbackBase);
+                    this.cache.set(packageName, inventory);
+                    this.packageBaseUrls.set(packageName, fallbackBase);
+                    Logger.log(`Loaded stdlib inventory from canonical URL: ${inventory.size} items`);
+                    const obj = Object.fromEntries(inventory);
+                    this.diskCache.set(cacheKey, JSON.stringify(obj));
+                    return;
+                } catch (fallbackErr) {
+                    Logger.log(`Canonical stdlib inventory also failed: ${fallbackErr}`);
+                }
+            }
+
             // Mark as empty to avoid repeated failures
             this.cache.set(packageName, new Map());
         }
+    }
+
+    /**
+     * Returns the resolved base docs URL for a package (available after inventory is loaded).
+     */
+    getPackageBaseUrl(packageName: string): string | undefined {
+        return this.packageBaseUrls.get(packageName);
+    }
+
+    /**
+     * Returns up to `limit` notable export names from a loaded inventory.
+     * Prefers short (top-level), public (no underscore) names, classes first.
+     */
+    getModuleExports(packageName: string, limit = 16): string[] {
+        const inventory = this.cache.get(packageName);
+        if (!inventory) return [];
+
+        const seen = new Set<string>();
+        const entries: Array<{ label: string; depth: number; kindScore: number }> = [];
+
+        for (const [name, doc] of inventory) {
+            const parts = name.split('.');
+            const label = parts[parts.length - 1];
+            if (!label || label.startsWith('_')) continue;
+            // Skip C-extension macros / constants: all-caps with underscores (e.g. NPY_ARRAY_C_CONTIGUOUS)
+            if (/^[A-Z][A-Z0-9_]{2,}$/.test(label)) continue;
+            if (seen.has(label)) continue;
+            seen.add(label);
+            const kindScore = doc.kind === 'class' ? 0 : doc.kind === 'function' ? 1 : 2;
+            entries.push({ label, depth: parts.length, kindScore });
+        }
+
+        return entries
+            .sort((a, b) =>
+                a.depth !== b.depth ? a.depth - b.depth : a.kindScore - b.kindScore
+            )
+            .slice(0, limit)
+            .map(e => e.label);
+    }
+
+    /** Total number of indexed symbols for a loaded package. */
+    getPackageExportCount(packageName: string): number {
+        return this.cache.get(packageName)?.size ?? 0;
+    }
+
+    searchSymbols(query: string): Array<{ name: string; url: string; kind: string; package: string }> {
+        const q = query.toLowerCase().trim();
+        if (!q) return [];
+        const results: Array<{ name: string; url: string; kind: string; package: string }> = [];
+        for (const [pkg, inventory] of this.cache) {
+            for (const [name, doc] of inventory) {
+                if (name.toLowerCase().includes(q)) {
+                    results.push({ name, url: doc.url || '', kind: doc.kind || 'symbol', package: pkg });
+                }
+            }
+        }
+        return results
+            .sort((a, b) => {
+                const aq = a.name.toLowerCase(), bq = b.name.toLowerCase();
+                if (aq === q && bq !== q) return -1;
+                if (bq === q && aq !== q) return 1;
+                if (aq.startsWith(q) && !bq.startsWith(q)) return -1;
+                if (bq.startsWith(q) && !aq.startsWith(q)) return 1;
+                if (a.name.length !== b.name.length) return a.name.length - b.name.length;
+                return a.name.localeCompare(b.name);
+            })
+            .slice(0, 200);
+    }
+
+    getIndexedSymbolCount(): number {
+        let n = 0;
+        for (const inv of this.cache.values()) n += inv.size;
+        return n;
     }
 
     private fetchBuffer(url: string, redirectCount = 0): Promise<Buffer> {

@@ -1,20 +1,42 @@
 import * as https from 'https';
 import { DocKey, HoverDoc, ResolutionSource } from '../../shared/types';
+import { DiskCache } from '../src/cache/diskCache';
 
 export class PyPiClient {
-    async getPackageMetadata(packageName: string): Promise<{ url: string | null, links: Record<string, string> }> {
+    private diskCache: DiskCache | null;
+
+    constructor(diskCache?: DiskCache) {
+        this.diskCache = diskCache ?? null;
+    }
+
+    async getPackageMetadata(packageName: string): Promise<{ url: string | null, summary: string | null, links: Record<string, string> }> {
+        const EMPTY: { url: null, summary: null, links: Record<string, string> } = { url: null, summary: null, links: {} };
+
+        // Check disk cache — positive results under 'pypi:', negative under 'pypi-negative:'
+        if (this.diskCache) {
+            const negative = this.diskCache.get(`pypi-negative:${packageName}`);
+            if (negative) return EMPTY;
+
+            const cached = this.diskCache.get(`pypi:${packageName}`);
+            if (cached) {
+                try { return JSON.parse(cached); } catch { /* stale/corrupt — refetch */ }
+            }
+        }
+
         try {
             const metadata = await this.fetchJson(`https://pypi.org/pypi/${packageName}/json`);
-            if (!metadata || !metadata.info) return { url: null, links: {} };
+            if (!metadata || !metadata.info) {
+                // Cache the miss so we don't query PyPI on every hover for unknown packages
+                if (this.diskCache) this.diskCache.set(`pypi-negative:${packageName}`, '1');
+                return EMPTY;
+            }
 
             const info = metadata.info;
             const links: Record<string, string> = {};
 
             if (info.project_urls) {
                 for (const [key, value] of Object.entries(info.project_urls)) {
-                    if (typeof value === 'string') {
-                        links[key] = value;
-                    }
+                    if (typeof value === 'string') links[key] = value;
                 }
             }
 
@@ -33,10 +55,27 @@ export class PyPiClient {
                 bestUrl = Object.values(links)[0];
             }
 
-            return { url: bestUrl, links };
-        } catch (e) {
-            // Logger.log(`PyPI lookup failed for ${packageName}: ${e}`);
-            return { url: null, links: {} };
+            // One-line description from PyPI metadata
+            const summary: string | null = (typeof info.summary === 'string' && info.summary.trim())
+                ? info.summary.trim()
+                : null;
+
+            const result = { url: bestUrl, summary, links };
+
+            if (this.diskCache) {
+                if (!bestUrl && !summary) {
+                    // Package exists on PyPI but has no useful docs — treat as negative
+                    this.diskCache.set(`pypi-negative:${packageName}`, '1');
+                } else {
+                    this.diskCache.set(`pypi:${packageName}`, JSON.stringify(result));
+                }
+            }
+
+            return result;
+        } catch {
+            // Network error or 404 — cache as negative so we don't retry on every hover
+            if (this.diskCache) this.diskCache.set(`pypi-negative:${packageName}`, '1');
+            return EMPTY;
         }
     }
 
@@ -46,12 +85,13 @@ export class PyPiClient {
     }
 
     async findDocs(key: DocKey): Promise<HoverDoc | null> {
-        const { url, links } = await this.getPackageMetadata(key.package);
-        if (url) {
+        const { url, summary, links } = await this.getPackageMetadata(key.package);
+        if (url || summary) {
             return {
                 title: key.package,
-                content: `Documentation for ${key.package} (PyPI)`,
-                url: url,
+                summary: summary ?? undefined,
+                content: summary ?? undefined,
+                url: url ?? undefined,
                 links: links,
                 source: ResolutionSource.PyPI,
                 confidence: 0.7

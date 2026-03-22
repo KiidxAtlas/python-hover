@@ -70,7 +70,9 @@ export class Config {
     }
 
     get requestTimeout(): number {
-        return this.config.get('requestTimeout', 10000);
+        const raw = this.config.get('requestTimeout', 10000);
+        // Clamp to a sane range: 1s–60s
+        return Math.min(Math.max(raw, 1000), 60000);
     }
 
     get openDocsInEditor(): boolean {
@@ -89,8 +91,14 @@ export class Config {
         return this.config.get('versionCacheTTL', 30);
     }
 
-    get customLibraries(): any[] {
-        return this.config.get('customLibraries', []);
+    get customLibraries(): Array<{ name: string; baseUrl: string }> {
+        const raw = this.config.get<any[]>('customLibraries', []);
+        // Filter out entries missing required fields or with invalid URLs
+        return raw.filter(entry => {
+            if (!entry || typeof entry.name !== 'string' || typeof entry.baseUrl !== 'string') return false;
+            if (!entry.name.trim() || !entry.baseUrl.trim()) return false;
+            try { new URL(entry.baseUrl); return true; } catch { return false; }
+        });
     }
 
     get autoDetectLibraries(): boolean {

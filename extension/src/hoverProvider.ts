@@ -4,13 +4,31 @@ import { HoverDocBuilder } from '../../docs-engine/src/builder/hoverDocBuilder';
 import { DiskCache } from '../../docs-engine/src/cache/diskCache';
 import { TypeshedParser } from '../../docs-engine/src/parsing/typeshedParser';
 import { DocKeyBuilder } from '../../shared/docKey';
-import { HoverDoc, ResolutionSource } from '../../shared/types';
+import { HoverDoc, LspSymbol, ResolutionSource } from '../../shared/types';
 import { AliasResolver } from './aliasResolver';
 import { Config } from './config';
 import { Logger } from './logger';
 import { LspClient } from './lspClient';
+import { NameRefinement } from './nameRefinement';
 import { PythonHelper } from './pythonHelper';
 import { HoverRenderer } from './ui/hoverRenderer';
+
+/**
+ * Python structural keywords that should always show keyword documentation when hovered,
+ * even if the cursor is adjacent to a class/function definition.
+ * E.g. hovering `class` in `class Person:` → shows `class` statement docs, not Person's docs.
+ *
+ * Excluded: `import`, `from`, `as` — handled by the import-hover fast-path.
+ * Excluded: `True`, `False`, `None` — handled as constants by the static resolver.
+ */
+const PYTHON_STRUCTURAL_KEYWORDS = new Set([
+    'and', 'assert', 'async', 'await',
+    'break', 'class', 'continue', 'def', 'del',
+    'elif', 'else', 'except', 'finally', 'for',
+    'global', 'if', 'in', 'is', 'lambda',
+    'nonlocal', 'not', 'or', 'pass', 'raise',
+    'return', 'try', 'while', 'with', 'yield',
+]);
 
 export class HoverProvider implements vscode.HoverProvider {
     private renderer: HoverRenderer;
@@ -19,31 +37,53 @@ export class HoverProvider implements vscode.HoverProvider {
     private docBuilder: HoverDocBuilder;
     private aliasResolver: AliasResolver;
     private ready: Promise<void>;
-    private isProcessing = false;
+
+    private diagnosticCollection: vscode.DiagnosticCollection | undefined;
+    private deprecatedRanges = new Map<string, vscode.Diagnostic[]>();
+    private lastDoc: HoverDoc | null = null;
+
+    /** Per-session hover cache: qualified symbol name → rendered Hover.
+     *  Prevents re-running the full pipeline when the same symbol is hovered again. */
+    private hoverCache = new Map<string, vscode.Hover>();
+
+    /** In-flight resolution promises: cacheKey → Promise.
+     *  Concurrent hovers for the same symbol share one pipeline instead of racing. */
+    private inflightHovers = new Map<string, Promise<vscode.Hover | null>>();
+
+    /** In-flight identify calls: "uri:line:col" → Promise.
+     *  Concurrent hovers at the same position share one IPC call instead of flooding Python. */
+    private inflightIdentify = new Map<string, Promise<string | null>>();
+
+    /** Persistent identify cache: "uri:docVersion:line:col" → result.
+     *  Avoids repeated IPC calls for the same position in the same document version. */
+    private identifyCache = new Map<string, string | null>();
+
+    /** Position → hover cache key: "uri:docVersion:line:col" → cacheKey.
+     *  Lets us skip straight to hoverCache on repeat calls without re-running the
+     *  full LSP + AST + refinement pipeline (which logs at every step). */
+    private positionToKey = new Map<string, string>();
 
     constructor(private lspClient: LspClient, private config: Config, diskCache: DiskCache) {
         this.renderer = new HoverRenderer(config);
         this.docResolver = new DocResolver(diskCache, {
             cacheTTL: {
                 inventoryDays: config.inventoryCacheDays,
-                snippetHours: config.snippetCacheHours
+                snippetHours: config.snippetCacheHours,
             },
             requestTimeout: config.requestTimeout,
             customLibraries: config.customLibraries,
-            onlineDiscovery: config.onlineDiscovery
+            onlineDiscovery: config.onlineDiscovery,
         });
         this.pythonHelper = new PythonHelper(config.pythonPath, diskCache);
         this.docBuilder = new HoverDocBuilder();
         this.aliasResolver = new AliasResolver();
-
-        // Initialize Python Version
         this.ready = this.initializePythonVersion();
     }
 
     private async initializePythonVersion() {
         try {
             const version = await this.pythonHelper.getPythonVersion();
-            Logger.log(`Detected Python Version: ${version}`);
+            Logger.log(`Detected Python version: ${version}`);
             this.docResolver.setPythonVersion(version);
             this.renderer.setDetectedVersion(version);
         } catch (e) {
@@ -51,303 +91,391 @@ export class HoverProvider implements vscode.HoverProvider {
         }
     }
 
-    async provideHover(document: vscode.TextDocument, position: vscode.Position, token: vscode.CancellationToken): Promise<vscode.Hover | null> {
-        if (this.isProcessing) {
-            return null;
-        }
-        this.isProcessing = true;
+    /** Kick off background inventory loads for common packages. */
+    warmupInventories(): void {
+        this.docResolver.warmupInventories();
+    }
+
+    setDiagnosticCollection(col: vscode.DiagnosticCollection): void {
+        this.diagnosticCollection = col;
+    }
+
+    getLastDoc(): HoverDoc | null {
+        return this.lastDoc;
+    }
+
+    searchDocs(query: string) {
+        return this.docResolver.searchSymbols(query);
+    }
+
+    getIndexedSymbolCount() {
+        return this.docResolver.getIndexedSymbolCount();
+    }
+
+    /** Discard the session cache (call when document is saved). */
+    clearSessionCache(): void {
+        this.hoverCache.clear();
+        this.identifyCache.clear();
+        this.positionToKey.clear();
+        this.pythonHelper.clearSessionCache();
+        this.diagnosticCollection?.clear();
+        this.deprecatedRanges.clear();
+    }
+
+    async provideHover(
+        document: vscode.TextDocument,
+        position: vscode.Position,
+        token: vscode.CancellationToken,
+    ): Promise<vscode.Hover | null> {
         try {
             await this.ready;
+            if (!this.config.isEnabled) return null;
 
-            if (!this.config.isEnabled) {
-                return null;
+            // Fast path: if we've already resolved this position in this document version,
+            // skip the entire LSP + AST + refinement pipeline and go straight to hoverCache.
+            const posKey = `${document.uri.toString()}:${document.version}:${position.line}:${position.character}`;
+            const knownKey = this.positionToKey.get(posKey);
+            if (knownKey) {
+                const cached = this.hoverCache.get(knownKey);
+                if (cached) return cached;
+                const inflight = this.inflightHovers.get(knownKey);
+                if (inflight) return inflight;
             }
 
-            // 1. Resolve symbol via LSP
+            // ── Structural keyword fast-path ──────────────────────────────────────
+            // When the cursor is directly on a structural keyword (class, def, for, …)
+            // we bypass LSP entirely — Pylance would otherwise resolve the *following*
+            // symbol (the class/function being defined) and return its docs instead.
+            const simpleWordRange = document.getWordRangeAtPosition(position, /[a-zA-Z_][a-zA-Z0-9_]*/);
+            const simpleWord = simpleWordRange ? document.getText(simpleWordRange) : '';
+            if (PYTHON_STRUCTURAL_KEYWORDS.has(simpleWord)) {
+                const kwKey = `keyword:${simpleWord}`;
+                this.positionToKey.set(posKey, kwKey);
+                const kwCached = this.hoverCache.get(kwKey);
+                if (kwCached) return kwCached;
+                const kwInflight = this.inflightHovers.get(kwKey);
+                if (kwInflight) return kwInflight;
+                const kwPromise = this.resolveKeyword(simpleWord, kwKey);
+                this.inflightHovers.set(kwKey, kwPromise);
+                kwPromise.finally(() => this.inflightHovers.delete(kwKey));
+                return kwPromise;
+            }
+
+            // ── Phase 1: LSP + AST (sequential — AST branches on LSP result) ──────
             let lspSymbol = await this.lspClient.resolveSymbol(document, position);
             if (token.isCancellationRequested) return null;
 
-            const isImportModuleHover = this.isImportModuleHover(document, position);
+            const isImportHover = this.isImportModuleHover(document, position);
 
-            if (lspSymbol && isImportModuleHover && typeof lspSymbol.name === 'string') {
-                lspSymbol.name = this.normalizeImportModuleName(lspSymbol.name);
-                lspSymbol.kind = 'module';
+            // ── Import-line fast path: module overview ────────────────────────────
+            // When the user hovers on `import foo` or `from foo import …` (on "foo"),
+            // skip AST identification and the full symbol pipeline entirely — just fetch
+            // a module overview card (inventory + PyPI summary + top exports).
+            if (isImportHover && lspSymbol) {
+                const moduleName = NameRefinement.normalizeImportModule(lspSymbol.name);
+                if (moduleName) {
+                    const isStdlib = lspSymbol.path ? this.isStdlibPath(lspSymbol.path) : false;
+                    const moduleKey = `__module__:${moduleName}`;
+                    this.positionToKey.set(posKey, moduleKey);
+
+                    const cached = this.hoverCache.get(moduleKey);
+                    if (cached) return cached;
+
+                    const inflight = this.inflightHovers.get(moduleKey);
+                    if (inflight) return inflight;
+
+                    const modulePromise = (async () => {
+                        // Fetch module overview + installed version concurrently
+                        const [moduleDoc, installedVersion] = await Promise.all([
+                            this.docResolver.resolveModuleOverview(moduleName, isStdlib),
+                            this.pythonHelper.getInstalledVersion(moduleName).catch(() => null),
+                        ]);
+                        if (installedVersion) {
+                            moduleDoc.installedVersion = installedVersion;
+                        }
+                        this.lastDoc = moduleDoc;
+                        const hover = this.renderer.render(moduleDoc);
+                        this.hoverCache.set(moduleKey, hover);
+                        return hover;
+                    })();
+                    this.inflightHovers.set(moduleKey, modulePromise);
+                    modulePromise.finally(() => this.inflightHovers.delete(moduleKey));
+                    return modulePromise;
+                }
             }
 
-            // 1.1 AST Identification
-            // Optimization: Only run AST if LSP failed to provide a qualified name or path
-            // This avoids spawning a python process for every hover when LSP is sufficient.
+            // Run AST identification only when LSP didn't give a fully-qualified path
+            const needsAst = !lspSymbol || !lspSymbol.path || !lspSymbol.name.includes('.');
             let identifiedType: string | null = null;
-            const shouldRunAst = !lspSymbol || !lspSymbol.path || !lspSymbol.name.includes('.');
+            if (needsAst) {
+                if (token.isCancellationRequested) return null;
 
-            if (shouldRunAst) {
-                // We now pass the document content to handle unsaved changes
-                identifiedType = await this.pythonHelper.identify(
-                    document.getText(),
-                    position.line + 1, // AST uses 1-based lines
-                    position.character
-                );
+                // Cache identify results by document version + position.
+                // document.version increments on every edit, so cached results stay valid
+                // until the document changes. This prevents repeated IPC calls for the
+                // same position while the user hovers or VS Code re-evaluates the hover.
+                const identifyCacheKey = `${document.uri.toString()}:${document.version}:${position.line + 1}:${position.character}`;
+                if (this.identifyCache.has(identifyCacheKey)) {
+                    identifiedType = this.identifyCache.get(identifyCacheKey) ?? null;
+                } else {
+                    // Deduplicate concurrent in-flight calls for the same position.
+                    const identifyKey = `${document.uri.toString()}:${position.line + 1}:${position.character}`;
+                    let identifyPromise = this.inflightIdentify.get(identifyKey);
+                    if (!identifyPromise) {
+                        identifyPromise = this.pythonHelper.identify(
+                            document.getText(),
+                            position.line + 1,
+                            position.character,
+                        );
+                        this.inflightIdentify.set(identifyKey, identifyPromise);
+                        identifyPromise.finally(() => this.inflightIdentify.delete(identifyKey));
+                    }
+                    identifiedType = await identifyPromise;
+                    this.identifyCache.set(identifyCacheKey, identifiedType);
+                    if (identifiedType) Logger.log(`AST identified: ${identifiedType}`);
+                }
             }
 
             if (identifiedType) {
-                Logger.log(`AST Identified type: ${identifiedType}`);
-
-                // Canonicalize: f-string evaluates to str; Ellipsis is the builtin constant
                 const TYPE_CANON: Record<string, string> = { 'f-string': 'str' };
                 const canonType = TYPE_CANON[identifiedType] ?? identifiedType;
-
-                // Constants (None, Ellipsis) are singletons, not classes
                 const CONSTANTS = new Set(['None', 'Ellipsis']);
-
-                // Check if it's a literal/builtin type
-                const isLiteral = ['list', 'dict', 'set', 'tuple', 'str', 'int', 'float',
-                    'bool', 'bytes', 'complex', 'None', 'Ellipsis', 'f-string'].includes(identifiedType);
+                const isLiteral = [
+                    'list', 'dict', 'set', 'tuple', 'str', 'int', 'float',
+                    'bool', 'bytes', 'complex', 'None', 'Ellipsis', 'f-string',
+                ].includes(identifiedType);
 
                 if (isLiteral) {
-                    // For literals, force the builtin type lookup
                     lspSymbol = {
                         name: canonType,
                         kind: CONSTANTS.has(canonType) ? 'constant' : 'class',
                         module: 'builtins',
-                        path: 'builtins'
+                        path: 'builtins',
                     };
                 } else {
-                    // It's a definition (e.g. Person.__init__) identified by AST
                     if (!lspSymbol) {
-                        // If LSP failed, use AST result
                         lspSymbol = {
                             name: identifiedType,
-                            kind: 'function', // Best guess
+                            kind: 'function',
                             module: 'user',
-                            path: document.uri.fsPath
+                            path: document.uri.fsPath,
                         };
-                    } else {
-                        // If LSP succeeded, we might want to refine the name (e.g. __init__ -> Person.__init__)
-                        // but we MUST preserve the docstring and signature from LSP
-                        if (identifiedType !== lspSymbol.name) {
-                            Logger.log(`Refining LSP name ${lspSymbol.name} with AST name ${identifiedType}`);
-                            lspSymbol.name = identifiedType;
-                        }
+                    } else if (identifiedType !== lspSymbol.name) {
+                        Logger.log(`Refining LSP name ${lspSymbol.name} with AST: ${identifiedType}`);
+                        lspSymbol.name = identifiedType;
                     }
                 }
             }
 
-            if (!lspSymbol) {
-                // Logger.log('LSP failed to resolve symbol');
-                return null;
-            }
+            if (!lspSymbol) return null;
 
-            // 1.1.5 Refine Name from Signature (Fix for methods resolved as top-level functions)
-            // If the name is simple (e.g. "append") or missing class (e.g. "builtins.join")
-            // but signature shows "self: ClassName", we can infer the real qualified name.
-            if (lspSymbol.name && lspSymbol.signature) {
-                // Match "self: ClassName" or "self: Self@ClassName"
-                // Note: ClassName might be followed by [T] or similar, so we stop at [ or space or comma
-                const selfMatch = /\bself\s*:\s*([a-zA-Z0-9_.]+(?:@[a-zA-Z0-9_.]+)?)/.exec(lspSymbol.signature);
-                if (selfMatch) {
-                    let className = selfMatch[1];
-                    // Handle Pylance's "Self@ClassName" format
-                    if (className.includes('@')) {
-                        className = className.split('@')[1];
-                    }
+            // ── Phase 2: Name refinement (sync, fast) ────────────────────────────
+            lspSymbol.name = NameRefinement.fromSignature(lspSymbol.name, lspSymbol.signature);
+            lspSymbol.name = NameRefinement.fromPath(lspSymbol.name, lspSymbol.path, isImportHover);
 
-                    // Ignore "Unknown" class name which Pylance uses when inference fails
-                    if (className === 'Unknown') {
-                        // Do nothing, keep original name
-                    } else {
-                        const methodName = lspSymbol.name.split('.').pop();
-                        const expectedSuffix = `${className}.${methodName}`;
-
-                        if (!lspSymbol.name.endsWith(expectedSuffix)) {
-                            const lastDotIndex = lspSymbol.name.lastIndexOf('.');
-                            let newName = '';
-
-                            if (lastDotIndex !== -1) {
-                                // e.g. "builtins.join" -> "builtins.str.join"
-                                const prefix = lspSymbol.name.substring(0, lastDotIndex);
-                                newName = `${prefix}.${className}.${methodName}`;
-                            } else {
-                                // e.g. "append" -> "list.append"
-                                newName = `${className}.${methodName}`;
-                            }
-
-                            Logger.log(`Refined symbol name from signature: ${lspSymbol.name} -> ${newName}`);
-                            lspSymbol.name = newName;
-                        }
-                    }
+            // Standalone builtins (e.g. len, print) are typed as methods in stub class bodies
+            // but are really top-level functions — correct the kind so the badge says "Function".
+            if (lspSymbol.kind === 'method' && lspSymbol.name.startsWith('builtins.')) {
+                const afterBuiltins = lspSymbol.name.slice('builtins.'.length);
+                if (!afterBuiltins.includes('.')) {
+                    lspSymbol.kind = 'function';
                 }
             }
 
-            // 1.1.6 Refine Name from Path (Generic fix for stdlib and third-party)
-            // If the name is simple (e.g. "join") and we have a path to a library file,
-            // we can try to prepend the module name.
-            if (!isImportModuleHover && lspSymbol.name && !lspSymbol.name.includes('.') && lspSymbol.path) {
-                const normalizedPath = lspSymbol.path.replace(/\\/g, '/');
-                // Common roots for python libraries
-                const markers = ['/site-packages/', '/dist-packages/', '/Lib/', '/lib/'];
-
-                for (const marker of markers) {
-                    const index = normalizedPath.lastIndexOf(marker);
-                    if (index !== -1) {
-                        let relativePath = normalizedPath.substring(index + marker.length);
-
-                        // Strip interpreter-version folders from stdlib paths.
-                        // Examples:
-                        // - /usr/lib/python3.11/base64.py -> base64
-                        // - /usr/lib/python3.12/asyncio/__init__.py -> asyncio
-                        relativePath = relativePath.replace(/^python\d+(?:\.\d+)?\//, '');
-                        // Some environments may surface a bare version folder.
-                        // - .../stdlib/3.11/base64.pyi -> base64
-                        relativePath = relativePath.replace(/^\d+\.\d+\//, '');
-
-                        // Remove extension
-                        relativePath = relativePath.replace(/\.(py|pyi)$/, '');
-                        // Handle __init__
-                        if (relativePath.endsWith('/__init__')) {
-                            relativePath = relativePath.substring(0, relativePath.length - '/__init__'.length);
-                        }
-
-                        // Convert slashes to dots
-                        let moduleName = relativePath.replace(/\//g, '.');
-
-                        // Special handling for os.path implementations
-                        if (moduleName === 'ntpath' || moduleName === 'posixpath' || moduleName === 'macpath') {
-                            moduleName = 'os.path';
-                        }
-
-                        if (moduleName) {
-                            if (moduleName !== lspSymbol.name) {
-                                const newName = `${moduleName}.${lspSymbol.name}`;
-                                Logger.log(`Refined symbol name from path (${marker}): ${lspSymbol.name} -> ${newName}`);
-                                lspSymbol.name = newName;
-                            }
-                            break; // Stop after first match (e.g. if site-packages matched, don't fall back to Lib)
-                        }
-                    }
-                }
-            }
-
-            // Logger.log('LSP Symbol:', lspSymbol);
-
-            // 1.2 Typeshed Enrichment
-            // If the path points to a .pyi file, try to parse it for better signature/overloads
-            if (lspSymbol.path && lspSymbol.path.endsWith('.pyi')) {
-                try {
-                    const typeshedInfo = await TypeshedParser.parse(lspSymbol.path, lspSymbol.name);
-                    if (typeshedInfo) {
-                        // Logger.log('Typeshed Info:', typeshedInfo);
-                        if (typeshedInfo.signature) {
-                            lspSymbol.signature = typeshedInfo.signature;
-                        }
-                        if (typeshedInfo.overloads) {
-                            lspSymbol.overloads = typeshedInfo.overloads;
-                        }
-                        if (typeshedInfo.protocolHints) {
-                            lspSymbol.protocolHints = typeshedInfo.protocolHints;
-                        }
-                    }
-                } catch (e) {
-                    Logger.error('Failed to parse typeshed file', e);
-                }
-            }
-
-            // 1.5 Resolve Aliases (e.g. pd.DataFrame -> pandas.DataFrame)
+            // Alias resolution (e.g. pd.DataFrame → pandas.DataFrame)
+            const originalName = lspSymbol.name;
             const resolvedName = this.aliasResolver.resolve(document.getText(), lspSymbol.name);
-            if (resolvedName !== lspSymbol.name) {
-                Logger.log(`Resolved alias: ${lspSymbol.name} -> ${resolvedName}`);
+            if (resolvedName !== originalName) {
                 lspSymbol.name = resolvedName;
+            }
+
+            // ── Session cache + in-flight deduplication ───────────────────────────
+            // Library symbols are the same regardless of which file they're hovered in;
+            // only local symbols need to be scoped per-file.
+            const isLibrary = !lspSymbol.path || this.isLibraryPath(lspSymbol.path);
+            const cacheKey = isLibrary
+                ? lspSymbol.name
+                : `${document.uri.fsPath}::${lspSymbol.name}`;
+
+            // Record position → cacheKey so future calls skip the pipeline entirely.
+            this.positionToKey.set(posKey, cacheKey);
+
+            // Return cached result immediately (no logging, no async work)
+            const cached = this.hoverCache.get(cacheKey);
+            if (cached) {
+                return cached;
+            }
+
+            // If another hover for the same symbol is already resolving, share its promise.
+            // This prevents stampedes when the cursor lingers on a slow-loading symbol.
+            const inflight = this.inflightHovers.get(cacheKey);
+            if (inflight) {
+                return inflight;
+            }
+
+            // Log alias resolution only once per symbol (after cache miss confirmed)
+            if (resolvedName !== originalName) {
+                Logger.log(`Alias resolved: ${originalName} → ${resolvedName}`);
             }
 
             if (token.isCancellationRequested) return null;
 
-            // 2. Introspect via Python Helper (Runtime)
-            // This enriches the static analysis with runtime info (e.g. installed version, real path)
-            const runtimeInfo = await this.pythonHelper.resolveRuntime(lspSymbol.name);
-            // Logger.log('Runtime Info:', runtimeInfo);
+            // ── Register in-flight promise to deduplicate concurrent same-symbol hovers ─
+            const wasAliasResolved = resolvedName !== originalName;
+            const resolutionPromise = this.resolveAndRender(lspSymbol, document, position, cacheKey, isImportHover, wasAliasResolved, token);
+            this.inflightHovers.set(cacheKey, resolutionPromise);
+            resolutionPromise.finally(() => this.inflightHovers.delete(cacheKey));
+            return resolutionPromise;
 
+        } catch (e) {
+            Logger.error('HoverProvider failed', e);
+            return null;
+        }
+    }
+
+    private async resolveAndRender(
+        lspSymbol: LspSymbol,
+        document: vscode.TextDocument,
+        position: vscode.Position,
+        cacheKey: string,
+        isImportHover: boolean,
+        wasAliasResolved: boolean,
+        token: vscode.CancellationToken,
+    ): Promise<vscode.Hover | null> {
+        try {
+            // ── Phase 3: Parallel async resolution ───────────────────────────────
+            // Run runtime introspection and typeshed parsing concurrently.
+            const [runtimeInfo, typeshedInfo] = await Promise.all([
+                this.pythonHelper.resolveRuntime(lspSymbol.name),
+                lspSymbol.path?.endsWith('.pyi')
+                    ? TypeshedParser.parse(lspSymbol.path, lspSymbol.name).catch(() => null)
+                    : Promise.resolve(null),
+            ]);
+
+            if (token.isCancellationRequested) return null;
+
+            // Apply typeshed enrichment
+            if (typeshedInfo) {
+                if (typeshedInfo.signature) lspSymbol.signature = typeshedInfo.signature;
+                if (typeshedInfo.overloads) lspSymbol.overloads = typeshedInfo.overloads;
+                if (typeshedInfo.protocolHints) lspSymbol.protocolHints = typeshedInfo.protocolHints;
+            }
+
+            // ── Phase 4: Local code fast-path ────────────────────────────────────
             const isLocalPath = lspSymbol.path && !this.isLibraryPath(lspSymbol.path);
-
-            if ((!runtimeInfo || !runtimeInfo.module) && isLocalPath) {
-                Logger.log('Symbol detected as local user code. Skipping remote documentation lookup.');
+            // Treat "no path + no module + NOT alias-resolved" as a local/unresolvable symbol.
+            // This prevents bare local variable names (e.g. `agg` in `df.agg(...)`) from
+            // hitting PyPI and returning unrelated packages (e.g. the "agg" FATE dice roller).
+            //
+            // IMPORTANT: alias-resolved names (e.g. `np.array` → `numpy.array`) MUST NOT be
+            // treated as unresolvable even if the runtime can't import them — the package may
+            // simply not be installed in the active Python environment (e.g. numpy on py3.14)
+            // but its documentation is still available through the Sphinx inventory.
+            const isUnresolvable = !lspSymbol.path && !(runtimeInfo?.module) && !wasAliasResolved;
+            if ((!runtimeInfo || !runtimeInfo.module) && (isLocalPath || isUnresolvable)) {
+                Logger.log('Local code detected — skipping remote doc lookup');
 
                 let content = lspSymbol.docstring || '';
+                let signature = lspSymbol.signature;
 
-                // Fallback for dunder methods (e.g. __init__, __str__) if no local docstring
+                // Try AST docstring extraction when LSP didn't provide a docstring.
+                // This covers user-defined functions/classes in the current file.
+                if (!content && lspSymbol.name && document) {
+                    const localName = lspSymbol.name.split('.').pop() ?? lspSymbol.name;
+                    const astInfo = await this.pythonHelper.getLocalDocstring(
+                        document.getText(),
+                        localName,
+                    ).catch(() => null);
+                    if (astInfo) {
+                        if (astInfo.docstring) content = astInfo.docstring;
+                        if (astInfo.signature && !signature) signature = astInfo.signature;
+                    }
+                }
+
+                const notes: string[] = [];
+
+                // Fallback for dunder methods (use object.<method> docs + URL)
+                let dundarUrl: string | undefined;
+                let dundarDevdocsUrl: string | undefined;
                 if (!content && lspSymbol.name) {
                     const methodName = lspSymbol.name.split('.').pop();
-                    if (methodName && methodName.startsWith('__') && methodName.endsWith('__')) {
-                        Logger.log(`Local dunder method ${methodName} has no docstring. Attempting fallback to object.${methodName}.`);
+                    if (methodName?.startsWith('__') && methodName.endsWith('__')) {
                         try {
-                            // Construct a key for the builtin object method
                             const fallbackKey = DocKeyBuilder.fromSymbol({
                                 name: methodName,
                                 module: 'builtins',
                                 path: 'builtins',
                                 kind: 'method',
                                 qualname: `object.${methodName}`,
-                                isStdlib: true
+                                isStdlib: true,
                             });
-
                             const fallbackDocs = await this.docResolver.resolve(fallbackKey);
-                            if (fallbackDocs && fallbackDocs.content) {
-                                content = fallbackDocs.content;
-                                Logger.log(`Fallback successful. Using docs from object.${methodName}`);
-                            }
-                        } catch (e) {
-                            Logger.error('Fallback lookup failed', e);
-                        }
+                            if (fallbackDocs?.content) content = fallbackDocs.content;
+                            if (fallbackDocs?.url) dundarUrl = fallbackDocs.url;
+                            if (fallbackDocs?.devdocsUrl) dundarDevdocsUrl = fallbackDocs.devdocsUrl;
+                        } catch { /* ignore */ }
                     }
                 }
 
-                // Build helpful content for local symbols even without docstrings
-                if (!content && lspSymbol.signature) {
-                    // Extract type info from signature if available
-                    const returnMatch = lspSymbol.signature.match(/->\s*(.+)$/);
-                    if (returnMatch) {
-                        content = `Returns \`${returnMatch[1].trim()}\``;
-                    }
+                if (!content && signature) {
+                    const returnMatch = signature.match(/->\s*(.+)$/);
+                    if (returnMatch) content = `Returns \`${returnMatch[1].trim()}\``;
                 }
 
-                // Add source file info as a helpful note
-                let notes: string[] = [];
                 if (lspSymbol.path) {
                     const fileName = lspSymbol.path.replace(/\\/g, '/').split('/').pop();
                     notes.push(`Defined in \`${fileName}\``);
                 }
 
-                // For local symbols, we rely on LSP/Typeshed signature and potentially local docstring
-                // We do NOT want to show "Documentation not found" or query PyPI.
                 const localDoc: HoverDoc = {
                     title: lspSymbol.name,
-                    content: content,
+                    content,
                     summary: content || (lspSymbol.kind ? `Local ${lspSymbol.kind}` : 'Local symbol'),
-                    signature: lspSymbol.signature,
+                    signature: signature || lspSymbol.signature,
                     kind: lspSymbol.kind,
                     source: ResolutionSource.Local,
                     confidence: 1.0,
                     overloads: lspSymbol.overloads,
                     protocolHints: lspSymbol.protocolHints,
                     notes: notes.length > 0 ? notes : undefined,
-                    sourceUrl: lspSymbol.path ? lspSymbol.path : undefined
+                    sourceUrl: lspSymbol.path,
+                    // Dunder methods link to object.<method> docs on docs.python.org
+                    url: dundarUrl,
+                    devdocsUrl: dundarDevdocsUrl,
                 };
-                return this.renderer.render(localDoc);
+
+                this.lastDoc = localDoc;
+                const hover = this.renderer.render(localDoc);
+                this.hoverCache.set(cacheKey, hover);
+                return hover;
             }
 
-            // Merge info (prefer runtime for some things, LSP for others)
+            // ── Phase 5: Merge symbol info + keyword fast-path ───────────────────
             const symbolInfo = { ...lspSymbol, ...runtimeInfo };
 
-            // Handle keywords specially - they have rich docstrings from pydoc.help()
-            // and don't need Sphinx inventory lookup
+            // Safety net: if runtime didn't provide isStdlib (runtime failed or symbol
+            // wasn't importable), infer it from the LSP file path so the doc resolver
+            // never accidentally queries the PyPI typing backport for stdlib symbols.
+            if (!symbolInfo.isStdlib && lspSymbol.path && this.isStdlibPath(lspSymbol.path)) {
+                symbolInfo.isStdlib = true;
+            }
+
+            // Safety net: suppress misleading (*args, **kwargs) signatures for typing
+            // constructs. Pylance emits these from _GenericAlias.__call__ — they are
+            // meaningless to users since typing forms are used as annotations, not calls.
+            if ((symbolInfo.module === 'typing' || symbolInfo.name?.startsWith('typing.')) &&
+                /^\(\*args,?\s*\*\*(?:kwargs|kwds)\)$/.test(symbolInfo.signature?.trim() ?? '')) {
+                symbolInfo.signature = undefined;
+            }
+
             if (runtimeInfo?.kind === 'keyword' && runtimeInfo.docstring) {
-                Logger.log(`Keyword detected: ${lspSymbol.name}`);
-                // Resolve the correct URL via the static MAP (compound_stmts / simple_stmts /
-                // expressions) instead of blindly pointing at simple_stmts.html#<name>.
+                Logger.log(`Keyword: ${lspSymbol.name}`);
                 const docKey = DocKeyBuilder.fromSymbol({
                     name: lspSymbol.name,
                     module: 'builtins',
                     path: 'builtins',
                     kind: 'keyword',
-                    isStdlib: true
+                    isStdlib: true,
                 });
                 const resolvedDoc = await this.docResolver.resolve(docKey);
                 const keywordDoc: HoverDoc = {
@@ -359,107 +487,141 @@ export class HoverProvider implements vscode.HoverProvider {
                     url: resolvedDoc?.url,
                     devdocsUrl: resolvedDoc?.devdocsUrl,
                 };
-                return this.renderer.render(keywordDoc);
+                this.lastDoc = keywordDoc;
+                const hover = this.renderer.render(keywordDoc);
+                this.hoverCache.set(cacheKey, hover);
+                return hover;
             }
 
-            // Fix Name/Title:
-            // If LSP gave us a qualified name (e.g. "os.chdir") and runtime gave us a simple name (e.g. "chdir"),
-            // we prefer the qualified name for the hover title.
-            if (runtimeInfo && lspSymbol.name.includes('.') && runtimeInfo.name && !runtimeInfo.name.includes('.')) {
-                // Special case: If runtime module is os.path, prefer it over ntpath/posixpath
-                if (runtimeInfo.module === 'os.path' && (lspSymbol.name.startsWith('ntpath.') || lspSymbol.name.startsWith('posixpath.'))) {
-                    symbolInfo.name = `os.path.${runtimeInfo.name}`;
-                    symbolInfo.qualname = `os.path.${runtimeInfo.name}`;
-                } else {
-                    symbolInfo.name = lspSymbol.name;
-                    // If qualname is also simple (matching the runtime name), update it too so HoverDocBuilder uses the full name
-                    if (symbolInfo.qualname === runtimeInfo.name) {
-                        symbolInfo.qualname = lspSymbol.name;
-                    }
-                }
+            // Merge names (prefer qualified LSP name over short runtime name)
+            symbolInfo.name = NameRefinement.mergeRuntimeName(
+                lspSymbol.name,
+                runtimeInfo?.name,
+                runtimeInfo?.module,
+            );
+            if (symbolInfo.qualname === runtimeInfo?.name && symbolInfo.name !== runtimeInfo?.name) {
+                symbolInfo.qualname = symbolInfo.name;
             }
-
-            // 3. Normalize to DocKey
-            const docKey = DocKeyBuilder.fromSymbol(symbolInfo);
-            // Logger.log('DocKey:', docKey);
 
             if (token.isCancellationRequested) return null;
 
-            // 4. Resolve Docs (Canonical Linking)
-            const docs = await this.docResolver.resolve(docKey);
-            // Logger.log('Resolved Docs:', docs);
-
-            // 5. Build Standardized Hover Doc
+            // ── Phase 6: Doc resolution + installed version (parallel) ───────────
+            const docKey = DocKeyBuilder.fromSymbol(symbolInfo);
+            const isLibrarySymbol = !symbolInfo.isStdlib && !!symbolInfo.module &&
+                symbolInfo.module !== 'builtins';
+            const topModule = symbolInfo.module?.split('.')[0] ?? '';
+            const [docs, installedVersion] = await Promise.all([
+                this.docResolver.resolve(docKey),
+                isLibrarySymbol && topModule
+                    ? this.pythonHelper.getInstalledVersion(topModule).catch(() => null)
+                    : Promise.resolve(null),
+            ]);
             const hoverDoc = this.docBuilder.build(symbolInfo, docs);
+            if (installedVersion) { hoverDoc.installedVersion = installedVersion; }
 
-            // 6. Render
-            return this.renderer.render(hoverDoc);
+            this.lastDoc = hoverDoc;
+
+            // Deprecated API diagnostics
+            if (hoverDoc.badges?.some(b => b.label === 'deprecated') && this.diagnosticCollection) {
+                const range = document.getWordRangeAtPosition(position) ?? new vscode.Range(position, position);
+                const message = `${hoverDoc.title} is deprecated.${hoverDoc.summary ? ' ' + hoverDoc.summary.slice(0, 120) : ''}`;
+                const diag = new vscode.Diagnostic(range, message, vscode.DiagnosticSeverity.Warning);
+                diag.source = 'PyHover';
+                diag.code = 'deprecated';
+                const uriStr = document.uri.toString();
+                const existing = this.deprecatedRanges.get(uriStr) ?? [];
+                existing.push(diag);
+                this.deprecatedRanges.set(uriStr, existing);
+                this.diagnosticCollection.set(document.uri, this.deprecatedRanges.get(uriStr)!);
+            }
+
+            const hover = this.renderer.render(hoverDoc);
+            this.hoverCache.set(cacheKey, hover);
+            return hover;
+
         } catch (e) {
             Logger.error('HoverProvider failed', e);
             return null;
-        } finally {
-            this.isProcessing = false;
         }
     }
 
-    // ─── Private Helpers ────────────────────────────────────────────────────────
+    // ─── Private helpers ─────────────────────────────────────────────────────
 
-    /** Returns true when the cursor is on a module name inside an import statement. */
+    /**
+     * Resolve a Python structural keyword (class, def, for, …) directly via the
+     * Python runtime and render a keyword hover card.  Bypasses LSP entirely so
+     * that Pylance can't accidentally substitute the surrounding class/function.
+     */
+    private async resolveKeyword(word: string, cacheKey: string): Promise<vscode.Hover | null> {
+        const runtimeInfo = await this.pythonHelper.resolveRuntime(word).catch(() => null);
+        if (!runtimeInfo?.docstring) return null;
+
+        const docKey = DocKeyBuilder.fromSymbol({
+            name: word, module: 'builtins', path: 'builtins',
+            kind: 'keyword', isStdlib: true,
+        });
+        const resolvedDoc = await this.docResolver.resolve(docKey).catch(() => null);
+
+        const keywordDoc: HoverDoc = {
+            title: word,
+            kind: 'keyword',
+            content: runtimeInfo.docstring,
+            source: ResolutionSource.Runtime,
+            confidence: 1.0,
+            url: resolvedDoc?.url,
+            devdocsUrl: resolvedDoc?.devdocsUrl,
+        };
+        this.lastDoc = keywordDoc;
+        const hover = this.renderer.render(keywordDoc);
+        this.hoverCache.set(cacheKey, hover);
+        return hover;
+    }
+
+    /**
+     * True when the path is a Python stdlib file (inside lib/pythonX.Y but NOT site-packages).
+     * Used to skip PyPI lookup for stdlib module overview hovers.
+     */
+    private isStdlibPath(p: string): boolean {
+        const n = p.replace(/\\/g, '/').toLowerCase();
+        if (n.includes('/site-packages/') || n.includes('/dist-packages/')) return false;
+        return (
+            /\/lib\/python\d/.test(n) ||
+            n.includes('/typeshed/') ||
+            n.includes('/typeshed-fallback/') ||
+            n.includes('/stdlib/')
+        );
+    }
+
     private isImportModuleHover(document: vscode.TextDocument, position: vscode.Position): boolean {
         try {
             const line = document.lineAt(position.line).text;
             const col = position.character;
 
-            // from X import Y  →  hovering within X
             const fromIdx = line.indexOf('from ');
             const importIdx = line.indexOf(' import ');
-            if (fromIdx !== -1 && importIdx !== -1 && col >= fromIdx + 5 && col <= importIdx) {
-                return true;
-            }
+            if (fromIdx !== -1 && importIdx !== -1 && col >= fromIdx + 5 && col <= importIdx) return true;
 
-            // import X, Y as Z  →  hovering after 'import '
             const importStart = line.match(/^\s*import\s+/);
-            if (importStart && col >= importStart[0].length) {
-                return true;
-            }
-        } catch {
-            // ignore parse errors
-        }
+            if (importStart && col >= importStart[0].length) return true;
+        } catch { /* ignore */ }
         return false;
     }
 
-    /** Strips duplicate path segments and version prefixes from an import module name. */
-    private normalizeImportModuleName(name: string): string {
-        const parts = name.split('.').filter(Boolean);
-
-        // Remove trailing duplicate segment (e.g. os.path.path → os.path)
-        if (parts.length >= 2 && parts[parts.length - 1] === parts[parts.length - 2]) {
-            parts.pop();
-        }
-
-        // Strip interpreter-version prefixes like python3.11 or 3.11
-        if (parts.length >= 2 && /^python\d+$/.test(parts[0]) && /^\d+$/.test(parts[1])) {
-            parts.splice(0, 2);
-        }
-        if (parts.length >= 2 && /^\d+$/.test(parts[0]) && /^\d+$/.test(parts[1])) {
-            parts.splice(0, 2);
-        }
-
-        return parts.join('.');
+    private isLibraryPath(p: string): boolean {
+        const n = p.replace(/\\/g, '/').toLowerCase();
+        return (
+            n.includes('/site-packages/') ||
+            n.includes('/dist-packages/') ||
+            /\/lib\/python\d/.test(n) ||
+            /\/lib\/python\//.test(n) ||
+            /\/libs\//.test(n) ||
+            /[/\\]lib[/\\]/i.test(p) ||
+            n.includes('/typeshed/') ||
+            n.includes('/stubs/')
+        );
     }
 
-    /** Returns true if the given file path belongs to an installed library (not user code). */
-    private isLibraryPath(p: string): boolean {
-        const normalized = p.replace(/\\/g, '/').toLowerCase();
-        return (
-            normalized.includes('/site-packages/') ||
-            normalized.includes('/dist-packages/') ||
-            /\/lib\/python\d/.test(normalized) ||
-            /\/lib\/python\//.test(normalized) ||
-            /\/libs\//.test(normalized) ||
-            /[/\\]lib[/\\]/i.test(p) ||
-            normalized.includes('/typeshed/') ||
-            normalized.includes('/stubs/')
-        );
+    dispose(): void {
+        this.pythonHelper.dispose();
     }
 }

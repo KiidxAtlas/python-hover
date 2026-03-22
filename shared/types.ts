@@ -41,6 +41,11 @@ export interface HoverDoc {
     content?: string; // Legacy support
     overloads?: string[];
     protocolHints?: string[];
+    seeAlso?: string[];        // Links scraped from Sphinx "See also" sections
+    module?: string;           // Top-level package/module (e.g. "typing", "pandas")
+    moduleExports?: string[];     // Key exported names shown in module overview hover
+    exportCount?: number;         // Total indexed symbol count for this module
+    installedVersion?: string;    // Installed package version (from importlib.metadata)
 }
 
 export interface ParameterInfo {
@@ -72,9 +77,26 @@ export interface Candidate {
     score: number;
 }
 
+/**
+ * Raw symbol data as returned by the Language Server Protocol (Pylance etc.)
+ * and post-processed by NameRefinement. This is the working object that flows
+ * through the hover pipeline before being merged with runtime/doc data.
+ */
+export interface LspSymbol {
+    name: string;
+    kind?: string;
+    module?: string;
+    path?: string;
+    targetUri?: string;
+    signature?: string;
+    docstring?: string;
+    overloads?: string[];
+    protocolHints?: string[];
+}
+
 export interface SymbolInfo {
     name: string;
-    module: string;
+    module?: string;
     docstring?: string;
     signature?: string;
     path?: string;
