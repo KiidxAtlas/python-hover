@@ -11,22 +11,10 @@ export class LspClient {
     }
 
     async resolveSymbol(document: vscode.TextDocument, position: vscode.Position): Promise<LspSymbol | null> {
-        // Get the full dotted word at position (e.g. "os.path.join")
-        const fullRange = document.getWordRangeAtPosition(position, /[a-zA-Z0-9_.]+/);
+        const access = this.getAccessContextAtPosition(document, position);
+        const wordRange = access?.segmentRange;
 
-        // Compute a cursor-aware initial name: take only the prefix up to the segment
-        // the cursor is on.  E.g. cursor on "path" in "os.path.join" → "os.path".
-        // The LSP providers receive the exact cursor position and resolve correctly
-        // regardless; this just gives us a better fallback when definition lookup fails.
-        let word = '';
-        if (fullRange) {
-            const fullText = document.getText(fullRange);
-            const offsetInWord = position.character - fullRange.start.character;
-            const afterCursor = fullText.substring(offsetInWord);
-            const nextDotIdx = afterCursor.indexOf('.');
-            const segmentEnd = nextDotIdx === -1 ? fullText.length : offsetInWord + nextDotIdx;
-            word = fullText.substring(0, segmentEnd);
-        }
+        let word = access?.expression ?? '';
 
         if (!word) {
             return null;
@@ -34,22 +22,62 @@ export class LspClient {
 
         const result: LspSymbol = { name: word };
 
+        // Compute the best LSP query position for attribute access.
+        // Pylance resolves differently depending on the exact cursor position within a
+        // word.  For dotted expressions (e.g. "df.agg"), some positions within the last
+        // segment may fail to resolve while others succeed.  We use the LAST character
+        // of the word as the canonical position — this reliably resolves the full
+        // attribute chain in Pylance.
+        const canonicalChar = wordRange
+            ? wordRange.end.character - 1
+            : position.character;
+        const needsCanonicalRetry = canonicalChar !== position.character;
+
         // 1 + 2. Run definition lookup and hover provider concurrently.
         //   Definition → path + kind (then we do a sequential reverse-lookup from it)
         //   Hover provider → signature + docstring (fully independent)
-        const [definitions, hovers] = await Promise.all([
-            this.executeCommandWithTimeout<vscode.Location[] | vscode.LocationLink[]>(
-                'vscode.executeDefinitionProvider', document.uri, position
-            ).catch(() => undefined),
-            this.executeCommandWithTimeout<vscode.Hover[]>(
-                'vscode.executeHoverProvider', document.uri, position
-            ).catch(() => undefined),
+        //
+        // For dotted words, query at BOTH the cursor position and the canonical position
+        // (last char of the word) concurrently — use whichever returns results.
+        const defPromise = this.executeCommandWithTimeout<vscode.Location[] | vscode.LocationLink[]>(
+            'vscode.executeDefinitionProvider', document.uri, position
+        ).catch(() => undefined);
+
+        const hoverPromise = this.executeCommandWithTimeout<vscode.Hover[]>(
+            'vscode.executeHoverProvider', document.uri, position
+        ).catch(() => undefined);
+
+        const canonicalPos = needsCanonicalRetry
+            ? new vscode.Position(position.line, canonicalChar)
+            : undefined;
+
+        const canonDefPromise = canonicalPos
+            ? this.executeCommandWithTimeout<vscode.Location[] | vscode.LocationLink[]>(
+                'vscode.executeDefinitionProvider', document.uri, canonicalPos
+            ).catch(() => undefined)
+            : Promise.resolve(undefined);
+
+        const canonHoverPromise = canonicalPos
+            ? this.executeCommandWithTimeout<vscode.Hover[]>(
+                'vscode.executeHoverProvider', document.uri, canonicalPos
+            ).catch(() => undefined)
+            : Promise.resolve(undefined);
+
+        const [definitions, hovers, canonDefs, canonHovers] = await Promise.all([
+            defPromise, hoverPromise, canonDefPromise, canonHoverPromise
         ]);
+
+        // For dotted expressions, prefer the canonical-position result (end of the
+        // full expression) so the most specific symbol is resolved regardless of
+        // which segment the cursor is on.  Fall back to cursor-position results.
+        const effectiveDefinitions = (canonDefs && canonDefs.length > 0) ? canonDefs : definitions;
+        const effectiveHovers = (canonHovers && canonHovers.length > 0) ? canonHovers : hovers;
 
         // 1. Process definition result
         let definitionLocation: vscode.Location | undefined;
-        if (definitions && definitions.length > 0) {
-            const loc = definitions[0];
+
+        if (effectiveDefinitions && effectiveDefinitions.length > 0) {
+            const loc = effectiveDefinitions[0];
             if ('uri' in loc) {
                 definitionLocation = loc;
                 result.path = loc.uri.fsPath;
@@ -67,32 +95,53 @@ export class LspClient {
             const resolved = await this.resolveNameFromLocation(definitionLocation);
             if (resolved) {
                 let realName = resolved.name;
-                const kind = this.mapSymbolKind(resolved.kind);
-                if (kind) {
-                    result.kind = kind;
-                }
 
-                // Try to prepend module name if we can guess it from the path.
-                // This fixes issues where hovering 'plt.plot' returns 'plot' (from pyplot.pyi)
-                // instead of 'matplotlib.pyplot.plot'.
-                const moduleName = this.getModuleNameFromPath(definitionLocation.uri.fsPath);
-                if (moduleName) {
-                    // If the definition symbol is a module, the correct fully qualified name *is* the module.
-                    if (resolved.kind === vscode.SymbolKind.Module) {
-                        result.name = moduleName;
-                    } else {
-                        result.name = `${moduleName}.${realName}`;
+                // When Pylance falls back to __getattr__ (can't resolve a specific
+                // attribute, e.g. df.agg → DataFrame.__getattr__), reconstruct the
+                // intended name using the class from the definition + the original
+                // attribute name from the cursor word.
+                const leafName = realName.split('.').pop();
+                if (leafName === '__getattr__' || leafName === '__getitem__') {
+                    result.path = definitionLocation.uri.fsPath;
+                    // Extract the class name: 'DataFrame.__getattr__' → 'DataFrame'
+                    const classPath = realName.split('.').slice(0, -1).join('.');
+                    if (classPath) {
+                        const attrName = word.split('.').pop() || word;
+                        const moduleName = this.getModuleNameFromPath(definitionLocation.uri.fsPath);
+                        if (moduleName) {
+                            result.name = `${moduleName}.${classPath}.${attrName}`;
+                        } else {
+                            result.name = `${classPath}.${attrName}`;
+                        }
                     }
                 } else {
-                    result.name = realName;
+                    const kind = this.mapSymbolKind(resolved.kind);
+                    if (kind) {
+                        result.kind = kind;
+                    }
+
+                    // Try to prepend module name if we can guess it from the path.
+                    // This fixes issues where hovering 'plt.plot' returns 'plot' (from pyplot.pyi)
+                    // instead of 'matplotlib.pyplot.plot'.
+                    const moduleName = this.getModuleNameFromPath(definitionLocation.uri.fsPath);
+                    if (moduleName) {
+                        // If the definition symbol is a module, the correct fully qualified name *is* the module.
+                        if (resolved.kind === vscode.SymbolKind.Module) {
+                            result.name = moduleName;
+                        } else {
+                            result.name = `${moduleName}.${realName}`;
+                        }
+                    } else {
+                        result.name = realName;
+                    }
                 }
             }
         }
 
-        // 2. Process hover result (already resolved concurrently above)
+        // 2. Process hover result
         try {
-            if (hovers && hovers.length > 0) {
-                for (const hover of hovers) {
+            if (effectiveHovers && effectiveHovers.length > 0) {
+                for (const hover of effectiveHovers) {
                     for (const content of hover.contents) {
                         const str = (typeof content === 'string') ? content : content.value;
                         // Look for python code block which usually contains the signature
@@ -132,6 +181,80 @@ export class LspClient {
         }
 
         return result;
+    }
+
+    private getAccessContextAtPosition(
+        document: vscode.TextDocument,
+        position: vscode.Position,
+    ): { expression: string; segmentRange: vscode.Range } | null {
+        const segmentRange = document.getWordRangeAtPosition(position, /[A-Za-z_][A-Za-z0-9_]*/);
+        if (!segmentRange) return null;
+
+        const line = document.lineAt(position.line).text;
+        const segmentText = document.getText(segmentRange);
+        const segments = [segmentText];
+        let cursor = segmentRange.start.character;
+
+        while (cursor > 0) {
+            let index = cursor - 1;
+
+            while (index >= 0 && /\s/.test(line[index])) index--;
+            if (index < 0 || line[index] !== '.') break;
+            index--;
+
+            while (index >= 0 && /\s/.test(line[index])) index--;
+            if (index < 0) break;
+
+            if (line[index] === ')' || line[index] === ']') {
+                index = this.scanLeftPastBalanced(line, index, line[index] === ')' ? '(' : '[', line[index]);
+                if (index < 0) break;
+                while (index >= 0 && /\s/.test(line[index])) index--;
+                if (index < 0) break;
+            }
+
+            const identEnd = index + 1;
+            while (index >= 0 && /[A-Za-z0-9_]/.test(line[index])) index--;
+            const identStart = index + 1;
+
+            if (identStart >= identEnd) {
+                break;
+            }
+
+            const ident = line.slice(identStart, identEnd);
+            if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(ident)) {
+                break;
+            }
+
+            segments.unshift(ident);
+            cursor = identStart;
+        }
+
+        return {
+            expression: segments.join('.'),
+            segmentRange,
+        };
+    }
+
+    private scanLeftPastBalanced(line: string, index: number, openChar: string, closeChar: string): number {
+        let depth = 0;
+
+        for (let cursor = index; cursor >= 0; cursor--) {
+            const char = line[cursor];
+
+            if (char === closeChar) {
+                depth++;
+                continue;
+            }
+
+            if (char === openChar) {
+                depth--;
+                if (depth === 0) {
+                    return cursor - 1;
+                }
+            }
+        }
+
+        return -1;
     }
 
     private getModuleNameFromPath(fsPath: string): string | null {
@@ -177,6 +300,10 @@ export class LspClient {
                 // - 3.11.base64 -> base64
                 moduleName = moduleName.replace(/^python\d+\.(\d+)\./, '');
                 moduleName = moduleName.replace(/^\d+\.\d+\./, '');
+
+                // Strip '-stubs' suffix from stub packages
+                // e.g. 'pandas-stubs.core.frame' → 'pandas.core.frame'
+                moduleName = moduleName.replace(/^([^.]+)-stubs/, '$1');
 
                 return moduleName;
             }

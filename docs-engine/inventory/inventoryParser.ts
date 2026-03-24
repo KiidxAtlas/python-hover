@@ -81,7 +81,6 @@ export class InventoryParser {
                 // Key: fully qualified name (e.g. pandas.DataFrame)
                 inventory.set(name, {
                     title: name,
-                    content: `Documentation from Sphinx Inventory (${domainRole})`,
                     url: fullUrl,
                     source: ResolutionSource.Sphinx,
                     confidence: 1.0

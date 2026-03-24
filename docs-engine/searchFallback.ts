@@ -84,12 +84,6 @@ export class SearchFallback {
     async search(key: DocKey): Promise<HoverDoc> {
         const devdocsUrl = this.getDevDocsUrl(key);
 
-        // Build a helpful summary instead of "not found"
-        const modulePart = key.module ? ` in \`${key.module}\`` : '';
-        const summary = key.isStdlib
-            ? `Python standard library symbol${modulePart}.`
-            : `Symbol from \`${key.package}\`${modulePart}.`;
-
         // For stdlib symbols, construct the module page URL so the hover always
         // shows a working Docs link even when the Sphinx inventory fails to load.
         let url: string | undefined;
@@ -100,7 +94,6 @@ export class SearchFallback {
 
         return {
             title: key.qualname || key.name,
-            summary: summary,
             url,
             devdocsUrl: devdocsUrl ?? undefined,
             source: ResolutionSource.DevDocs,

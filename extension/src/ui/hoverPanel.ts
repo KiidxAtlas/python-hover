@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { HoverDoc } from '../../../shared/types';
+import { cleanContent, cleanSignature } from './contentCleaner';
 
 export class HoverPanel {
     static currentPanel: HoverPanel | undefined;
@@ -66,20 +67,21 @@ export class HoverPanel {
             ? `<span class="badge">async</span>`
             : '';
 
-        // Signature
+        // Signature (apply same cleaning as hover renderer)
         let signatureHtml = '';
         if (doc.signature) {
-            let sig = doc.signature;
+            let sig = cleanSignature(doc.signature);
             if (sig.startsWith('(')) sig = `${doc.title}${sig}`;
             signatureHtml = `<pre class="sig"><code>${e(sig)}</code></pre>`;
         } else if (doc.overloads && doc.overloads.length > 0) {
             signatureHtml = doc.overloads
-                .map(o => `<pre class="sig"><code>${e(o)}</code></pre>`)
+                .map(o => `<pre class="sig"><code>${e(cleanSignature(o))}</code></pre>`)
                 .join('\n');
         }
 
-        // Description
-        const desc = doc.summary || doc.content || '';
+        // Description (apply same content cleaning as hover renderer — no truncation)
+        const rawDesc = doc.summary || doc.content || '';
+        const desc = cleanContent(rawDesc);
         const descHtml = desc
             ? `<p>${m(desc)}</p>`
             : '';

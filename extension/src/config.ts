@@ -79,6 +79,16 @@ export class Config {
         return this.config.get('openDocsInEditor', false);
     }
 
+    /** How to open official docs links: 'integrated' (side panel), 'external' (system browser) */
+    get docsBrowser(): 'integrated' | 'external' {
+        return this.config.get('docsBrowser', 'integrated');
+    }
+
+    /** How to open DevDocs links: 'integrated' (side panel), 'external' (system browser) */
+    get devdocsBrowser(): 'integrated' | 'external' {
+        return this.config.get('devdocsBrowser', 'external');
+    }
+
     get telemetry(): boolean {
         return this.config.get('telemetry', false);
     }
@@ -123,6 +133,10 @@ export class Config {
 
     get showQuickActions(): boolean {
         return this.config.get('ui.showQuickActions', true);
+    }
+
+    get showDebugPinButton(): boolean {
+        return this.config.get('ui.showDebugPinButton', false);
     }
 
     get showSeeAlso(): boolean {

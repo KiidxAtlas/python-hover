@@ -91,6 +91,11 @@
                 "category": "Python Hover"
             },
             {
+                "command": "python-hover.debugPinHover",
+                "title": "Debug Pin Current Hover",
+                "category": "Python Hover"
+            },
+            {
                 "command": "python-hover.browseModule",
                 "title": "Browse Module Symbols",
                 "category": "Python Hover"
@@ -211,7 +216,34 @@
                 "python-hover.openDocsInEditor": {
                     "type": "boolean",
                     "default": false,
-                    "description": "Open documentation links in VS Code's Simple Browser instead of external browser."
+                    "description": "Open documentation links in VS Code's Simple Browser instead of external browser.",
+                    "deprecationMessage": "Use python-hover.docsBrowser and python-hover.devdocsBrowser instead."
+                },
+                "python-hover.docsBrowser": {
+                    "type": "string",
+                    "enum": [
+                        "integrated",
+                        "external"
+                    ],
+                    "default": "integrated",
+                    "enumDescriptions": [
+                        "Open in VS Code side panel (webview)",
+                        "Open in your system browser"
+                    ],
+                    "description": "Where to open official documentation links (Docs button in hover toolbar)."
+                },
+                "python-hover.devdocsBrowser": {
+                    "type": "string",
+                    "enum": [
+                        "integrated",
+                        "external"
+                    ],
+                    "default": "external",
+                    "enumDescriptions": [
+                        "Open in VS Code side panel (webview)",
+                        "Open in your system browser"
+                    ],
+                    "description": "Where to open DevDocs links (DevDocs button in hover toolbar)."
                 },
                 "python-hover.telemetry": {
                     "type": "boolean",
@@ -289,6 +321,11 @@
                     "default": true,
                     "description": "Show quick action links (docs, copy, insert) at the top of hover tooltips."
                 },
+                "python-hover.ui.showDebugPinButton": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Show a debug button in the hover toolbar that opens the normal pinned panel and a separate debug panel with the exact hover markdown and payload for the same hover."
+                },
                 "python-hover.ui.showSeeAlso": {
                     "type": "boolean",
                     "default": true,
@@ -317,6 +354,7 @@
     "scripts": {
         "vscode:prepublish": "npm run compile",
         "compile": "tsc -p ./",
+        "inspect:hover": "npm run compile && node ./out/docs-engine/test/inspectHoverPipeline.js",
         "watch": "tsc -watch -p ./",
         "pretest": "npm run compile && npm run lint",
         "lint": "eslint src --ext ts",

@@ -61,7 +61,11 @@ export class DocsPanel {
     }
 
     private buildHtml(initialUrl: string): string {
-        const safe = initialUrl.replace(/"/g, '&quot;').replace(/</g, '&lt;');
+        const safe = initialUrl
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
         return /* html */`<!DOCTYPE html>
 <html lang="en">
 <head>

@@ -267,6 +267,50 @@ export class InventoryFetcher {
                     return packageInventory.get(nameSimple)!;
                 }
             }
+
+            // Strategy 5: Suffix matching for deep module paths.
+            // Sphinx inventories use public API names (e.g. `pandas.DataFrame.agg`)
+            // but LSP/stubs resolve to internal paths (e.g. `pandas.core.frame.DataFrame.agg`).
+            // Try progressively shorter suffixes until we find a match.
+            if (key.name.includes('.')) {
+                const nameParts = key.name.split('.');
+                for (let i = nameParts.length - 2; i >= 1; i--) {
+                    const suffix = nameParts.slice(i).join('.');
+                    const candidate = `${packageName}.${suffix}`;
+                    if (packageInventory.has(candidate)) {
+                        Logger.log(`Inventory: Strategy 5 matched ${key.name} → ${candidate}`);
+                        return packageInventory.get(candidate)!;
+                    }
+                }
+            }
+
+            // Strategy 6: Class-method scan for deep internal paths.
+            // When LSP gives 'pandas.core.frame.agg' but the inventory has
+            // 'pandas.DataFrame.agg', we scan for short entries ending with '.qualname'.
+            // Only fires for names with deep module paths (3+ segments) to avoid false positives.
+            if (key.qualname && !key.qualname.includes('.') && key.module) {
+                const moduleDepth = key.module.split('.').length;
+                if (moduleDepth >= 2) {
+                    const dotQual = `.${key.qualname}`;
+                    const candidates: Array<{ name: string; doc: HoverDoc; depth: number }> = [];
+                    for (const [entryName, doc] of packageInventory) {
+                        if (entryName.endsWith(dotQual) && entryName.startsWith(packageName + '.')) {
+                            const entryParts = entryName.split('.');
+                            if (entryParts.length <= 3) {
+                                candidates.push({ name: entryName, doc, depth: entryParts.length });
+                            }
+                        }
+                    }
+                    if (candidates.length === 1) {
+                        Logger.log(`Inventory: Strategy 6 matched ${key.name} → ${candidates[0].name}`);
+                        return candidates[0].doc;
+                    } else if (candidates.length > 1) {
+                        candidates.sort((a, b) => a.depth - b.depth || a.name.length - b.name.length);
+                        Logger.log(`Inventory: Strategy 6 matched ${key.name} → ${candidates[0].name} (${candidates.length} candidates)`);
+                        return candidates[0].doc;
+                    }
+                }
+            }
         }
 
         return null;

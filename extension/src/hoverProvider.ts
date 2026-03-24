@@ -23,10 +23,10 @@ import { HoverRenderer } from './ui/hoverRenderer';
  */
 const PYTHON_STRUCTURAL_KEYWORDS = new Set([
     'and', 'assert', 'async', 'await',
-    'break', 'class', 'continue', 'def', 'del',
+    'break', 'case', 'class', 'continue', 'def', 'del',
     'elif', 'else', 'except', 'finally', 'for',
     'global', 'if', 'in', 'is', 'lambda',
-    'nonlocal', 'not', 'or', 'pass', 'raise',
+    'match', 'nonlocal', 'not', 'or', 'pass', 'raise',
     'return', 'try', 'while', 'with', 'yield',
 ]);
 
@@ -41,6 +41,9 @@ export class HoverProvider implements vscode.HoverProvider {
     private diagnosticCollection: vscode.DiagnosticCollection | undefined;
     private deprecatedRanges = new Map<string, vscode.Diagnostic[]>();
     private lastDoc: HoverDoc | null = null;
+
+    /** Maximum entries per in-memory cache before oldest entries are evicted. */
+    private static readonly MAX_CACHE_SIZE = 500;
 
     /** Per-session hover cache: qualified symbol name → rendered Hover.
      *  Prevents re-running the full pipeline when the same symbol is hovered again. */
@@ -91,9 +94,29 @@ export class HoverProvider implements vscode.HoverProvider {
         }
     }
 
+    /** Evict oldest entries when a map exceeds the cache limit. */
+    private evictIfNeeded<K, V>(map: Map<K, V>): void {
+        if (map.size <= HoverProvider.MAX_CACHE_SIZE) return;
+        const excess = map.size - HoverProvider.MAX_CACHE_SIZE;
+        const iter = map.keys();
+        for (let i = 0; i < excess; i++) {
+            const { value } = iter.next();
+            if (value !== undefined) map.delete(value);
+        }
+    }
+
     /** Kick off background inventory loads for common packages. */
-    warmupInventories(): void {
-        this.docResolver.warmupInventories();
+    warmupInventories(packages?: string[]): void {
+        this.docResolver.warmupInventories(packages);
+    }
+
+    warmupDocumentImports(document: vscode.TextDocument): void {
+        if (document.languageId !== 'python') return;
+
+        const packages = this.extractImportedRoots(document.getText());
+        if (packages.length > 0) {
+            this.docResolver.warmupInventories(packages);
+        }
     }
 
     setDiagnosticCollection(col: vscode.DiagnosticCollection): void {
@@ -102,6 +125,20 @@ export class HoverProvider implements vscode.HoverProvider {
 
     getLastDoc(): HoverDoc | null {
         return this.lastDoc;
+    }
+
+    getLastRenderedHoverMarkdown(): string | null {
+        if (!this.lastDoc) return null;
+
+        const hover = this.renderer.render(this.lastDoc);
+        const contents = Array.isArray(hover.contents) ? hover.contents : [hover.contents];
+        const parts = contents.map(content => {
+            if (typeof content === 'string') return content;
+            if ('value' in content && typeof content.value === 'string') return content.value;
+            return '';
+        }).filter(Boolean);
+
+        return parts.length > 0 ? parts.join('\n\n') : null;
     }
 
     searchDocs(query: string) {
@@ -129,7 +166,17 @@ export class HoverProvider implements vscode.HoverProvider {
     ): Promise<vscode.Hover | null> {
         try {
             await this.ready;
+
+            // Periodic eviction so caches don't grow unbounded over long sessions.
+            this.evictIfNeeded(this.hoverCache);
+            this.evictIfNeeded(this.identifyCache);
+            this.evictIfNeeded(this.positionToKey);
             if (!this.config.isEnabled) return null;
+
+            // Compute the segment range once — set on every hover we return so VS Code
+            // doesn't re-query the provider when the cursor moves within the same word
+            // (which changes lastDoc and breaks Pin).
+            const segmentRange = this.getSegmentRange(document, position);
 
             // Fast path: if we've already resolved this position in this document version,
             // skip the entire LSP + AST + refinement pipeline and go straight to hoverCache.
@@ -155,7 +202,7 @@ export class HoverProvider implements vscode.HoverProvider {
                 if (kwCached) return kwCached;
                 const kwInflight = this.inflightHovers.get(kwKey);
                 if (kwInflight) return kwInflight;
-                const kwPromise = this.resolveKeyword(simpleWord, kwKey);
+                const kwPromise = this.resolveKeyword(simpleWord, kwKey, segmentRange);
                 this.inflightHovers.set(kwKey, kwPromise);
                 kwPromise.finally(() => this.inflightHovers.delete(kwKey));
                 return kwPromise;
@@ -195,6 +242,7 @@ export class HoverProvider implements vscode.HoverProvider {
                         }
                         this.lastDoc = moduleDoc;
                         const hover = this.renderer.render(moduleDoc);
+                        if (segmentRange) hover.range = segmentRange;
                         this.hoverCache.set(moduleKey, hover);
                         return hover;
                     })();
@@ -270,8 +318,13 @@ export class HoverProvider implements vscode.HoverProvider {
             if (!lspSymbol) return null;
 
             // ── Phase 2: Name refinement (sync, fast) ────────────────────────────
+            const preRefineName = lspSymbol.name;
             lspSymbol.name = NameRefinement.fromSignature(lspSymbol.name, lspSymbol.signature);
+            const wasSignatureRefined = lspSymbol.name !== preRefineName;
             lspSymbol.name = NameRefinement.fromPath(lspSymbol.name, lspSymbol.path, isImportHover);
+
+            // Sanitise stray leading/trailing dots that refinement may produce.
+            lspSymbol.name = lspSymbol.name.replace(/^\.+|\.+$/g, '');
 
             // Standalone builtins (e.g. len, print) are typed as methods in stub class bodies
             // but are really top-level functions — correct the kind so the badge says "Function".
@@ -322,7 +375,7 @@ export class HoverProvider implements vscode.HoverProvider {
 
             // ── Register in-flight promise to deduplicate concurrent same-symbol hovers ─
             const wasAliasResolved = resolvedName !== originalName;
-            const resolutionPromise = this.resolveAndRender(lspSymbol, document, position, cacheKey, isImportHover, wasAliasResolved, token);
+            const resolutionPromise = this.resolveAndRender(lspSymbol, document, position, cacheKey, isImportHover, wasAliasResolved, wasSignatureRefined, segmentRange, token);
             this.inflightHovers.set(cacheKey, resolutionPromise);
             resolutionPromise.finally(() => this.inflightHovers.delete(cacheKey));
             return resolutionPromise;
@@ -340,6 +393,8 @@ export class HoverProvider implements vscode.HoverProvider {
         cacheKey: string,
         isImportHover: boolean,
         wasAliasResolved: boolean,
+        wasSignatureRefined: boolean,
+        hoverRange: vscode.Range | undefined,
         token: vscode.CancellationToken,
     ): Promise<vscode.Hover | null> {
         try {
@@ -371,7 +426,25 @@ export class HoverProvider implements vscode.HoverProvider {
             // treated as unresolvable even if the runtime can't import them — the package may
             // simply not be installed in the active Python environment (e.g. numpy on py3.14)
             // but its documentation is still available through the Sphinx inventory.
-            const isUnresolvable = !lspSymbol.path && !(runtimeInfo?.module) && !wasAliasResolved;
+            //
+            // Similarly, names refined via signature to a builtin type method (e.g. "dict.get",
+            // "list.append") must not be treated as unresolvable — even when the definition
+            // provider and runtime both failed, the docs engine can resolve them.
+            const BUILTIN_TYPES = new Set([
+                'list', 'dict', 'set', 'tuple', 'str', 'int', 'float',
+                'bytes', 'bytearray', 'frozenset', 'complex', 'bool', 'object',
+            ]);
+            const nameRoot = lspSymbol.name.split('.')[0];
+            const looksLikeBuiltinMethod = lspSymbol.name.includes('.') && BUILTIN_TYPES.has(nameRoot);
+            // If the root of the dotted name is directly imported in this file
+            // (e.g. `import fastapi` → `fastapi.FastAPI`), it's a library symbol
+            // even when the runtime can't import it (package not installed).
+            // This avoids the false positive of `app.route` (local var) matching:
+            // `app` is never in an import statement, so it correctly stays local.
+            const isImportedRoot = lspSymbol.name.includes('.')
+                && this.isDirectlyImported(document.getText(), nameRoot);
+            const isUnresolvable = !lspSymbol.path && !(runtimeInfo?.module) && !wasAliasResolved
+                && !looksLikeBuiltinMethod && !isImportedRoot && !wasSignatureRefined;
             if ((!runtimeInfo || !runtimeInfo.module) && (isLocalPath || isUnresolvable)) {
                 Logger.log('Local code detected — skipping remote doc lookup');
 
@@ -391,8 +464,6 @@ export class HoverProvider implements vscode.HoverProvider {
                         if (astInfo.signature && !signature) signature = astInfo.signature;
                     }
                 }
-
-                const notes: string[] = [];
 
                 // Fallback for dunder methods (use object.<method> docs + URL)
                 let dundarUrl: string | undefined;
@@ -417,27 +488,16 @@ export class HoverProvider implements vscode.HoverProvider {
                     }
                 }
 
-                if (!content && signature) {
-                    const returnMatch = signature.match(/->\s*(.+)$/);
-                    if (returnMatch) content = `Returns \`${returnMatch[1].trim()}\``;
-                }
-
-                if (lspSymbol.path) {
-                    const fileName = lspSymbol.path.replace(/\\/g, '/').split('/').pop();
-                    notes.push(`Defined in \`${fileName}\``);
-                }
-
                 const localDoc: HoverDoc = {
                     title: lspSymbol.name,
                     content,
-                    summary: content || (lspSymbol.kind ? `Local ${lspSymbol.kind}` : 'Local symbol'),
+                    summary: content || undefined,
                     signature: signature || lspSymbol.signature,
                     kind: lspSymbol.kind,
                     source: ResolutionSource.Local,
                     confidence: 1.0,
                     overloads: lspSymbol.overloads,
                     protocolHints: lspSymbol.protocolHints,
-                    notes: notes.length > 0 ? notes : undefined,
                     sourceUrl: lspSymbol.path,
                     // Dunder methods link to object.<method> docs on docs.python.org
                     url: dundarUrl,
@@ -446,6 +506,7 @@ export class HoverProvider implements vscode.HoverProvider {
 
                 this.lastDoc = localDoc;
                 const hover = this.renderer.render(localDoc);
+                if (hoverRange) hover.range = hoverRange;
                 this.hoverCache.set(cacheKey, hover);
                 return hover;
             }
@@ -478,17 +539,17 @@ export class HoverProvider implements vscode.HoverProvider {
                     isStdlib: true,
                 });
                 const resolvedDoc = await this.docResolver.resolve(docKey);
-                const keywordDoc: HoverDoc = {
-                    title: lspSymbol.name,
-                    content: runtimeInfo.docstring,
-                    kind: 'keyword',
-                    source: ResolutionSource.Runtime,
-                    confidence: 1.0,
-                    url: resolvedDoc?.url,
-                    devdocsUrl: resolvedDoc?.devdocsUrl,
-                };
+                const keywordDoc = this.docBuilder.build(
+                    {
+                        ...lspSymbol,
+                        ...runtimeInfo,
+                        kind: 'keyword',
+                    },
+                    resolvedDoc,
+                );
                 this.lastDoc = keywordDoc;
                 const hover = this.renderer.render(keywordDoc);
+                if (hoverRange) hover.range = hoverRange;
                 this.hoverCache.set(cacheKey, hover);
                 return hover;
             }
@@ -536,6 +597,7 @@ export class HoverProvider implements vscode.HoverProvider {
             }
 
             const hover = this.renderer.render(hoverDoc);
+            if (hoverRange) hover.range = hoverRange;
             this.hoverCache.set(cacheKey, hover);
             return hover;
 
@@ -545,6 +607,16 @@ export class HoverProvider implements vscode.HoverProvider {
         }
     }
 
+    /**
+     * Compute the hover range for the current identifier segment.
+     *
+     * This keeps hovers independent for each part of an access chain while still
+     * allowing the resolver to use left-hand context internally.
+     */
+    private getSegmentRange(document: vscode.TextDocument, position: vscode.Position): vscode.Range | undefined {
+        return document.getWordRangeAtPosition(position, /[A-Za-z_][A-Za-z0-9_]*/);
+    }
+
     // ─── Private helpers ─────────────────────────────────────────────────────
 
     /**
@@ -552,7 +624,7 @@ export class HoverProvider implements vscode.HoverProvider {
      * Python runtime and render a keyword hover card.  Bypasses LSP entirely so
      * that Pylance can't accidentally substitute the surrounding class/function.
      */
-    private async resolveKeyword(word: string, cacheKey: string): Promise<vscode.Hover | null> {
+    private async resolveKeyword(word: string, cacheKey: string, hoverRange?: vscode.Range): Promise<vscode.Hover | null> {
         const runtimeInfo = await this.pythonHelper.resolveRuntime(word).catch(() => null);
         if (!runtimeInfo?.docstring) return null;
 
@@ -573,6 +645,7 @@ export class HoverProvider implements vscode.HoverProvider {
         };
         this.lastDoc = keywordDoc;
         const hover = this.renderer.render(keywordDoc);
+        if (hoverRange) hover.range = hoverRange;
         this.hoverCache.set(cacheKey, hover);
         return hover;
     }
@@ -605,6 +678,44 @@ export class HoverProvider implements vscode.HoverProvider {
             if (importStart && col >= importStart[0].length) return true;
         } catch { /* ignore */ }
         return false;
+    }
+
+    /**
+     * True when the root segment appears in a top-level import statement.
+     * Matches `import fastapi`, `import fastapi.sub`, and `from fastapi import ...`.
+     * Does NOT match local variable names like `app` that are never imported.
+     */
+    private isDirectlyImported(text: string, root: string): boolean {
+        const escaped = root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        return new RegExp(`^\\s*(?:import|from)\\s+${escaped}\\b`, 'm').test(text);
+    }
+
+    private extractImportedRoots(text: string): string[] {
+        const roots = new Set<string>();
+        const addRoot = (value: string) => {
+            const trimmed = value.trim();
+            if (!trimmed || trimmed.startsWith('.')) return;
+            const root = trimmed.split('.')[0];
+            if (!root || root === 'builtins') return;
+            roots.add(root);
+        };
+
+        const importRegex = /^\s*import\s+([^\n#]+)/gm;
+        let importMatch: RegExpExecArray | null;
+        while ((importMatch = importRegex.exec(text)) !== null) {
+            const modules = importMatch[1].split(',');
+            for (const moduleText of modules) {
+                addRoot(moduleText.split(/\s+as\s+/i)[0]);
+            }
+        }
+
+        const fromRegex = /^\s*from\s+([A-Za-z_][\w.]*|\.+[A-Za-z_][\w.]*)\s+import\b/gm;
+        let fromMatch: RegExpExecArray | null;
+        while ((fromMatch = fromRegex.exec(text)) !== null) {
+            addRoot(fromMatch[1]);
+        }
+
+        return [...roots].slice(0, 24);
     }
 
     private isLibraryPath(p: string): boolean {

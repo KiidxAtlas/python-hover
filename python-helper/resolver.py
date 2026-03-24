@@ -10,6 +10,8 @@ import os
 import pydoc
 import sys
 
+SOFT_KEYWORDS = {"match", "case"}
+
 
 def resolve_symbol(symbol_name):
     """
@@ -22,7 +24,9 @@ def resolve_symbol(symbol_name):
         _KEYWORD_CONSTANTS = {"None", "True", "False"}
 
         # 0. Check if it's a keyword
-        if keyword.iskeyword(symbol_name) and symbol_name not in _KEYWORD_CONSTANTS:
+        if (
+            keyword.iskeyword(symbol_name) or symbol_name in SOFT_KEYWORDS
+        ) and symbol_name not in _KEYWORD_CONSTANTS:
             # Capture help() output for the keyword
             capture = io.StringIO()
             original_stdout = sys.stdout
@@ -271,8 +275,9 @@ def _ast_signature(node) -> str | None:
             params.append("*")
 
         for i, arg in enumerate(args.kwonlyargs):
-            if i < len(args.kw_defaults) and args.kw_defaults[i] is not None:
-                params.append(f"{arg.arg}={ast.unparse(args.kw_defaults[i])}")
+            default_value = args.kw_defaults[i] if i < len(args.kw_defaults) else None
+            if default_value is not None:
+                params.append(f"{arg.arg}={ast.unparse(default_value)}")
             else:
                 params.append(arg.arg)
 

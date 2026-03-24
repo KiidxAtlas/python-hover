@@ -8,6 +8,19 @@ import { Logger } from './logger';
  * the most accurate fully-qualified name for documentation lookup.
  */
 export class NameRefinement {
+    private static readonly SELF_TYPE_ALIASES: Record<string, string> = {
+        'LiteralString': 'str',
+        'AnyStr': 'str',
+        'Text': 'str',
+        'ByteString': 'bytes',
+        'NoneType': 'None',
+    };
+
+    private static readonly BUILTIN_OWNER_TYPES = new Set([
+        'str', 'list', 'dict', 'set', 'tuple', 'int', 'float', 'bool',
+        'bytes', 'bytearray', 'frozenset', 'complex', 'object', 'None',
+    ]);
+
 
     /**
      * Fix names where the LSP resolves a method as a top-level function.
@@ -22,6 +35,7 @@ export class NameRefinement {
 
         let className = selfMatch[1];
         if (className.includes('@')) className = className.split('@')[1]; // "Self@ClassName" → "ClassName"
+        className = this.normalizeSelfType(className);
         if (className === 'Unknown') return name;
 
         const methodName = name.split('.').pop();
@@ -29,12 +43,31 @@ export class NameRefinement {
         if (name.endsWith(expectedSuffix)) return name; // already correct
 
         const lastDot = name.lastIndexOf('.');
-        const newName = lastDot !== -1
-            ? `${name.substring(0, lastDot)}.${className}.${methodName}`  // builtins.join → builtins.str.join
-            : `${className}.${methodName}`;                                // append → list.append
+        const useBuiltinOwner = this.BUILTIN_OWNER_TYPES.has(className);
+        let newName: string;
+        if (lastDot === -1 || useBuiltinOwner) {
+            newName = `${className}.${methodName}`;                        // append → list.append
+        } else {
+            const prefix = name.substring(0, lastDot);
+            // A multi-segment prefix (e.g. "numpy.core") is a module path — keep it.
+            // A single-segment prefix (e.g. "y", "app") is likely a local variable name
+            // that was picked up from the dotted word at the cursor — drop it, since the
+            // signature already tells us the real owning class.
+            newName = prefix.includes('.')
+                ? `${prefix}.${className}.${methodName}`                   // numpy.core.reshape → numpy.core.ndarray.reshape
+                : `${className}.${methodName}`;                            // y.get → dict.get
+        }
 
         Logger.log(`NameRefinement.fromSignature: ${name} → ${newName}`);
         return newName;
+    }
+
+    private static normalizeSelfType(className: string): string {
+        const normalized = className.startsWith('builtins.')
+            ? className.slice('builtins.'.length)
+            : className;
+
+        return this.SELF_TYPE_ALIASES[normalized] ?? normalized;
     }
 
     /**
