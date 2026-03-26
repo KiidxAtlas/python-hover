@@ -62,11 +62,7 @@ export function activate(context: vscode.ExtensionContext) {
         // virtual/internal type-stub documents that we must not try to warmup.
         const warmupImportsForDocument = (document: vscode.TextDocument | undefined) => {
             if (!document || document.languageId !== 'python') return;
-<<<<<<< Current (Your changes)
-            if (!config.onlineDiscovery) return;
-=======
             if (!config.warmupImports || !config.onlineDiscovery) return;
->>>>>>> Incoming (Background Agent changes)
             if (document.uri.scheme !== 'file') return;
             hoverProvider.warmupDocumentImports(document);
         };
