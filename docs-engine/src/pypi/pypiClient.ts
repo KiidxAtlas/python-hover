@@ -36,22 +36,24 @@ export class PyPiClient {
     async getPackageMetadata(packageName: string): Promise<{ url: string | null, summary: string | null, links: Record<string, string> }> {
         const EMPTY: { url: null, summary: null, links: Record<string, string> } = { url: null, summary: null, links: {} };
 
-        // Check disk cache — positive results under 'pypi:', negative under 'pypi-negative:'
         if (this.diskCache) {
-            const negative = this.diskCache.get(`pypi-negative:${packageName}`);
-            if (negative) return EMPTY;
-
-            const cached = this.diskCache.get(`pypi:${packageName}`);
+            const cached = this.diskCache.getCorpusPackageMetadata(packageName);
             if (cached) {
-                try { return JSON.parse(cached); } catch { /* stale/corrupt — refetch */ }
+                if (cached.negative) return EMPTY;
+                return {
+                    url: cached.url ?? null,
+                    summary: cached.summary ?? null,
+                    links: cached.links ?? {},
+                };
             }
         }
 
         try {
             const metadata = await this.fetchJson(`https://pypi.org/pypi/${packageName}/json`);
             if (!metadata || !metadata.info) {
-                // Cache the miss so we don't query PyPI on every hover for unknown packages
-                if (this.diskCache) this.diskCache.set(`pypi-negative:${packageName}`, '1');
+                if (this.diskCache) {
+                    this.diskCache.setCorpusPackageMetadata(packageName, { negative: true });
+                }
                 return EMPTY;
             }
 
@@ -80,17 +82,15 @@ export class PyPiClient {
 
             if (this.diskCache) {
                 if (!bestUrl && !summary) {
-                    // Package exists on PyPI but has no useful docs — treat as negative
-                    this.diskCache.set(`pypi-negative:${packageName}`, '1');
+                    this.diskCache.setCorpusPackageMetadata(packageName, { negative: true });
                 } else {
-                    this.diskCache.set(`pypi:${packageName}`, JSON.stringify(result));
+                    this.diskCache.setCorpusPackageMetadata(packageName, result);
                 }
             }
 
             return result;
         } catch {
-            // Network error or 404 — cache as negative so we don't retry on every hover
-            if (this.diskCache) this.diskCache.set(`pypi-negative:${packageName}`, '1');
+            // Treat transport failures as transient so later hovers can retry.
             return EMPTY;
         }
     }

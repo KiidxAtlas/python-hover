@@ -22,34 +22,18 @@ export class SphinxScraper {
         return url;
     }
 
-    private contentCacheKey(url: string): string {
-        return `scrape-content:${this.normalizeToHttps(url)}`;
+    getCachedContent(packageName: string, url: string): string | null {
+        return this.diskCache.getCorpusEntry(packageName, this.normalizeToHttps(url))?.content ?? null;
     }
 
-    private seeAlsoCacheKey(url: string): string {
-        return `scrape-seealso:${this.normalizeToHttps(url)}`;
+    getCachedSeeAlso(packageName: string, url: string): string[] | null {
+        return this.diskCache.getCorpusEntry(packageName, this.normalizeToHttps(url))?.seeAlso ?? null;
     }
 
-    getCachedContent(url: string): string | null {
-        return this.diskCache.get(this.contentCacheKey(url)) ?? null;
-    }
-
-    getCachedSeeAlso(url: string): string[] | null {
-        const cached = this.diskCache.get(this.seeAlsoCacheKey(url));
-        if (!cached) return null;
-
-        try {
-            const parsed = JSON.parse(cached);
-            return Array.isArray(parsed) ? parsed.filter(item => typeof item === 'string') : null;
-        } catch {
-            return null;
-        }
-    }
-
-    async fetchSeeAlso(url: string): Promise<string[]> {
+    async fetchSeeAlso(packageName: string, url: string): Promise<string[]> {
         try {
             const normalizedUrl = this.normalizeToHttps(url);
-            const cached = this.getCachedSeeAlso(normalizedUrl);
+            const cached = this.getCachedSeeAlso(packageName, normalizedUrl);
             if (cached) return cached;
 
             const [baseUrl, anchor] = normalizedUrl.split('#');
@@ -58,7 +42,7 @@ export class SphinxScraper {
             if (!anchor || !html) return [];
 
             const extracted = this.extractSeeAlso(html, anchor, baseUrl);
-            this.diskCache.set(this.seeAlsoCacheKey(normalizedUrl), JSON.stringify(extracted));
+            this.diskCache.setCorpusEntry(packageName, normalizedUrl, { seeAlso: extracted });
             return extracted;
         } catch {
             return [];
@@ -98,10 +82,10 @@ export class SphinxScraper {
         return [...new Set(results)].slice(0, 8); // dedupe + limit
     }
 
-    async fetchContent(url: string): Promise<string | null> {
+    async fetchContent(packageName: string, url: string): Promise<string | null> {
         try {
             const normalizedUrl = this.normalizeToHttps(url);
-            const cached = this.getCachedContent(normalizedUrl);
+            const cached = this.getCachedContent(packageName, normalizedUrl);
             if (cached) return cached;
 
             const [baseUrl, anchor] = normalizedUrl.split('#');
@@ -117,7 +101,7 @@ export class SphinxScraper {
                 : this.extractPageSummary(html!, baseUrl);
 
             if (extracted) {
-                this.diskCache.set(this.contentCacheKey(normalizedUrl), extracted);
+                this.diskCache.setCorpusEntry(packageName, normalizedUrl, { content: extracted });
             }
 
             return extracted;

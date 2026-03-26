@@ -82,7 +82,7 @@ export class InventoryParser {
                 inventory.set(name, {
                     title: name,
                     url: fullUrl,
-                    source: ResolutionSource.Sphinx,
+                    source: ResolutionSource.Corpus,
                     confidence: 1.0
                 });
             }

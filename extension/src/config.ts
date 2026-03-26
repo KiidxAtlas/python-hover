@@ -121,4 +121,8 @@ export class Config {
     get astFallbackEnabled(): boolean {
         return this.config.get('astFallback', false);
     }
+
+    get enableDebugLogging(): boolean {
+        return this.config.get('enableDebugLogging', false);
+    }
 }

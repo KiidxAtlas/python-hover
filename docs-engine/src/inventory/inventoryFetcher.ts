@@ -86,6 +86,17 @@ const WARMUP_PACKAGES = [
 ];
 
 export class InventoryFetcher {
+    private static readonly STDLIB_INVENTORY_CACHE = '__python_stdlib__';
+    private static readonly CORPUS_META_PAGE_PATTERNS = [
+        /\/py-modindex\/?$/i,
+        /\/genindex\/?$/i,
+        /\/search\/?$/i,
+        /\/search\.html$/i,
+        /\/modindex\/?$/i,
+        /\/objects\.inv$/i,
+        /\/welcome\/?$/i,
+    ];
+
     private parser: InventoryParser;
     private pypiClient: PyPiClient;
     private cache: Map<string, Map<string, HoverDoc>>; // Map<Package, Map<Symbol, Doc>>
@@ -162,16 +173,26 @@ export class InventoryFetcher {
      * warmup + hovers never download the same objects.inv twice in parallel.
      */
     private ensureInventoryLoaded(packageName: string, version?: string, isStdlib?: boolean): Promise<void> {
-        if (this.cache.has(packageName)) {
+        const inventoryCacheName = this.getInventoryCacheName(packageName, isStdlib);
+        if (this.cache.has(packageName) || this.cache.has(inventoryCacheName)) {
+            if (!this.cache.has(packageName) && this.cache.has(inventoryCacheName)) {
+                this.cache.set(packageName, this.cache.get(inventoryCacheName)!);
+            }
             return Promise.resolve();
         }
-        let p = this.loadingPromises.get(packageName);
+        let p = this.loadingPromises.get(inventoryCacheName);
         if (!p) {
             p = this.loadInventory(packageName, version, isStdlib);
-            this.loadingPromises.set(packageName, p);
-            p.finally(() => this.loadingPromises.delete(packageName));
+            this.loadingPromises.set(inventoryCacheName, p);
+            p.finally(() => this.loadingPromises.delete(inventoryCacheName));
         }
         return p;
+    }
+
+    private getInventoryCacheName(packageName: string, isStdlib?: boolean): string {
+        return (isStdlib || packageName === 'builtins' || packageName === 'python')
+            ? InventoryFetcher.STDLIB_INVENTORY_CACHE
+            : packageName;
     }
 
     private async resolveBaseUrl(packageName: string, version?: string, isStdlib?: boolean): Promise<string> {
@@ -350,7 +371,8 @@ export class InventoryFetcher {
     }
 
     private async loadInventory(packageName: string, version?: string, isStdlib?: boolean): Promise<void> {
-        const cacheKey = `inventory:${packageName}:${version || 'latest'}`;
+        const inventoryCacheName = this.getInventoryCacheName(packageName, isStdlib);
+        const cacheKey = `inventory:${inventoryCacheName}:${version || 'latest'}`;
 
         // 1. Try Disk Cache
         const cached = this.diskCache.get(cacheKey);
@@ -358,17 +380,23 @@ export class InventoryFetcher {
             try {
                 const data = JSON.parse(cached);
                 const inventory = new Map<string, HoverDoc>(Object.entries(data));
-                this.cache.set(packageName, inventory);
+                this.cache.set(inventoryCacheName, inventory);
+                if (packageName !== inventoryCacheName) {
+                    this.cache.set(packageName, inventory);
+                }
 
                 // Restore the base URL so module-overview hovers can build a Docs link.
                 // When loading from disk cache we return early and never call resolveBaseUrl,
                 // so packageBaseUrls would stay empty without this.
-                if (!this.packageBaseUrls.has(packageName)) {
+                if (!this.packageBaseUrls.has(packageName) && !this.packageBaseUrls.has(inventoryCacheName)) {
                     const knownUrl = this.useKnownDocsUrls ? KNOWN_DOCS_URLS[packageName.toLowerCase()] : undefined;
                     if (knownUrl) {
+                        this.packageBaseUrls.set(inventoryCacheName, knownUrl);
                         this.packageBaseUrls.set(packageName, knownUrl);
                     } else if (isStdlib || packageName === 'builtins' || packageName === 'python') {
-                        this.packageBaseUrls.set(packageName, `https://docs.python.org/${this.pythonVersion}`);
+                        const stdlibUrl = `https://docs.python.org/${this.pythonVersion}`;
+                        this.packageBaseUrls.set(inventoryCacheName, stdlibUrl);
+                        this.packageBaseUrls.set(packageName, stdlibUrl);
                     }
                 }
 
@@ -379,16 +407,24 @@ export class InventoryFetcher {
             }
         }
 
-        const negKey = `inv-fail:${packageName}`;
+        const negKey = `inv-fail:${inventoryCacheName}`;
         if (this.diskCache.get(negKey)) {
-            this.cache.set(packageName, new Map());
+            const empty = new Map<string, HoverDoc>();
+            this.cache.set(inventoryCacheName, empty);
+            if (packageName !== inventoryCacheName) {
+                this.cache.set(packageName, empty);
+            }
             return;
         }
 
         // 2. Fetch from Network
         if (!this.allowNetwork) {
             Logger.log(`Network disabled, skipping inventory fetch for ${packageName}`);
-            this.cache.set(packageName, new Map());
+            const empty = new Map<string, HoverDoc>();
+            this.cache.set(inventoryCacheName, empty);
+            if (packageName !== inventoryCacheName) {
+                this.cache.set(packageName, empty);
+            }
             return;
         }
 
@@ -398,7 +434,12 @@ export class InventoryFetcher {
         try {
             const buffer = await this.fetchBuffer(inventoryUrl);
             const inventory = this.parser.parse(buffer, baseUrl);
-            this.cache.set(packageName, inventory);
+            this.cache.set(inventoryCacheName, inventory);
+            if (packageName !== inventoryCacheName) {
+                this.cache.set(packageName, inventory);
+            }
+            this.packageBaseUrls.set(inventoryCacheName, baseUrl);
+            this.packageBaseUrls.set(packageName, baseUrl);
             Logger.log(`Loaded inventory for ${packageName}: ${inventory.size} items`);
 
             // 3. Save to Disk Cache
@@ -419,7 +460,11 @@ export class InventoryFetcher {
                     Logger.log(`Retrying stdlib inventory with canonical URL: ${fallbackUrl}`);
                     const buffer = await this.fetchBuffer(fallbackUrl);
                     const inventory = this.parser.parse(buffer, fallbackBase);
-                    this.cache.set(packageName, inventory);
+                    this.cache.set(inventoryCacheName, inventory);
+                    if (packageName !== inventoryCacheName) {
+                        this.cache.set(packageName, inventory);
+                    }
+                    this.packageBaseUrls.set(inventoryCacheName, fallbackBase);
                     this.packageBaseUrls.set(packageName, fallbackBase);
                     Logger.log(`Loaded stdlib inventory from canonical URL: ${inventory.size} items`);
                     const obj = Object.fromEntries(inventory);
@@ -430,7 +475,11 @@ export class InventoryFetcher {
                 }
             }
 
-            this.cache.set(packageName, new Map());
+            const empty = new Map<string, HoverDoc>();
+            this.cache.set(inventoryCacheName, empty);
+            if (packageName !== inventoryCacheName) {
+                this.cache.set(packageName, empty);
+            }
             this.diskCache.set(negKey, '1');
         }
     }
@@ -526,11 +575,16 @@ export class InventoryFetcher {
         for (const doc of inventory.values()) {
             if (!doc.url) continue;
             const pageUrl = doc.url.split('#')[0];
+            if (!pageUrl || this.shouldSkipCorpusPageUrl(pageUrl)) continue;
             if (pageUrl) pages.add(pageUrl);
             if (pages.size >= maxPages) break;
         }
 
         return [...pages];
+    }
+
+    private shouldSkipCorpusPageUrl(url: string): boolean {
+        return InventoryFetcher.CORPUS_META_PAGE_PATTERNS.some(pattern => pattern.test(url));
     }
 
     private fetchBuffer(url: string, redirectCount = 0): Promise<Buffer> {

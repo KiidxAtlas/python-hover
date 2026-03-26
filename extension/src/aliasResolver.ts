@@ -1,24 +1,25 @@
 
 export class AliasResolver {
     resolve(documentText: string, symbol: string): string {
-        const aliases = this.parseAliases(documentText);
+        const { importAliases, variableAliases } = this.parseAliases(documentText);
 
-        // Try to match the longest prefix of the symbol with an alias
         const parts = symbol.split('.');
-        for (let i = parts.length; i > 0; i--) {
-            const prefix = parts.slice(0, i).join('.');
-            if (aliases.has(prefix)) {
-                const resolvedPrefix = aliases.get(prefix)!;
-                const suffix = parts.slice(i).join('.');
-                return suffix ? `${resolvedPrefix}.${suffix}` : resolvedPrefix;
-            }
+        const root = parts[0];
+
+        if (variableAliases.has(root)) {
+            const resolvedRoot = variableAliases.get(root)!;
+            const resolvedFromVariable = parts.length > 1
+                ? `${resolvedRoot}.${parts.slice(1).join('.')}`
+                : resolvedRoot;
+            return this.resolveAliasPath(importAliases, resolvedFromVariable);
         }
 
-        return symbol;
+        return this.resolveWithAliases(importAliases, symbol);
     }
 
-    private parseAliases(text: string): Map<string, string> {
-        const aliases = new Map<string, string>();
+    private parseAliases(text: string): { importAliases: Map<string, string>; variableAliases: Map<string, string> } {
+        const importAliases = new Map<string, string>();
+        const variableAliases = new Map<string, string>();
 
         // Normalize multi-line imports by joining lines ending with backslash
         // and handling parenthesized imports: from X import (A, B, C)
@@ -40,14 +41,14 @@ export class AliasResolver {
             // 1. import X as Y
             const importAsMatch = /^import\s+([\w.]+)\s+as\s+([\w.]+)/.exec(trimmed);
             if (importAsMatch) {
-                aliases.set(importAsMatch[2], importAsMatch[1]);
+                importAliases.set(importAsMatch[2], importAsMatch[1]);
                 continue;
             }
 
             // 2. from X import Y as Z (single import)
             const fromImportAsMatch = /^from\s+([\w.]+)\s+import\s+([\w.]+)\s+as\s+([\w.]+)$/.exec(trimmed);
             if (fromImportAsMatch) {
-                aliases.set(fromImportAsMatch[3], `${fromImportAsMatch[1]}.${fromImportAsMatch[2]}`);
+                importAliases.set(fromImportAsMatch[3], `${fromImportAsMatch[1]}.${fromImportAsMatch[2]}`);
                 continue;
             }
 
@@ -68,12 +69,12 @@ export class AliasResolver {
                         // Handle "A as B" inside the list
                         const asMatch = /^([\w.]+)\s+as\s+([\w.]+)$/.exec(cleanImp);
                         if (asMatch) {
-                            aliases.set(asMatch[2], `${module}.${asMatch[1]}`);
+                            importAliases.set(asMatch[2], `${module}.${asMatch[1]}`);
                         } else {
                             // Simple "A"
                             // Only add if it's a valid identifier
                             if (/^[\w.]+$/.test(cleanImp)) {
-                                aliases.set(cleanImp, `${module}.${cleanImp}`);
+                                importAliases.set(cleanImp, `${module}.${cleanImp}`);
                             }
                         }
                     }
@@ -81,6 +82,50 @@ export class AliasResolver {
             }
         }
 
-        return aliases;
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('import') || trimmed.startsWith('from')) {
+                continue;
+            }
+
+            const assignmentMatch = /^([A-Za-z_][\w]*)\s*=\s*([A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)+)\s*\(/.exec(trimmed);
+            if (!assignmentMatch) {
+                continue;
+            }
+
+            const variableName = assignmentMatch[1];
+            const constructorPath = this.resolveAliasPath(importAliases, assignmentMatch[2]);
+            variableAliases.set(variableName, constructorPath);
+        }
+
+        return { importAliases, variableAliases };
+    }
+
+    private resolveAliasPath(aliases: Map<string, string>, symbol: string): string {
+        let resolved = symbol;
+
+        for (let depth = 0; depth < 4; depth++) {
+            const next = this.resolveWithAliases(aliases, resolved);
+            if (next === resolved) {
+                return resolved;
+            }
+            resolved = next;
+        }
+
+        return resolved;
+    }
+
+    private resolveWithAliases(aliases: Map<string, string>, symbol: string): string {
+        const parts = symbol.split('.');
+        for (let i = parts.length; i > 0; i--) {
+            const prefix = parts.slice(0, i).join('.');
+            if (aliases.has(prefix)) {
+                const resolvedPrefix = aliases.get(prefix)!;
+                const suffix = parts.slice(i).join('.');
+                return suffix ? `${resolvedPrefix}.${suffix}` : resolvedPrefix;
+            }
+        }
+
+        return symbol;
     }
 }

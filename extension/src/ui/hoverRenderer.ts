@@ -602,7 +602,6 @@ export class HoverRenderer {
 
     private getSourceLabel(source: ResolutionSource): string | null {
         switch (source) {
-            case ResolutionSource.Sphinx: return 'Sphinx';
             case ResolutionSource.DevDocs: return 'DevDocs';
             case ResolutionSource.Runtime: return 'runtime';
             case ResolutionSource.Static: return 'static';

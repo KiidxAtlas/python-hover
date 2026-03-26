@@ -4,7 +4,6 @@ import { DiskCache } from './cache/diskCache';
 import { InventoryFetcher } from './inventory/inventoryFetcher';
 import { PyPiClient } from './pypi/pypiClient';
 import { StaticDocResolver } from './resolvers/staticDocResolver';
-import { StdlibCorpusResolver } from './resolvers/stdlibCorpusResolver';
 import { SphinxScraper } from './scraping/sphinxScraper';
 import { SearchFallback } from './search/searchFallback';
 
@@ -31,12 +30,13 @@ export class DocResolver {
     private readonly fallback: SearchFallback;
     private readonly scraper: SphinxScraper;
     private readonly staticResolver: StaticDocResolver;
-    private readonly corpusResolver: StdlibCorpusResolver;
     private readonly config?: ResolverConfig;
     private readonly enableDocScraping: boolean;
 
     /** Packages whose full corpus build has already been triggered this session. */
     private readonly fullCorpusBuilt = new Set<string>();
+    /** Deduplicate background scrape kicks for the same package + URL pair. */
+    private readonly prefetchInFlight = new Set<string>();
 
     constructor(diskCache: DiskCache, config?: ResolverConfig) {
         this.inventoryFetcher = new InventoryFetcher(
@@ -50,7 +50,6 @@ export class DocResolver {
         this.fallback = new SearchFallback();
         this.scraper = new SphinxScraper(diskCache, config?.requestTimeout || 5000);
         this.staticResolver = new StaticDocResolver();
-        this.corpusResolver = new StdlibCorpusResolver();
         this.config = config;
         this.enableDocScraping = config?.enableDocScraping === true;
     }
@@ -58,7 +57,6 @@ export class DocResolver {
     setPythonVersion(version: string) {
         this.inventoryFetcher.setPythonVersion(version);
         this.staticResolver.setPythonVersion(version);
-        this.corpusResolver.setPythonVersion(version);
     }
 
     /** Start background inventory loads for the most common packages. */
@@ -69,6 +67,48 @@ export class DocResolver {
 
     searchSymbols(query: string) {
         return this.inventoryFetcher.searchSymbols(query);
+    }
+
+    private corpusPackageName(packageName?: string, moduleName?: string, symbolName?: string): string {
+        const publicPackage = symbolName?.includes('.') ? symbolName.split('.')[0] : undefined;
+        return publicPackage || packageName || moduleName?.split('.')[0] || 'python';
+    }
+
+    private shouldBuildCorpus(): boolean {
+        return this.config?.onlineDiscovery !== false;
+    }
+
+    private shouldBuildFullCorpus(): boolean {
+        return this.shouldBuildCorpus() && this.config?.buildFullCorpus === true;
+    }
+
+    private buildAlternateInventoryKeys(key: DocKey): DocKey[] {
+        const keys = [key];
+        const publicPackage = key.name.includes('.') ? key.name.split('.')[0] : undefined;
+
+        if (publicPackage && publicPackage !== key.package) {
+            keys.push({
+                ...key,
+                package: publicPackage,
+            });
+        }
+
+        return keys;
+    }
+
+    private async resolveInventoryDoc(key: DocKey): Promise<HoverDoc | null> {
+        for (const candidate of this.buildAlternateInventoryKeys(key)) {
+            try {
+                const doc = await this.inventoryFetcher.findInInventory(candidate);
+                if (doc) {
+                    return doc;
+                }
+            } catch (e) {
+                Logger.log(`Inventory fetch failed for ${candidate.name}: ${e}`);
+            }
+        }
+
+        return null;
     }
 
     private isPlaceholderContent(text?: string): boolean {
@@ -101,14 +141,11 @@ export class DocResolver {
         seeAlso?: string[],
         links?: Record<string, string>,
     ): HoverDoc {
-        // If we have rich content from the local disk cache (user's corpus), label
-        // it "corpus".  Without content we only have raw inventory metadata → "sphinx".
-        const source = content ? ResolutionSource.Corpus : ResolutionSource.Sphinx;
         return {
             ...inventoryDoc,
             content,
-            summary,
-            source,
+            summary: summary || this.extractSummaryFromContent(content),
+            source: ResolutionSource.Corpus,
             confidence: 1.0,
             links,
             devdocsUrl: this.fallback.getDevDocsUrl(key) ?? undefined,
@@ -117,16 +154,29 @@ export class DocResolver {
         };
     }
 
-    private prefetchInventoryEnhancements(url?: string): void {
+    private prefetchInventoryEnhancements(packageName: string, url?: string): void {
         if (!url || !this.enableDocScraping) return;
 
-        void this.scraper.fetchContent(url).catch(e => {
-            Logger.log(`Background scrape failed for ${url}: ${e}`);
-        });
+        const prefetchKey = `${packageName}:${url}`;
+        if (this.prefetchInFlight.has(prefetchKey)) return;
+        this.prefetchInFlight.add(prefetchKey);
 
-        void this.scraper.fetchSeeAlso(url).catch(() => {
+        void Promise.all([
+            this.scraper.fetchContent(packageName, url).catch(e => {
+                Logger.log(`Background scrape failed for ${url}: ${e}`);
+            }),
+            this.scraper.fetchSeeAlso(packageName, url).catch(() => {
             // See-also data is non-critical; ignore failures.
+            }),
+        ]).finally(() => {
+            this.prefetchInFlight.delete(prefetchKey);
         });
+    }
+
+    private shouldUseImmediateBuiltinStaticPath(key: DocKey, staticDoc: HoverDoc | null): boolean {
+        if (!staticDoc?.url) return false;
+        if (key.package !== 'builtins' && key.module !== 'builtins') return false;
+        return (key.qualname || key.name).replace(/^builtins\./, '').includes('.');
     }
 
     /**
@@ -135,7 +185,7 @@ export class DocResolver {
      * session per package regardless of how many times it is called.
      */
     private triggerFullCorpusBuild(pkg: string): void {
-        if (!this.enableDocScraping || !this.config?.buildFullCorpus) return;
+        if (!this.shouldBuildFullCorpus()) return;
         if (!pkg || this.fullCorpusBuilt.has(pkg)) return;
         this.fullCorpusBuilt.add(pkg);
 
@@ -155,7 +205,7 @@ export class DocResolver {
         for (let i = 0; i < urls.length; i += BATCH) {
             await Promise.all(
                 urls.slice(i, i + BATCH).map(url =>
-                    this.scraper.fetchContent(url).catch(() => { })
+                    this.scraper.fetchContent(pkg, url).catch(() => { })
                 )
             );
             if (i + BATCH < urls.length) {
@@ -211,10 +261,11 @@ export class DocResolver {
 
         // Use cached scraped content if available; otherwise fire background scrape
         let content: string | undefined;
+        const corpusPackage = this.corpusPackageName(packageName, packageName, packageName);
         if (url) {
-            content = this.scraper.getCachedContent(url) ?? undefined;
+            content = this.scraper.getCachedContent(corpusPackage, url) ?? undefined;
             if (!content && this.config?.onlineDiscovery !== false && this.enableDocScraping) {
-                this.prefetchInventoryEnhancements(url);
+                this.prefetchInventoryEnhancements(corpusPackage, url);
             }
             summary = summary || this.extractSummaryFromContent(content);
         }
@@ -226,7 +277,7 @@ export class DocResolver {
             content,
             url,
             devdocsUrl: this.fallback.getDevDocsUrl(docKey) ?? undefined,
-            source: moduleExports.length > 0 ? ResolutionSource.Sphinx : ResolutionSource.PyPI,
+            source: moduleExports.length > 0 ? ResolutionSource.Corpus : ResolutionSource.PyPI,
             confidence: 0.9,
             module: packageName,
             moduleExports: moduleExports.length > 0 ? moduleExports : undefined,
@@ -236,33 +287,38 @@ export class DocResolver {
 
     async resolve(key: DocKey): Promise<HoverDoc> {
         try {
+            const corpusPackage = this.corpusPackageName(key.package, key.module, key.name);
             // 0. Static Data (Fastest, Offline)
             const staticDoc = this.staticResolver.resolve(key);
 
-            // 0.5. Prebuilt stdlib corpus — instant, offline, high-quality content
-            // sourced from docs.python.org at build time.
-            // Third-party packages build their own local cache via background scraping.
-            if (key.isStdlib || key.package === 'builtins' || !key.package) {
-                const corpusDoc = this.corpusResolver.resolve(key);
-                if (corpusDoc && (corpusDoc.summary || corpusDoc.content)) {
-                    const url = staticDoc?.url || corpusDoc.url;
-                    return {
-                        ...corpusDoc,
-                        url,
-                        devdocsUrl: this.fallback.getDevDocsUrl(key) ?? undefined,
-                    };
+            if (this.shouldUseImmediateBuiltinStaticPath(key, staticDoc)) {
+                const builtinStaticDoc = staticDoc!;
+                const cachedContent = builtinStaticDoc.url
+                    ? (this.scraper.getCachedContent(corpusPackage, builtinStaticDoc.url) ?? undefined)
+                    : undefined;
+                const cachedSeeAlso = builtinStaticDoc.url
+                    ? (this.scraper.getCachedSeeAlso(corpusPackage, builtinStaticDoc.url) ?? undefined)
+                    : undefined;
+
+                if (!cachedContent && builtinStaticDoc.url) {
+                    this.prefetchInventoryEnhancements(corpusPackage, builtinStaticDoc.url);
                 }
+
+                return {
+                    ...builtinStaticDoc,
+                    content: cachedContent,
+                    summary: this.extractSummaryFromContent(cachedContent),
+                    seeAlso: cachedSeeAlso,
+                    source: cachedContent ? ResolutionSource.Corpus : builtinStaticDoc.source,
+                    devdocsUrl: this.fallback.getDevDocsUrl(key) ?? undefined,
+                    module: key.module || key.package,
+                };
             }
 
-            // 1. Sphinx objects.inv (Best)
-            // Checks local cache first, then downloads if needed
-            let inventoryDoc: HoverDoc | null = null;
-            try {
-                inventoryDoc = await this.inventoryFetcher.findInInventory(key);
-            } catch (e) {
-                // Log but don't fail - continue with other sources
-                Logger.log(`Inventory fetch failed for ${key.name}: ${e}`);
-            }
+            // 1. Inventory lookup + corpus build
+            // Inventory is only the symbol index / URL locator. Resolved docs should
+            // come back through the corpus cache, not as a separate Sphinx source.
+            const inventoryDoc = await this.resolveInventoryDoc(key);
 
             // Fast return: static doc + inventory doc both found → use static URL with
             // inventory data.  Check the disk cache for previously scraped content (zero
@@ -271,14 +327,24 @@ export class DocResolver {
             if (staticDoc && inventoryDoc) {
                 const bestUrl = staticDoc.url || inventoryDoc.url;
                 const cachedContent = bestUrl
-                    ? (this.scraper.getCachedContent(bestUrl) ?? undefined)
+                    ? (this.scraper.getCachedContent(corpusPackage, bestUrl) ?? undefined)
                     : undefined;
+                const needsImmediateScrape = this.shouldBuildCorpus()
+                    && !!bestUrl
+                    && !this.hasUsefulText(inventoryDoc.summary)
+                    && !this.hasUsefulText(cachedContent);
+                const scrapedContent = needsImmediateScrape
+                    ? await this.scraper.fetchContent(corpusPackage, bestUrl!).catch(() => null) ?? undefined
+                    : undefined;
+                const content = cachedContent || scrapedContent;
 
-                if (this.config?.onlineDiscovery !== false && this.enableDocScraping) {
-                    if (!cachedContent && bestUrl) {
-                        this.prefetchInventoryEnhancements(bestUrl);
+                if (this.shouldBuildCorpus()) {
+                    if (!content && bestUrl) {
+                        if (this.enableDocScraping) {
+                            this.prefetchInventoryEnhancements(corpusPackage, bestUrl);
+                        }
                     }
-                    if (this.config?.buildFullCorpus && key.package) {
+                    if (this.shouldBuildFullCorpus() && key.package) {
                         this.triggerFullCorpusBuild(key.package);
                     }
                 }
@@ -286,9 +352,9 @@ export class DocResolver {
                 return {
                     ...inventoryDoc,
                     url: bestUrl,
-                    content: cachedContent,
-                    summary: inventoryDoc.summary || this.extractSummaryFromContent(cachedContent),
-                    source: cachedContent ? ResolutionSource.Corpus : ResolutionSource.Sphinx,
+                    content,
+                    summary: inventoryDoc.summary || this.extractSummaryFromContent(content),
+                    source: ResolutionSource.Corpus,
                     confidence: 1.0,
                     devdocsUrl: this.fallback.getDevDocsUrl(key) ?? undefined,
                     module: key.module || key.package,
@@ -300,48 +366,65 @@ export class DocResolver {
             // so the NEXT hover gets rich content.
             if (staticDoc && !inventoryDoc) {
                 const cachedContent = staticDoc.url
-                    ? (this.scraper.getCachedContent(staticDoc.url) ?? undefined)
+                    ? (this.scraper.getCachedContent(corpusPackage, staticDoc.url) ?? undefined)
                     : undefined;
                 const cachedSeeAlsoForStatic = staticDoc.url
-                    ? (this.scraper.getCachedSeeAlso(staticDoc.url) ?? undefined)
+                    ? (this.scraper.getCachedSeeAlso(corpusPackage, staticDoc.url) ?? undefined)
                     : undefined;
+                const needsImmediateScrape = this.shouldBuildCorpus()
+                    && !!staticDoc.url
+                    && !this.hasUsefulText(cachedContent);
+                const scrapedContent = needsImmediateScrape
+                    ? await this.scraper.fetchContent(corpusPackage, staticDoc.url!).catch(() => null) ?? undefined
+                    : undefined;
+                const content = cachedContent || scrapedContent;
 
-                if (!cachedContent && staticDoc.url && this.config?.onlineDiscovery !== false && this.enableDocScraping) {
-                    this.prefetchInventoryEnhancements(staticDoc.url);
+                if (!content && staticDoc.url && this.enableDocScraping) {
+                    this.prefetchInventoryEnhancements(corpusPackage, staticDoc.url);
                 }
 
                 return {
                     ...staticDoc,
-                    content: cachedContent,
-                    summary: this.extractSummaryFromContent(cachedContent),
+                    content,
+                    summary: this.extractSummaryFromContent(content),
                     seeAlso: cachedSeeAlsoForStatic,
-                    source: cachedContent ? ResolutionSource.Corpus : staticDoc.source,
+                    source: content ? ResolutionSource.Corpus : staticDoc.source,
                     devdocsUrl: this.fallback.getDevDocsUrl(key) ?? undefined,
                     module: key.module || key.package,
                 };
             }
 
             const cachedScrapedContent = inventoryDoc?.url
-                ? this.scraper.getCachedContent(inventoryDoc.url) ?? undefined
+                ? this.scraper.getCachedContent(corpusPackage, inventoryDoc.url) ?? undefined
                 : undefined;
             const cachedSeeAlso = inventoryDoc?.url
-                ? this.scraper.getCachedSeeAlso(inventoryDoc.url) ?? undefined
+                ? this.scraper.getCachedSeeAlso(corpusPackage, inventoryDoc.url) ?? undefined
                 : undefined;
 
             if (inventoryDoc) {
                 const inventoryContent = this.isPlaceholderContent(inventoryDoc.content)
                     ? undefined
                     : inventoryDoc.content;
-                const immediateContent = cachedScrapedContent || inventoryContent;
-                const immediateSummary = inventoryDoc.summary;
+                const needsImmediateScrape = this.shouldBuildCorpus()
+                    && !!inventoryDoc.url
+                    && !this.hasUsefulText(inventoryDoc.summary)
+                    && !this.hasUsefulText(cachedScrapedContent)
+                    && !this.hasUsefulText(inventoryContent);
+                const scrapedContent = needsImmediateScrape
+                    ? await this.scraper.fetchContent(corpusPackage, inventoryDoc.url!).catch(() => null) ?? undefined
+                    : undefined;
+                const immediateContent = cachedScrapedContent || inventoryContent || scrapedContent;
+                const immediateSummary = inventoryDoc.summary || this.extractSummaryFromContent(immediateContent);
 
-                if (this.config?.onlineDiscovery !== false && this.enableDocScraping) {
+                if (this.shouldBuildCorpus()) {
                     // Always fire background scrape if we don't have cached content yet
-                    if (inventoryDoc.url && !cachedScrapedContent) {
-                        this.prefetchInventoryEnhancements(inventoryDoc.url);
+                    if (inventoryDoc.url && !immediateContent) {
+                        if (this.enableDocScraping) {
+                            this.prefetchInventoryEnhancements(corpusPackage, inventoryDoc.url);
+                        }
                     }
                     // Full corpus build: scrape every page in the package at once
-                    if (this.config?.buildFullCorpus && key.package) {
+                    if (this.shouldBuildFullCorpus() && key.package) {
                         this.triggerFullCorpusBuild(key.package);
                     }
                 }
@@ -383,8 +466,10 @@ export class DocResolver {
                         };
                     }
                     if (pypiDoc.links) {
+                        const url = pypiDoc.url || Object.values(pypiDoc.links).find(value => typeof value === 'string' && value.trim().length > 0);
                         return {
                             title: key.name,
+                            url,
                             source: ResolutionSource.PyPI,
                             confidence: 0.3,
                             links: pypiDoc.links,

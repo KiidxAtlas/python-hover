@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { PYHOVER_CACHE_DIR_NAME } from '../../../docs-engine/src/cache/diskCache';
 import { Logger } from '../logger';
 
 interface MenuItem extends vscode.QuickPickItem {
@@ -305,6 +306,6 @@ export class StatusBarManager {
     }
 
     private getCachePath(): string {
-        return path.join(this.context.globalStorageUri.fsPath, 'pyhover_cache');
+        return path.join(this.context.globalStorageUri.fsPath, PYHOVER_CACHE_DIR_NAME);
     }
 }

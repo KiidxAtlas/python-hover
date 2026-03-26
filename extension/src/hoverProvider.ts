@@ -10,7 +10,7 @@ import { Logger } from './logger';
 import { LspClient } from './lspClient';
 import { NameRefinement } from './nameRefinement';
 import { PythonHelper } from './pythonHelper';
-import { classifyHoverSymbol, extractImportedRoots, isLibraryPath, isStdlibPath } from './symbolClassifier';
+import { classifyHoverSymbol, extractImportedRoots, isLibraryPath, isStdlibPath, isStdlibTopLevelModule } from './symbolClassifier';
 import { HoverRenderer } from './ui/hoverRenderer';
 
 /**
@@ -30,7 +30,41 @@ const PYTHON_STRUCTURAL_KEYWORDS = new Set([
     'return', 'try', 'while', 'with', 'yield',
 ]);
 
+const BUILTIN_OWNER_TYPES = new Set([
+    'str', 'list', 'dict', 'set', 'tuple', 'int', 'float', 'bool',
+    'bytes', 'bytearray', 'frozenset', 'complex', 'object', 'None',
+]);
+
+const KNOWN_TOP_LEVEL_BUILTINS = new Set([
+    'abs', 'aiter', 'all', 'anext', 'any', 'ascii',
+    'bin', 'bool', 'breakpoint', 'bytearray', 'bytes',
+    'callable', 'chr', 'classmethod', 'compile', 'complex',
+    'delattr', 'dict', 'dir', 'divmod',
+    'enumerate', 'eval', 'exec',
+    'filter', 'float', 'format', 'frozenset',
+    'getattr', 'globals',
+    'hasattr', 'hash', 'help', 'hex',
+    'id', 'input', 'int', 'isinstance', 'issubclass', 'iter',
+    'len', 'list', 'locals',
+    'map', 'max', 'memoryview', 'min',
+    'next',
+    'object', 'oct', 'open', 'ord',
+    'pow', 'print', 'property',
+    'range', 'repr', 'reversed', 'round',
+    'set', 'setattr', 'slice', 'sorted', 'staticmethod', 'str', 'sum', 'super',
+    'tuple', 'type',
+    'vars',
+    'zip',
+    '__import__',
+    'None', 'True', 'False', 'NotImplemented', 'Ellipsis', '__debug__',
+]);
+
+const BUILTIN_EXCEPTION_PATTERN = /^[A-Z][A-Za-z0-9]+(?:Error|Exception|Warning|Exit)$/;
+
 export class HoverProvider implements vscode.HoverProvider {
+    private static readonly HOVER_LOG_COOLDOWN_MS = 2000;
+    private static readonly NEGATIVE_HOVER_CACHE_MS = 2000;
+
     private renderer: HoverRenderer;
     private docResolver: DocResolver;
     private pythonHelper: PythonHelper;
@@ -71,6 +105,13 @@ export class HoverProvider implements vscode.HoverProvider {
     /** Installed package version cache: module root → version string.
      *  Avoids an IPC round-trip per hover for every library symbol once resolved. */
     private installedVersionCache = new Map<string, string | null>();
+
+    /** Alias resolution log dedupe for this session. */
+    private loggedAliasResolutions = new Set<string>();
+    /** Suppress repeated identical hover logs for the same target within a short window. */
+    private hoverLogTimestamps = new Map<string, number>();
+    /** Short-lived cache for hover attempts that intentionally returned no result. */
+    private negativeHoverCache = new Map<string, number>();
 
     constructor(private lspClient: LspClient, private config: Config, diskCache: DiskCache) {
         this.renderer = new HoverRenderer(config);
@@ -163,6 +204,9 @@ export class HoverProvider implements vscode.HoverProvider {
         this.identifyCache.clear();
         this.positionToKey.clear();
         this.installedVersionCache.clear();
+        this.loggedAliasResolutions.clear();
+        this.hoverLogTimestamps.clear();
+        this.negativeHoverCache.clear();
         this.pythonHelper.clearSessionCache();
         this.diagnosticCollection?.clear();
         this.deprecatedRanges.clear();
@@ -195,12 +239,16 @@ export class HoverProvider implements vscode.HoverProvider {
             // doesn't re-query the provider when the cursor moves within the same word
             // (which changes lastDoc and breaks Pin).
             const segmentRange = this.getSegmentRange(document, position);
+            const segmentText = segmentRange ? document.getText(segmentRange) : '';
 
             // Fast path: if we've already resolved this position in this document version,
             // skip the entire LSP + AST + refinement pipeline and go straight to hoverCache.
             const posKey = this.stableHoverPositionKey(document, position);
             const knownKey = this.positionToKey.get(posKey);
             if (knownKey) {
+                if (this.isNegativeHoverCached(knownKey) || this.isNegativeHoverCached(posKey)) {
+                    return null;
+                }
                 const cached = this.hoverCache.get(knownKey);
                 if (cached) return cached;
                 const inflight = this.inflightHovers.get(knownKey);
@@ -228,6 +276,15 @@ export class HoverProvider implements vscode.HoverProvider {
 
             // ── Phase 1: LSP + AST (sequential — AST branches on LSP result) ──────
             let lspSymbol = await this.lspClient.resolveSymbol(document, position);
+            this.logHoverEvent(`request:${posKey}:${lspSymbol?.name ?? segmentText}`, `Hover requested for ${segmentText || '<unknown>'}`, {
+                file: document.uri.fsPath,
+                line: position.line + 1,
+                character: position.character,
+                lspName: lspSymbol?.name,
+                lspKind: lspSymbol?.kind,
+                lspModule: lspSymbol?.module,
+                lspPath: lspSymbol?.path,
+            }, true);
             if (token.isCancellationRequested) return null;
 
             const isImportHover = this.isImportModuleHover(document, position);
@@ -239,7 +296,9 @@ export class HoverProvider implements vscode.HoverProvider {
             if (isImportHover && lspSymbol) {
                 const moduleName = NameRefinement.normalizeImportModule(lspSymbol.name);
                 if (moduleName) {
-                    const isStdlib = lspSymbol.path ? isStdlibPath(lspSymbol.path) : false;
+                    const isStdlib = !!lspSymbol.isStdlib
+                        || (lspSymbol.path ? isStdlibPath(lspSymbol.path) : false)
+                        || isStdlibTopLevelModule(moduleName);
                     const moduleKey = `${this.envCacheId}:__module__:${moduleName}`;
                     this.positionToKey.set(posKey, moduleKey);
 
@@ -272,11 +331,28 @@ export class HoverProvider implements vscode.HoverProvider {
                 }
             }
 
+            const importedRoots = new Set(extractImportedRoots(document.getText()));
+
             // AST identify: only with persistent runtime; LSP-first unless explicit fallback.
             const canAst = this.config.runtimeHelperEnabled && this.config.astFallbackEnabled;
+            const hasLibraryDefinitionPath = !!(lspSymbol?.path && isLibraryPath(lspSymbol.path));
+            const hasUserDefinitionPath = !!(lspSymbol?.path && !hasLibraryDefinitionPath);
+            const dottedRoot = (lspSymbol?.name ?? '').replace(/^builtins\./, '').split('.')[0] ?? '';
+            const shouldTrustImportedOrStdlibRoot = !!dottedRoot
+                && (importedRoots.has(dottedRoot) || isStdlibTopLevelModule(dottedRoot));
+            const shouldAstRefineLocalChain = this.config.runtimeHelperEnabled
+                && !!lspSymbol
+                && lspSymbol.name.includes('.')
+                && !isImportHover
+                && (!hasLibraryDefinitionPath || !shouldTrustImportedOrStdlibRoot);
             const needsAst =
                 (this.config.runtimeHelperEnabled && !lspSymbol)
-                || (canAst && !!lspSymbol && (!lspSymbol.path || !lspSymbol.name.includes('.')));
+                || shouldAstRefineLocalChain
+                || (canAst && !!lspSymbol && (
+                    !lspSymbol.path
+                    || !lspSymbol.name.includes('.')
+                    || hasUserDefinitionPath
+                ));
             let identifiedType: string | null = null;
             if (needsAst) {
                 if (token.isCancellationRequested) return null;
@@ -311,6 +387,7 @@ export class HoverProvider implements vscode.HoverProvider {
             }
 
             if (identifiedType) {
+                this.logHoverEvent(`ast:${posKey}:${identifiedType}`, `AST identified hover target for ${segmentText || '<unknown>'}`, { identifiedType }, true);
                 const TYPE_CANON: Record<string, string> = { 'f-string': 'str' };
                 const canonType = TYPE_CANON[identifiedType] ?? identifiedType;
                 const CONSTANTS = new Set(['None', 'Ellipsis']);
@@ -340,7 +417,11 @@ export class HoverProvider implements vscode.HoverProvider {
                 }
             }
 
-            if (!lspSymbol) return null;
+            if (!lspSymbol) {
+                this.cacheNegativeHover(posKey);
+                this.logHoverEvent(`no-symbol:${posKey}:${segmentText}`, `Hover: no symbol recognized for ${segmentText || '<unknown>'}`);
+                return null;
+            }
 
             // ── Phase 2: Name refinement (sync, fast) ────────────────────────────
             lspSymbol.name = NameRefinement.fromSignature(lspSymbol.name, lspSymbol.signature);
@@ -363,6 +444,14 @@ export class HoverProvider implements vscode.HoverProvider {
             if (resolvedName !== originalName) {
                 lspSymbol.name = resolvedName;
             }
+
+            this.logHoverEvent(`selected:${posKey}:${lspSymbol.name}`, `Hover symbol selected for ${segmentText || '<unknown>'}`, {
+                originalName,
+                resolvedName: lspSymbol.name,
+                kind: lspSymbol.kind,
+                module: lspSymbol.module,
+                path: lspSymbol.path,
+            }, true);
 
             // ── Session cache + in-flight deduplication ───────────────────────────
             // Library symbols are the same regardless of which file they're hovered in;
@@ -390,14 +479,18 @@ export class HoverProvider implements vscode.HoverProvider {
 
             // Log alias resolution only once per symbol (after cache miss confirmed)
             if (resolvedName !== originalName) {
-                Logger.log(`Alias resolved: ${originalName} → ${resolvedName}`);
+                const aliasLogKey = `${originalName}->${resolvedName}`;
+                if (!this.loggedAliasResolutions.has(aliasLogKey)) {
+                    this.loggedAliasResolutions.add(aliasLogKey);
+                    Logger.log(`Alias resolved: ${originalName} → ${resolvedName}`);
+                }
             }
 
             if (token.isCancellationRequested) return null;
 
             // ── Register in-flight promise to deduplicate concurrent same-symbol hovers ─
             const wasAliasResolved = resolvedName !== originalName;
-            const resolutionPromise = this.resolveAndRender(lspSymbol, document, position, cacheKey, wasAliasResolved, segmentRange, token);
+            const resolutionPromise = this.resolveAndRender(lspSymbol, document, position, cacheKey, wasAliasResolved, importedRoots, segmentRange, token);
             this.inflightHovers.set(cacheKey, resolutionPromise);
             resolutionPromise.finally(() => this.inflightHovers.delete(cacheKey));
             return resolutionPromise;
@@ -414,6 +507,7 @@ export class HoverProvider implements vscode.HoverProvider {
         position: vscode.Position,
         cacheKey: string,
         wasAliasResolved: boolean,
+        importedRoots: ReadonlySet<string>,
         hoverRange: vscode.Range | undefined,
         token: vscode.CancellationToken,
     ): Promise<vscode.Hover | null> {
@@ -510,9 +604,57 @@ export class HoverProvider implements vscode.HoverProvider {
             // ── Library path: resolve docs (no Python IPC) ────────────────────────
             const symbolInfo = { ...lspSymbol };
 
+            const inferredReceiverOwner = !this.config.runtimeHelperEnabled
+                ? await this.inferBuiltinOwnerFromReceiver(document, position)
+                : null;
+            const builtinOwner = this.inferBuiltinOwnerFromSignature(symbolInfo.signature) ?? inferredReceiverOwner;
+            if (builtinOwner) {
+                const originalBuiltinName = symbolInfo.name;
+                const leaf = symbolInfo.name.split('.').pop() ?? symbolInfo.name;
+                const nameWithoutModule = symbolInfo.name.replace(/^builtins\./, '');
+                const existingRoot = nameWithoutModule.split('.')[0];
+                // Rewrite when name is bare OR its root isn't the correct builtin owner
+                // (e.g. p.name.upper → str.upper, bare upper → str.upper)
+                if (!symbolInfo.name.includes('.') || !BUILTIN_OWNER_TYPES.has(existingRoot)) {
+                    symbolInfo.name = `${builtinOwner}.${leaf}`;
+                }
+                this.logHoverEvent(`builtin-normalized:${cacheKey}:${originalBuiltinName}:${builtinOwner}`, `Hover: normalized builtin method ${originalBuiltinName} -> ${symbolInfo.name}`);
+                symbolInfo.isStdlib = true;
+                symbolInfo.module = 'builtins';
+                symbolInfo.path = 'builtins';
+            }
+
             // Infer isStdlib from path when Pylance gave us a stdlib stub
             if (!symbolInfo.isStdlib && lspSymbol.path && isStdlibPath(lspSymbol.path)) {
                 symbolInfo.isStdlib = true;
+            }
+
+            if (!symbolInfo.isStdlib) {
+                const resolvedRoot = (symbolInfo.name ?? '').replace(/^builtins\./, '').split('.')[0] ?? '';
+                if (isStdlibTopLevelModule(resolvedRoot)) {
+                    symbolInfo.isStdlib = true;
+                    if (!symbolInfo.module && resolvedRoot !== 'builtins') {
+                        symbolInfo.module = resolvedRoot;
+                    }
+                }
+            }
+
+            const topLevelBuiltinName = (symbolInfo.name ?? '').replace(/^builtins\./, '');
+            if (!symbolInfo.isStdlib
+                && !symbolInfo.name.includes('.')
+                && (KNOWN_TOP_LEVEL_BUILTINS.has(topLevelBuiltinName) || BUILTIN_EXCEPTION_PATTERN.test(topLevelBuiltinName))) {
+                symbolInfo.isStdlib = true;
+                symbolInfo.module = 'builtins';
+                symbolInfo.path = 'builtins';
+            }
+
+            if (symbolInfo.isStdlib && !symbolInfo.module && lspSymbol.path && lspSymbol.path !== 'builtins') {
+                symbolInfo.module = this.moduleFromLibraryPath(lspSymbol.path) ?? undefined;
+            }
+
+            if (symbolInfo.isStdlib && !symbolInfo.module && !symbolInfo.name.includes('.') && symbolInfo.kind !== 'module') {
+                symbolInfo.module = 'builtins';
+                symbolInfo.path = 'builtins';
             }
 
             // Builtin type methods always belong to the builtins package regardless
@@ -521,6 +663,17 @@ export class HoverProvider implements vscode.HoverProvider {
             if (isBuiltinMethod) {
                 symbolInfo.isStdlib = true;
                 symbolInfo.module = 'builtins';
+            }
+
+            // When stdlib-classified with a local-chain name whose root is not a known
+            // builtin type or stdlib module (e.g. "p.name.upper" resolved to builtins),
+            // strip to just the leaf so DocKeyBuilder doesn't produce wrong anchors.
+            if (symbolInfo.isStdlib && symbolInfo.module === 'builtins' && symbolInfo.name.includes('.')) {
+                const cleanName = symbolInfo.name.replace(/^builtins\./, '');
+                const nameRoot = cleanName.split('.')[0];
+                if (!BUILTIN_OWNER_TYPES.has(nameRoot) && !isStdlibTopLevelModule(nameRoot) && nameRoot !== 'builtins') {
+                    symbolInfo.name = cleanName.split('.').pop() ?? symbolInfo.name;
+                }
             }
 
             // Suppress Pylance's misleading (*args, **kwargs) signature for typing forms
@@ -533,6 +686,50 @@ export class HoverProvider implements vscode.HoverProvider {
 
             // ── Doc resolution + installed version (parallel) ─────────────────────
             const docKey = DocKeyBuilder.fromSymbol(symbolInfo);
+            const rootName = (symbolInfo.name ?? '').replace(/^builtins\./, '').split('.')[0] ?? '';
+            const hasLibraryDefinitionPath = !!(lspSymbol.path && isLibraryPath(lspSymbol.path));
+            const hasTrustedLibraryEvidence = hasLibraryDefinitionPath
+                || wasAliasResolved
+                || symbolInfo.isStdlib === true
+                || importedRoots.has(rootName);
+            const isUnresolvedLocalChain = isLocal
+                && isDotted
+                && !hasTrustedLibraryEvidence
+                && !symbolInfo.isStdlib
+                && !wasAliasResolved
+                && !!rootName;
+            const isGuessedPackageFallback = !symbolInfo.module
+                && !symbolInfo.isStdlib
+                && !lspSymbol.path
+                && !!rootName
+                && docKey.package === rootName
+                && docKey.module === rootName;
+
+            const isUnimportedThirdPartyGuess = !hasTrustedLibraryEvidence
+                && !docKey.isStdlib
+                && !!rootName
+                && docKey.package === rootName;
+
+            if (isUnresolvedLocalChain) {
+                this.cacheNegativeHover(cacheKey);
+                this.logHoverEvent(`skip-local-chain:${cacheKey}:${symbolInfo.name}`, `Hover: unresolved local chain ${symbolInfo.name} has no library ownership evidence.`);
+                return null;
+            }
+
+            if ((isGuessedPackageFallback || isUnimportedThirdPartyGuess) && !importedRoots.has(rootName)) {
+                this.cacheNegativeHover(cacheKey);
+                this.logHoverEvent(`skip-unimported:${cacheKey}:${symbolInfo.name}`, `Hover: skipped unimported symbol guess for ${symbolInfo.name}`);
+                return null;
+            }
+
+            this.logHoverEvent(`resolve:${cacheKey}:${symbolInfo.name}`, `Resolving docs for ${symbolInfo.name}`, {
+                docKey,
+                importedRoots: [...importedRoots],
+                builtinMethod: isBuiltinMethod,
+                isLocal,
+                isDotted,
+            }, true);
+
             const isThirdParty = !symbolInfo.isStdlib && !!symbolInfo.module
                 && symbolInfo.module !== 'builtins';
             const topModule = symbolInfo.module?.split('.')[0] ?? '';
@@ -556,6 +753,12 @@ export class HoverProvider implements vscode.HoverProvider {
             if (installedVersion) hoverDoc.installedVersion = installedVersion;
             this.lastDoc = hoverDoc;
 
+            if (!hoverDoc.summary && !hoverDoc.content && !hoverDoc.signature && !hoverDoc.url && !hoverDoc.devdocsUrl) {
+                this.logHoverEvent(`resolved-empty:${cacheKey}:${symbolInfo.name}`, `Hover: resolved ${symbolInfo.name} but found no displayable documentation.`);
+            } else if (!hoverDoc.summary && !hoverDoc.content) {
+                this.logHoverEvent(`resolved-links-only:${cacheKey}:${symbolInfo.name}`, `Hover: resolved ${symbolInfo.name} with links only; detailed content is not cached yet.`);
+            }
+
             // Deprecated API diagnostics
             if (hoverDoc.badges?.some(b => b.label === 'deprecated') && this.diagnosticCollection) {
                 const range = document.getWordRangeAtPosition(position)
@@ -574,9 +777,11 @@ export class HoverProvider implements vscode.HoverProvider {
             const hover = this.renderer.render(hoverDoc);
             if (hoverRange) hover.range = hoverRange;
             this.hoverCache.set(cacheKey, hover);
+            this.negativeHoverCache.delete(cacheKey);
             return hover;
 
         } catch (e) {
+            this.cacheNegativeHover(cacheKey);
             Logger.error('HoverProvider failed', e);
             return null;
         }
@@ -590,6 +795,37 @@ export class HoverProvider implements vscode.HoverProvider {
      */
     private getSegmentRange(document: vscode.TextDocument, position: vscode.Position): vscode.Range | undefined {
         return document.getWordRangeAtPosition(position, /[A-Za-z_][A-Za-z0-9_]*/);
+    }
+
+    private moduleFromLibraryPath(fsPath: string): string | null {
+        const normalizedPath = fsPath.replace(/\\/g, '/');
+        const markers = [
+            '/site-packages/',
+            '/dist-packages/',
+            '/bundled/stubs/',
+            '/typeshed-fallback/stdlib/',
+            '/stdlib/',
+            '/stubs/',
+        ];
+
+        for (const marker of markers) {
+            const markerIndex = normalizedPath.lastIndexOf(marker);
+            if (markerIndex === -1) continue;
+
+            let relative = normalizedPath.slice(markerIndex + marker.length);
+            relative = relative.replace(/^python\d+(?:\.\d+)?\//, '');
+            relative = relative.replace(/^\d+\.\d+\//, '');
+            relative = relative.replace(/\.(py|pyi)$/, '');
+            if (relative.endsWith('/__init__')) relative = relative.slice(0, -9);
+
+            let moduleName = relative.replace(/\//g, '.');
+            moduleName = moduleName.replace(/^([^.]+)-stubs/, '$1');
+            if (['ntpath', 'posixpath', 'macpath'].includes(moduleName)) moduleName = 'os.path';
+
+            return moduleName || null;
+        }
+
+        return null;
     }
 
     // ─── Private helpers ─────────────────────────────────────────────────────
@@ -647,6 +883,100 @@ export class HoverProvider implements vscode.HoverProvider {
             const importStart = line.match(/^\s*import\s+/);
             if (importStart && col >= importStart[0].length) return true;
         } catch { /* ignore */ }
+        return false;
+    }
+
+    private inferBuiltinOwnerFromSignature(signature?: string): string | null {
+        if (!signature) return null;
+
+        const selfMatch = /\bself\s*:\s*([a-zA-Z0-9_.]+(?:@[a-zA-Z0-9_.]+)?)/.exec(signature);
+        let owner = selfMatch?.[1];
+
+        if (!owner) {
+            const qualifiedMatch = /^([A-Za-z_][A-Za-z0-9_.]*)\.([A-Za-z_][A-Za-z0-9_]*)\s*\(/.exec(signature.trim());
+            owner = qualifiedMatch?.[1];
+        }
+
+        if (!owner) return null;
+        if (owner.includes('@')) owner = owner.split('@')[1];
+        if (owner.startsWith('builtins.')) owner = owner.slice('builtins.'.length);
+
+        const root = owner.split('.')[0];
+        return BUILTIN_OWNER_TYPES.has(root) ? root : null;
+    }
+
+    private async inferBuiltinOwnerFromReceiver(
+        document: vscode.TextDocument,
+        position: vscode.Position,
+    ): Promise<string | null> {
+        const receiverPosition = this.getReceiverSegmentPosition(document, position);
+        if (!receiverPosition) return null;
+
+        const receiverSymbol = await this.lspClient.resolveSymbol(document, receiverPosition).catch(() => null);
+        const receiverName = receiverSymbol?.name?.replace(/^builtins\./, '');
+        if (!receiverName) return null;
+
+        const receiverRoot = receiverName.split('.')[0];
+        if (BUILTIN_OWNER_TYPES.has(receiverRoot)) {
+            return receiverRoot;
+        }
+
+        const receiverLeaf = receiverName.split('.').pop() ?? receiverName;
+        return BUILTIN_OWNER_TYPES.has(receiverLeaf) ? receiverLeaf : null;
+    }
+
+    private getReceiverSegmentPosition(
+        document: vscode.TextDocument,
+        position: vscode.Position,
+    ): vscode.Position | null {
+        const currentRange = this.getSegmentRange(document, position);
+        if (!currentRange) return null;
+
+        const line = document.lineAt(position.line).text;
+        let cursor = currentRange.start.character - 1;
+        while (cursor >= 0 && line[cursor] === ' ') cursor--;
+        if (cursor < 0 || line[cursor] !== '.') return null;
+
+        cursor--;
+        while (cursor >= 0 && line[cursor] === ' ') cursor--;
+        if (cursor < 0) return null;
+
+        const end = cursor + 1;
+        while (cursor >= 0 && /[A-Za-z0-9_]/.test(line[cursor])) cursor--;
+        const start = cursor + 1;
+        if (start >= end || !/^[A-Za-z_]/.test(line.slice(start, end))) return null;
+
+        return new vscode.Position(position.line, start);
+    }
+
+    private logHoverEvent(key: string, message: string, data?: unknown, debug = false): void {
+        const now = Date.now();
+        const last = this.hoverLogTimestamps.get(key) ?? 0;
+        if (now - last < HoverProvider.HOVER_LOG_COOLDOWN_MS) {
+            return;
+        }
+        this.hoverLogTimestamps.set(key, now);
+        this.evictIfNeeded(this.hoverLogTimestamps);
+
+        if (debug) {
+            Logger.debug(message, data);
+            return;
+        }
+        Logger.log(message, data);
+    }
+
+    private cacheNegativeHover(cacheKey: string): void {
+        this.negativeHoverCache.set(cacheKey, Date.now());
+        this.evictIfNeeded(this.negativeHoverCache);
+    }
+
+    private isNegativeHoverCached(cacheKey: string): boolean {
+        const at = this.negativeHoverCache.get(cacheKey);
+        if (!at) return false;
+        if (Date.now() - at < HoverProvider.NEGATIVE_HOVER_CACHE_MS) {
+            return true;
+        }
+        this.negativeHoverCache.delete(cacheKey);
         return false;
     }
 

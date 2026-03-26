@@ -133,7 +133,7 @@ function main(): void {
             docs: {
                 title: 'fastapi.applications.FastAPI',
                 content: 'Initializes the application.',
-                source: ResolutionSource.Sphinx,
+                source: ResolutionSource.Corpus,
                 confidence: 1,
             },
         },

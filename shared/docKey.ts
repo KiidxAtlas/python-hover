@@ -1,5 +1,18 @@
 import { DocKey, SymbolInfo } from './types';
 
+const SELF_TYPE_ALIASES: Record<string, string> = {
+    'LiteralString': 'str',
+    'AnyStr': 'str',
+    'Text': 'str',
+    'ByteString': 'bytes',
+    'NoneType': 'None',
+};
+
+const BUILTIN_OWNER_TYPES = new Set([
+    'str', 'list', 'dict', 'set', 'tuple', 'int', 'float', 'bool',
+    'bytes', 'bytearray', 'frozenset', 'complex', 'object', 'None',
+]);
+
 export class DocKeyBuilder {
     static fromSymbol(symbolInfo: SymbolInfo): DocKey {
         let module = symbolInfo.module;
@@ -16,6 +29,12 @@ export class DocKeyBuilder {
         }
         let pkg = '';
 
+        if (!module && symbolInfo.path === 'builtins') {
+            module = 'builtins';
+            pkg = 'builtins';
+            qualname = name.replace(/^builtins\./, '');
+        }
+
         if (module && module !== 'builtins') {
             pkg = module.split('.')[0];
         } else if (module === 'builtins') {
@@ -25,6 +44,22 @@ export class DocKeyBuilder {
             // But in the docs they are typically under object.__init__, object.__str__
             if (qualname.startsWith('module.__') && qualname.endsWith('__')) {
                 qualname = qualname.replace('module.', 'object.');
+            }
+
+            const ownerType = this.inferBuiltinOwnerType(symbolInfo.signature);
+            if (ownerType && !qualname.includes('.')) {
+                qualname = `${ownerType}.${qualname}`;
+            }
+
+            const qualnameRoot = qualname.split('.')[0];
+            if (qualname.includes('.') && !BUILTIN_OWNER_TYPES.has(qualnameRoot) && qualnameRoot !== 'module') {
+                if (ownerType) {
+                    const leaf = qualname.split('.').pop() ?? qualname;
+                    qualname = `${ownerType}.${leaf}`;
+                }
+                // Without a known owner, leave qualname as-is so inventory
+                // can attempt a match rather than producing a bare method name
+                // that StaticDocResolver would wrongly map to functions.html.
             }
         } else {
             // Fallback: try to guess from the name if it looks like a dotted path
@@ -58,5 +93,22 @@ export class DocKeyBuilder {
             qualname: qualname,
             isStdlib: symbolInfo.isStdlib
         };
+    }
+
+    private static inferBuiltinOwnerType(signature?: string): string | null {
+        if (!signature) return null;
+
+        const selfMatch = /\bself\s*:\s*([a-zA-Z0-9_.]+(?:@[a-zA-Z0-9_.]+)?)/.exec(signature);
+        if (!selfMatch) return null;
+
+        let ownerType = selfMatch[1];
+        if (ownerType.includes('@')) {
+            ownerType = ownerType.split('@')[1];
+        }
+        if (ownerType.startsWith('builtins.')) {
+            ownerType = ownerType.slice('builtins.'.length);
+        }
+
+        return SELF_TYPE_ALIASES[ownerType] ?? ownerType;
     }
 }

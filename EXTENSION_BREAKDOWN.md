@@ -282,26 +282,14 @@ The mapping data comes from:
 
 These are offline lookups with no network dependency.
 
-#### 6b. Prebuilt Stdlib Corpus Resolver
-
-File: `docs-engine/src/resolvers/stdlibCorpusResolver.ts`
-
-If the symbol is from the stdlib or builtins, the resolver tries the generated stdlib corpus.
-
-The corpus lives in:
-
-- `docs-engine/data/stdlibCorpus.ts`
-
-That file contains summary, content, signature, URL, and see-also data harvested from official Python docs. This gives rich stdlib hovers without requiring live network fetches.
-
-#### 6c. Sphinx Inventory Resolution
+#### 6b. Sphinx Inventory Resolution
 
 Files:
 
 - `docs-engine/src/inventory/inventoryFetcher.ts`
 - `docs-engine/src/inventory/inventoryParser.ts`
 
-If static and corpus resolution are not enough, the resolver tries package documentation inventories.
+If static resolution is not enough, the resolver tries package documentation inventories and builds local corpus entries on demand.
 
 `InventoryFetcher` does the following:
 
@@ -598,12 +586,6 @@ The current helper includes the stronger inference-oriented identifier logic and
 
 ## Build-Time And Developer-Only Tooling
 
-### `scripts/build-stdlib-corpus.ts`
-
-This script generates `docs-engine/data/stdlibCorpus.ts` by fetching and extracting content from official Python documentation.
-
-That means the repo's stdlib corpus is generated data, not handwritten hover content.
-
 ### `docs-engine/test/auditHoverCorpus.ts`
 
 Audits resolved hover content and flags thin descriptions, raw pydoc dumps, placeholder text, and other quality issues.
@@ -687,7 +669,6 @@ This appendix summarizes the role of each relevant source file.
 ### Docs Engine Resolver Files
 
 - `docs-engine/src/resolvers/staticDocResolver.ts`: Handles direct static lookups for keywords, operators, and stdlib module pages.
-- `docs-engine/src/resolvers/stdlibCorpusResolver.ts`: Handles stdlib lookups from the generated official-doc corpus.
 
 ### Docs Engine Builder And Parsing Files
 
@@ -706,7 +687,6 @@ This appendix summarizes the role of each relevant source file.
 
 - `docs-engine/data/documentationUrls.ts`: Static map of Python keyword and operator documentation entries.
 - `docs-engine/data/stdlibModules.ts`: Static map of stdlib module names to official docs URLs.
-- `docs-engine/data/stdlibCorpus.ts`: Generated corpus of stdlib documentation content extracted from official docs.
 
 ### Shared Files
 
@@ -715,7 +695,6 @@ This appendix summarizes the role of each relevant source file.
 
 ### Scripts And Developer Probes
 
-- `scripts/build-stdlib-corpus.ts`: Generates the stdlib corpus from official docs.
 - `docs-engine/test/auditHoverCorpus.ts`: Audits hover-content quality and flags weak outputs.
 - `docs-engine/test/inspectHoverPipeline.ts`: Compares pipeline behavior on representative cases.
 - `docs-engine/test/probeResolvedHoverContent.ts`: Runs probe cases through resolver and builder logic.

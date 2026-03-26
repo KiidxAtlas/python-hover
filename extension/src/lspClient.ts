@@ -72,6 +72,9 @@ export class LspClient {
         if (!segmentRange) return null;
 
         const line = document.lineAt(position.line).text;
+        if (this.isDanglingAttributeAccess(line, segmentRange.start.character)) {
+            return null;
+        }
         const segments = [document.getText(segmentRange)];
 
         // Scan left
@@ -317,5 +320,21 @@ export class LspClient {
             else if (line[i] === open) { if (--depth === 0) return i - 1; }
         }
         return -1;
+    }
+
+    /**
+     * Reject invalid syntax like `.upper()` where the hovered identifier is preceded
+     * by a dot but there is no receiver expression on the left-hand side.
+     */
+    private isDanglingAttributeAccess(line: string, segmentStart: number): boolean {
+        let cursor = segmentStart - 1;
+        while (cursor >= 0 && line[cursor] === ' ') cursor--;
+        if (cursor < 0 || line[cursor] !== '.') return false;
+
+        cursor--;
+        while (cursor >= 0 && line[cursor] === ' ') cursor--;
+        if (cursor < 0) return true;
+
+        return !/[A-Za-z0-9_\)\]\}"']/.test(line[cursor]);
     }
 }

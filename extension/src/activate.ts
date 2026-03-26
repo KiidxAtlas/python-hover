@@ -15,6 +15,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     try {
         const config = new Config();
+        Logger.setDebugEnabled(config.enableDebugLogging);
         const lspClient = new LspClient();
         const statusBarManager = new StatusBarManager(context);
 
@@ -33,11 +34,20 @@ export function activate(context: vscode.ExtensionContext) {
         // (memory + corpusMemory) are flushed alongside the on-disk files.
         statusBarManager.setClearCacheCallback(() => diskCache.clear());
 
-        const hoverProvider = new HoverProvider(lspClient, config, diskCache);
-
         const diagnosticCollection = vscode.languages.createDiagnosticCollection('python-hover');
         context.subscriptions.push(diagnosticCollection);
+
+        let hoverProvider = new HoverProvider(lspClient, config, diskCache);
         hoverProvider.setDiagnosticCollection(diagnosticCollection);
+
+        let hoverRegistration: vscode.Disposable | undefined;
+        const registerHoverProvider = () => {
+            hoverRegistration?.dispose();
+            hoverProvider.dispose();
+            hoverProvider = new HoverProvider(lspClient, config, diskCache);
+            hoverProvider.setDiagnosticCollection(diagnosticCollection);
+            hoverRegistration = vscode.languages.registerHoverProvider({ language: 'python' }, hoverProvider);
+        };
 
         // Clear per-file diagnostics when document closes
         context.subscriptions.push(
@@ -47,10 +57,9 @@ export function activate(context: vscode.ExtensionContext) {
         );
 
         // Register hover provider for all Python files
-        const selector: vscode.DocumentSelector = { language: 'python' };
-        context.subscriptions.push(
-            vscode.languages.registerHoverProvider(selector, hoverProvider)
-        );
+        registerHoverProvider();
+        context.subscriptions.push({ dispose: () => hoverRegistration?.dispose() });
+        context.subscriptions.push({ dispose: () => hoverProvider.dispose() });
 
         // Warn once if no Python language extension is active (Pylance / python-language-server)
         checkPythonExtension();
@@ -85,6 +94,21 @@ export function activate(context: vscode.ExtensionContext) {
         context.subscriptions.push(
             vscode.workspace.onDidSaveTextDocument(() => {
                 hoverProvider.clearSessionCache();
+            })
+        );
+
+        context.subscriptions.push(
+            vscode.workspace.onDidChangeConfiguration(event => {
+                if (
+                    event.affectsConfiguration('python-hover')
+                    || event.affectsConfiguration('python.defaultInterpreterPath')
+                    || event.affectsConfiguration('python.pythonPath')
+                ) {
+                    Logger.setDebugEnabled(config.enableDebugLogging);
+                    Logger.log('Configuration changed. Recreating hover provider.');
+                    registerHoverProvider();
+                    warmupImportsForDocument(vscode.window.activeTextEditor?.document);
+                }
             })
         );
 
