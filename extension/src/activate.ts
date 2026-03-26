@@ -28,6 +28,10 @@ export function activate(context: vscode.ExtensionContext) {
             }
         );
 
+        // Wire status bar clear button to DiskCache.clear() so in-memory caches
+        // (memory + corpusMemory) are flushed alongside the on-disk files.
+        statusBarManager.setClearCacheCallback(() => diskCache.clear());
+
         const hoverProvider = new HoverProvider(lspClient, config, diskCache);
 
         const diagnosticCollection = vscode.languages.createDiagnosticCollection('python-hover');
@@ -50,12 +54,15 @@ export function activate(context: vscode.ExtensionContext) {
         // Warn once if no Python language extension is active (Pylance / python-language-server)
         checkPythonExtension();
 
-        // Eagerly load inventories for common packages in the background so
-        // first-hover latency is near-zero for numpy, pandas, requests, etc.
-        hoverProvider.warmupInventories();
-
+        // Pre-load inventories for packages imported in the active document so
+        // first-hover latency is lower. Only runs when onlineDiscovery is enabled —
+        // inventories are fetched lazily on first hover otherwise.
+        // Only applies to real user files (file: scheme) — Pylance opens many
+        // virtual/internal type-stub documents that we must not try to warmup.
         const warmupImportsForDocument = (document: vscode.TextDocument | undefined) => {
             if (!document || document.languageId !== 'python') return;
+            if (!config.onlineDiscovery) return;
+            if (document.uri.scheme !== 'file') return;
             hoverProvider.warmupDocumentImports(document);
         };
 

@@ -12,7 +12,17 @@ const SEP: MenuItem = { label: '', kind: vscode.QuickPickItemKind.Separator, act
 export class StatusBarManager {
     private item: vscode.StatusBarItem;
     private context: vscode.ExtensionContext;
-    private symbolCount = 0;
+
+    /** Callback that properly clears the DiskCache (memory + disk). Set from activate.ts. */
+    private clearCacheFn?: () => void;
+
+    /** Cached cache-size string so render() never blocks on repeated dir-walks. */
+    private cacheSizeLabel = '…';
+    private cacheSizeExpiry = 0;
+
+    setClearCacheCallback(fn: () => void): void {
+        this.clearCacheFn = fn;
+    }
 
     constructor(context: vscode.ExtensionContext) {
         this.context = context;
@@ -28,12 +38,6 @@ export class StatusBarManager {
                 if (e.affectsConfiguration('python-hover')) this.render();
             })
         );
-    }
-
-    /** Called by HoverProvider after inventories load to refresh the symbol count label. */
-    setSymbolCount(n: number) {
-        this.symbolCount = n;
-        this.render();
     }
 
     /** Force a re-render (e.g. after cache wipe). */
@@ -96,9 +100,7 @@ export class StatusBarManager {
                     {
                         label: '$(search) Search Docs…',
                         description: 'Ctrl+K Ctrl+D',
-                        detail: this.symbolCount > 0
-                            ? `Search across ${this.symbolCount.toLocaleString()} indexed symbols`
-                            : 'Search indexed Python symbols',
+                        detail: 'Search indexed Python symbols',
                         action: 'search',
                     },
                     {
@@ -241,14 +243,19 @@ export class StatusBarManager {
     // ─────────────────────────────────────────────────────────────────────────
 
     private async clearCache() {
-        const p = this.getCachePath();
         try {
-            if (fs.existsSync(p)) {
-                fs.rmSync(p, { recursive: true, force: true });
-                vscode.window.showInformationMessage('$(check) PyHover cache cleared');
+            if (this.clearCacheFn) {
+                // Preferred path: delegates to DiskCache which also clears in-memory caches.
+                this.clearCacheFn();
             } else {
-                vscode.window.showInformationMessage('PyHover cache is already empty');
+        // Fallback: direct file removal (in-memory caches may still hold stale data).
+                const p = this.getCachePath();
+                if (fs.existsSync(p)) {
+                    fs.rmSync(p, { recursive: true, force: true });
+                }
             }
+            this.cacheSizeExpiry = 0; // invalidate cached size
+            vscode.window.showInformationMessage('$(check) PyHover cache cleared');
             this.render();
         } catch (e) {
             vscode.window.showErrorMessage(`PyHover: failed to clear cache — ${e}`);
@@ -271,21 +278,30 @@ export class StatusBarManager {
     }
 
     private getCacheSizeInMB(): string {
+        const now = Date.now();
+        if (now < this.cacheSizeExpiry) return this.cacheSizeLabel;
+
         const p = this.getCachePath();
-        if (!fs.existsSync(p)) return '0 MB';
-        let total = 0;
-        const walk = (dir: string) => {
-            try {
-                for (const f of fs.readdirSync(dir)) {
-                    const fp = path.join(dir, f);
-                    const st = fs.statSync(fp);
-                    if (st.isDirectory()) walk(fp);
-                    else total += st.size;
-                }
-            } catch { /* ignore */ }
-        };
-        walk(p);
-        return `${(total / 1_048_576).toFixed(1)} MB`;
+        if (!fs.existsSync(p)) {
+            this.cacheSizeLabel = '0 MB';
+        } else {
+            let total = 0;
+            const walk = (dir: string) => {
+                try {
+                    for (const f of fs.readdirSync(dir)) {
+                        const fp = path.join(dir, f);
+                        const st = fs.statSync(fp);
+                        if (st.isDirectory()) walk(fp);
+                        else total += st.size;
+                    }
+                } catch { /* ignore */ }
+            };
+            walk(p);
+            this.cacheSizeLabel = `${(total / 1_048_576).toFixed(1)} MB`;
+        }
+
+        this.cacheSizeExpiry = now + 10_000; // recompute at most every 10 s
+        return this.cacheSizeLabel;
     }
 
     private getCachePath(): string {

@@ -1,6 +1,6 @@
 import * as zlib from 'zlib';
-import { Logger } from '../../extension/src/logger';
-import { HoverDoc, ResolutionSource } from '../../shared/types';
+import { Logger } from '../../../extension/src/logger';
+import { HoverDoc, ResolutionSource } from '../../../shared/types';
 
 interface InventoryItem {
     name: string;

@@ -17,6 +17,7 @@ export enum ResolutionSource {
     GitHub = 'GitHub',
     Fallback = 'Fallback',
     Static = 'Static',
+    Corpus = 'Corpus',
     Local = 'Local'
 }
 
@@ -92,6 +93,7 @@ export interface LspSymbol {
     docstring?: string;
     overloads?: string[];
     protocolHints?: string[];
+    isStdlib?: boolean;
 }
 
 export interface SymbolInfo {

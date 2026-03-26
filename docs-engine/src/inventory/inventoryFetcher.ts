@@ -1,8 +1,8 @@
 import * as https from 'https';
-import { Logger } from '../../extension/src/logger';
-import { DocKey, HoverDoc } from '../../shared/types';
+import { Logger } from '../../../extension/src/logger';
+import { DocKey, HoverDoc } from '../../../shared/types';
+import { DiskCache } from '../cache/diskCache';
 import { PyPiClient } from '../pypi/pypiClient';
-import { DiskCache } from '../src/cache/diskCache';
 import { InventoryParser } from './inventoryParser';
 
 /**
@@ -134,7 +134,7 @@ export class InventoryFetcher {
         for (const pkg of packages) {
             if (this.cache.has(pkg)) continue; // already loaded
             // Fire-and-forget: errors are swallowed inside loadInventory
-            this.loadInventory(pkg).catch(() => {});
+            this.loadInventory(pkg).catch(() => { });
         }
     }
 
@@ -396,6 +396,10 @@ export class InventoryFetcher {
     /**
      * Returns the resolved base docs URL for a package (available after inventory is loaded).
      */
+    getPythonVersion(): string {
+        return this.pythonVersion;
+    }
+
     getPackageBaseUrl(packageName: string): string | undefined {
         return this.packageBaseUrls.get(packageName);
     }
@@ -464,6 +468,27 @@ export class InventoryFetcher {
         let n = 0;
         for (const inv of this.cache.values()) n += inv.size;
         return n;
+    }
+
+    /**
+     * Returns unique documentation page URLs for all symbols in a loaded package.
+     * Anchors are stripped so each HTML page appears only once, regardless of how
+     * many symbols it contains.  Capped at `maxPages` to keep corpus builds sane
+     * for very large packages (numpy has 8k+ symbols but far fewer unique pages).
+     */
+    getPackageSymbolUrls(packageName: string, maxPages = 500): string[] {
+        const inventory = this.cache.get(packageName);
+        if (!inventory) return [];
+
+        const pages = new Set<string>();
+        for (const doc of inventory.values()) {
+            if (!doc.url) continue;
+            const pageUrl = doc.url.split('#')[0];
+            if (pageUrl) pages.add(pageUrl);
+            if (pages.size >= maxPages) break;
+        }
+
+        return [...pages];
     }
 
     private fetchBuffer(url: string, redirectCount = 0): Promise<Buffer> {

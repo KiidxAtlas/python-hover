@@ -1,5 +1,5 @@
 
-import { Badge, HoverDoc, ParameterInfo, ResolutionSource, SymbolInfo } from '../../../shared/types';
+import { Badge, HoverDoc, ResolutionSource, SymbolInfo } from '../../../shared/types';
 import { DocstringParser, ParsedDocstring } from '../parsing/docstringParser';
 
 const PLACEHOLDER_MSGS = [
@@ -20,12 +20,12 @@ export class HoverDocBuilder {
         const parsedDocstring = this.parser.parse(symbolInfo.docstring || '');
 
         const title = this.buildTitle(symbolInfo);
-        const signature = this.buildSignature(symbolInfo);
+        const signature = symbolInfo.signature;
         const summary = this.buildSummary(parsedDocstring, docs, symbolInfo);
-        const parameters = this.buildParameters(parsedDocstring, symbolInfo);
+        const parameters = parsedDocstring.parameters;
         const badges = this.buildBadges(symbolInfo, parsedDocstring);
         const examples = this.buildExamples(parsedDocstring, docs);
-        const notes = this.buildNotes(parsedDocstring, symbolInfo);
+        const notes = parsedDocstring.notes;
         const kind = this.inferKind(symbolInfo);
 
         // Ensure we don't pass placeholder content in the legacy field
@@ -80,12 +80,6 @@ export class HoverDocBuilder {
         }
 
         return qualname;
-    }
-
-    private buildSignature(symbolInfo: SymbolInfo): string | undefined {
-        // Priority: LSP > Runtime > Docstring
-        // For now, we use what's in symbolInfo which is a merge
-        return symbolInfo.signature;
     }
 
     private buildSummary(parsed: ParsedDocstring, docs: HoverDoc | null, symbolInfo: SymbolInfo): string | undefined {
@@ -154,16 +148,6 @@ export class HoverDocBuilder {
         }
 
         return examples.length > 0 ? examples : undefined;
-    }
-
-    private buildParameters(parsed: ParsedDocstring, symbolInfo: SymbolInfo): ParameterInfo[] | undefined {
-        // Merge parsed parameters with runtime/LSP info if available
-        // For now, return parsed parameters
-        return parsed.parameters;
-    }
-
-    private buildNotes(parsed: ParsedDocstring, symbolInfo: SymbolInfo): string[] | undefined {
-        return parsed.notes;
     }
 
     private buildBadges(symbolInfo: SymbolInfo, parsed: ParsedDocstring): Badge[] {

@@ -18,6 +18,8 @@ export interface Info {
     title: string;
     url: string;
     anchor?: string;
+    /** Fallback description for soft keywords Python's runtime can't introspect. */
+    summary?: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -36,8 +38,8 @@ const COMPOUND: Record<string, Info> = {
     'def': { title: 'function definition', url: 'reference/compound_stmts.html', anchor: 'function-definitions' },
     'class': { title: 'class definition', url: 'reference/compound_stmts.html', anchor: 'class-definitions' },
     'async': { title: 'async statement', url: 'reference/compound_stmts.html', anchor: 'coroutine-function-definition' },
-    'match': { title: 'match statement', url: 'reference/compound_stmts.html', anchor: 'the-match-statement' },
-    'case': { title: 'case clause', url: 'reference/compound_stmts.html', anchor: 'the-match-statement' },
+    'match': { title: 'match statement', url: 'reference/compound_stmts.html', anchor: 'the-match-statement', summary: 'Structural pattern matching — matches a value against a series of patterns. Added in Python 3.10.' },
+    'case': { title: 'case clause', url: 'reference/compound_stmts.html', anchor: 'the-match-statement', summary: 'A pattern clause in a `match` statement. Each `case` specifies a pattern and optional guard condition.' },
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

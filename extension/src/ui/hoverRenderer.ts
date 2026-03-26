@@ -585,6 +585,7 @@ export class HoverRenderer {
             case ResolutionSource.DevDocs: return 'DevDocs';
             case ResolutionSource.Runtime: return 'runtime';
             case ResolutionSource.Static: return 'static';
+            case ResolutionSource.Corpus: return 'corpus';
             default: return null;
         }
     }

@@ -21,6 +21,7 @@ export class StaticDocResolver {
                 title: key.name,
                 source: ResolutionSource.Static,
                 confidence: 1.0,
+                summary: info.summary,
                 url: `https://docs.python.org/${this.pythonVersion}/${info.url}${info.anchor ? '#' + info.anchor : ''}`
             };
         }

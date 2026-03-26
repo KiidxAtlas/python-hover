@@ -2,9 +2,9 @@ import * as fs from 'fs';
 import { cleanContent, cleanSignature } from '../../extension/src/ui/contentCleaner';
 import { DocKeyBuilder } from '../../shared/docKey';
 import { HoverDoc, ResolutionSource, SymbolInfo } from '../../shared/types';
-import { DocResolver } from '../docResolver';
 import { HoverDocBuilder } from '../src/builder/hoverDocBuilder';
 import { DiskCache } from '../src/cache/diskCache';
+import { DocResolver } from '../src/docResolver';
 
 interface CorpusEntry {
     line: number;

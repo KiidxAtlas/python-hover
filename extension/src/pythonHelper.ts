@@ -155,8 +155,10 @@ export class PythonHelper {
 
     /** Per-session in-memory cache: symbol → SymbolInfo. Avoids re-calling Python for
      *  the same symbol within a single VS Code session. Keyed by the fully-qualified
-     *  symbol name so different documents sharing the same symbol hit the same entry. */
+     *  symbol name so different documents sharing the same symbol hit the same entry.
+     *  Capped at 1 000 entries — oldest evicted when full. */
     private sessionCache = new Map<string, SymbolInfo | null>();
+    private static readonly SESSION_CACHE_MAX = 1_000;
 
     private hasShownMissingPythonNotification = false;
 
@@ -322,6 +324,10 @@ export class PythonHelper {
 
         if (!result || result.error) {
             Logger.log(`PythonHelper: resolve failed for ${symbol}: ${result?.error}`);
+            if (this.sessionCache.size >= PythonHelper.SESSION_CACHE_MAX) {
+                const oldest = this.sessionCache.keys().next().value;
+                if (oldest !== undefined) this.sessionCache.delete(oldest);
+            }
             this.sessionCache.set(symbol, null);
             return null;
         }
@@ -337,6 +343,11 @@ export class PythonHelper {
             kind: result.kind,
         };
 
+        // Evict oldest entry if the cap is reached.
+        if (this.sessionCache.size >= PythonHelper.SESSION_CACHE_MAX) {
+            const oldest = this.sessionCache.keys().next().value;
+            if (oldest !== undefined) this.sessionCache.delete(oldest);
+        }
         this.sessionCache.set(symbol, info);
         this.diskCache.set(cacheKey, JSON.stringify(info));
         return info;

@@ -4,7 +4,16 @@ export class DocKeyBuilder {
     static fromSymbol(symbolInfo: SymbolInfo): DocKey {
         let module = symbolInfo.module;
         const name = symbolInfo.name;
-        let qualname = (symbolInfo as any).qualname || name;
+        // If module is set and name starts with "module.", strip the module prefix
+        // to get the qualname (e.g. "builtins.str.upper" → qualname "str.upper").
+        // Without this, 3-part fully-qualified names like "builtins.str.upper" produce
+        // qualname "upper" (just the last segment), which misses in the inventory.
+        let qualname: string;
+        if (module && name.startsWith(module + '.')) {
+            qualname = (symbolInfo as any).qualname || name.slice(module.length + 1);
+        } else {
+            qualname = (symbolInfo as any).qualname || name;
+        }
         let pkg = '';
 
         if (module && module !== 'builtins') {

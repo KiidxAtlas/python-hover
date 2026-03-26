@@ -1,4 +1,4 @@
-import { DocKey, HoverDoc, ResolutionSource } from '../shared/types';
+import { DocKey, HoverDoc, ResolutionSource } from '../../../shared/types';
 
 /**
  * Maps Python package names to their DevDocs doc-set names.

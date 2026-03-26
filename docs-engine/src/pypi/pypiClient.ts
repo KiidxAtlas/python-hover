@@ -1,6 +1,6 @@
 import * as https from 'https';
-import { DocKey, HoverDoc, ResolutionSource } from '../../shared/types';
-import { DiskCache } from '../src/cache/diskCache';
+import { DocKey, HoverDoc, ResolutionSource } from '../../../shared/types';
+import { DiskCache } from '../cache/diskCache';
 
 export class PyPiClient {
     private diskCache: DiskCache | null;

@@ -5,6 +5,10 @@ import { DiskCache } from '../cache/diskCache';
 export class SphinxScraper {
     private diskCache: DiskCache;
     private timeout: number;
+    /** In-memory HTML cache: avoids re-fetching the same page for content + seeAlso in one session.
+     *  Capped at 30 pages (raw HTML is large) — oldest entry evicted when full. */
+    private htmlCache = new Map<string, string>();
+    private static readonly HTML_CACHE_MAX = 30;
 
     constructor(diskCache: DiskCache, timeout: number = 5000) {
         this.diskCache = diskCache;
@@ -49,8 +53,8 @@ export class SphinxScraper {
             if (cached) return cached;
 
             const [baseUrl, anchor] = normalizedUrl.split('#');
-            const cachedHtml = this.diskCache.get(baseUrl);
-            const html = cachedHtml ?? await this.fetchHtml(baseUrl).then(h => { this.diskCache.set(baseUrl, h); return h; });
+            const cachedHtml = this.htmlCache.get(baseUrl);
+            const html = cachedHtml ?? await this.fetchHtml(baseUrl).then(h => { this.setHtmlCache(baseUrl, h); return h; });
             if (!anchor || !html) return [];
 
             const extracted = this.extractSeeAlso(html, anchor, baseUrl);
@@ -102,12 +106,10 @@ export class SphinxScraper {
 
             const [baseUrl, anchor] = normalizedUrl.split('#');
 
-            const cachedHtml = this.diskCache.get(baseUrl);
-            let html = cachedHtml;
-
+            let html = this.htmlCache.get(baseUrl);
             if (!html) {
                 html = await this.fetchHtml(baseUrl);
-                this.diskCache.set(baseUrl, html);
+                this.setHtmlCache(baseUrl, html);
             }
 
             const extracted = anchor
@@ -164,6 +166,15 @@ export class SphinxScraper {
             if (text && text.length > 20) paragraphs.push(text);
         }
         return paragraphs.length > 0 ? paragraphs.join('\n\n') : null;
+    }
+
+    /** Insert into htmlCache, evicting the oldest entry when the cap is reached. */
+    private setHtmlCache(url: string, html: string): void {
+        if (this.htmlCache.size >= SphinxScraper.HTML_CACHE_MAX) {
+            const oldest = this.htmlCache.keys().next().value;
+            if (oldest !== undefined) this.htmlCache.delete(oldest);
+        }
+        this.htmlCache.set(url, html);
     }
 
     private fetchHtml(url: string): Promise<string> {

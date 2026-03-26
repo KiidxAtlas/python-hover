@@ -20,7 +20,7 @@ Module._load = function patchedLoad(request: string, parent: unknown, isMain: bo
     return originalLoad.apply(this, [request, parent, isMain]);
 };
 
-const { DocResolver } = require('../docResolver') as typeof import('../docResolver');
+const { DocResolver } = require('../src/docResolver') as typeof import('../src/docResolver');
 const { HoverDocBuilder } = require('../src/builder/hoverDocBuilder') as typeof import('../src/builder/hoverDocBuilder');
 const { DiskCache } = require('../src/cache/diskCache') as typeof import('../src/cache/diskCache');
 const { cleanContent, cleanSignature } = require('../../extension/src/ui/contentCleaner') as typeof import('../../extension/src/ui/contentCleaner');
@@ -77,6 +77,43 @@ function getProbeCases(): ProbeCase[] {
             kind: 'constant',
             isStdlib: true,
             docstring: 'The type of the None singleton.',
+        },
+        // ── Package corpus cases ──────────────────────────────────────
+        {
+            name: 'numpy.array',
+            module: 'numpy',
+            qualname: 'numpy.array',
+            kind: 'function',
+        },
+        {
+            name: 'pandas.DataFrame',
+            module: 'pandas',
+            qualname: 'pandas.DataFrame',
+            kind: 'class',
+        },
+        {
+            name: 'requests.get',
+            module: 'requests',
+            qualname: 'requests.get',
+            kind: 'function',
+        },
+        {
+            name: 'flask.Flask.route',
+            module: 'flask',
+            qualname: 'flask.Flask.route',
+            kind: 'method',
+        },
+        {
+            name: 'sqlalchemy.select',
+            module: 'sqlalchemy',
+            qualname: 'sqlalchemy.select',
+            kind: 'function',
+        },
+        {
+            name: 'click.command',
+            module: 'click',
+            qualname: 'click.command',
+            kind: 'function',
         },
     ];
 }

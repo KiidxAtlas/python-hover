@@ -9,6 +9,8 @@ from typing import List, Optional, Union
 import fastapi
 import numpy as np
 import pandas as pd
+import click
+
 
 # ── Builtins ──────────────────────────────────────────────────────────────────
 x = [1, 2, 3]  # hover over [  →  list
@@ -16,6 +18,8 @@ y = {"a": 1}  # hover over {  →  dict
 z = "hello"  # hover over "  →  str
 n = None  # hover over None
 e = ...  # hover over ...  →  Ellipsis
+
+click.File
 
 fastapi.FastAPI().middleware  # hover over FastAPI
 fastapi.FastAPI().add_middleware  # hover over add_middleware
