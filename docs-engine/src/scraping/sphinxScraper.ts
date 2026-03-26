@@ -5,6 +5,10 @@ import { DiskCache } from '../cache/diskCache';
 export class SphinxScraper {
     private diskCache: DiskCache;
     private timeout: number;
+    /** In-memory HTML cache: avoids re-fetching the same page for content + seeAlso in one session.
+     *  Capped at 30 pages (raw HTML is large) — oldest entry evicted when full. */
+    private htmlCache = new Map<string, string>();
+    private static readonly HTML_CACHE_MAX = 30;
 
     constructor(diskCache: DiskCache, timeout: number = 5000) {
         this.diskCache = diskCache;
@@ -18,14 +22,44 @@ export class SphinxScraper {
         return url;
     }
 
+    private contentCacheKey(url: string): string {
+        return `scrape-content:${this.normalizeToHttps(url)}`;
+    }
+
+    private seeAlsoCacheKey(url: string): string {
+        return `scrape-seealso:${this.normalizeToHttps(url)}`;
+    }
+
+    getCachedContent(url: string): string | null {
+        return this.diskCache.get(this.contentCacheKey(url)) ?? null;
+    }
+
+    getCachedSeeAlso(url: string): string[] | null {
+        const cached = this.diskCache.get(this.seeAlsoCacheKey(url));
+        if (!cached) return null;
+
+        try {
+            const parsed = JSON.parse(cached);
+            return Array.isArray(parsed) ? parsed.filter(item => typeof item === 'string') : null;
+        } catch {
+            return null;
+        }
+    }
+
     async fetchSeeAlso(url: string): Promise<string[]> {
         try {
             const normalizedUrl = this.normalizeToHttps(url);
+            const cached = this.getCachedSeeAlso(normalizedUrl);
+            if (cached) return cached;
+
             const [baseUrl, anchor] = normalizedUrl.split('#');
-            const cachedHtml = this.diskCache.get(baseUrl);
-            const html = cachedHtml ?? await this.fetchHtml(baseUrl).then(h => { this.diskCache.set(baseUrl, h); return h; });
+            const cachedHtml = this.htmlCache.get(baseUrl);
+            const html = cachedHtml ?? await this.fetchHtml(baseUrl).then(h => { this.setHtmlCache(baseUrl, h); return h; });
             if (!anchor || !html) return [];
-            return this.extractSeeAlso(html, anchor, baseUrl);
+
+            const extracted = this.extractSeeAlso(html, anchor, baseUrl);
+            this.diskCache.set(this.seeAlsoCacheKey(normalizedUrl), JSON.stringify(extracted));
+            return extracted;
         } catch {
             return [];
         }
@@ -67,21 +101,26 @@ export class SphinxScraper {
     async fetchContent(url: string): Promise<string | null> {
         try {
             const normalizedUrl = this.normalizeToHttps(url);
+            const cached = this.getCachedContent(normalizedUrl);
+            if (cached) return cached;
+
             const [baseUrl, anchor] = normalizedUrl.split('#');
 
-            const cachedHtml = this.diskCache.get(baseUrl);
-            let html = cachedHtml;
-
+            let html = this.htmlCache.get(baseUrl);
             if (!html) {
                 html = await this.fetchHtml(baseUrl);
-                this.diskCache.set(baseUrl, html);
+                this.setHtmlCache(baseUrl, html);
             }
 
-            if (anchor) {
-                return this.extractSection(html!, anchor, baseUrl);
+            const extracted = anchor
+                ? this.extractSection(html!, anchor, baseUrl)
+                : this.extractPageSummary(html!, baseUrl);
+
+            if (extracted) {
+                this.diskCache.set(this.contentCacheKey(normalizedUrl), extracted);
             }
 
-            return this.extractPageSummary(html!, baseUrl);
+            return extracted;
         } catch (e) {
             Logger.error(`SphinxScraper failed for ${url}:`, e);
             return null;
@@ -127,6 +166,15 @@ export class SphinxScraper {
             if (text && text.length > 20) paragraphs.push(text);
         }
         return paragraphs.length > 0 ? paragraphs.join('\n\n') : null;
+    }
+
+    /** Insert into htmlCache, evicting the oldest entry when the cap is reached. */
+    private setHtmlCache(url: string, html: string): void {
+        if (this.htmlCache.size >= SphinxScraper.HTML_CACHE_MAX) {
+            const oldest = this.htmlCache.keys().next().value;
+            if (oldest !== undefined) this.htmlCache.delete(oldest);
+        }
+        this.htmlCache.set(url, html);
     }
 
     private fetchHtml(url: string): Promise<string> {

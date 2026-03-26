@@ -142,10 +142,19 @@ class PythonProcess {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+export interface PythonHelperOptions {
+    /** When false, no persistent server — version probe only; no imports or AST IPC. */
+    enablePersistentRuntime?: boolean;
+    /** Segments disk/runtime cache keys per interpreter configuration. */
+    interpreterCacheId?: string;
+}
+
 export class PythonHelper {
     private pythonPath: string;
     private helperPath: string;
     private diskCache: DiskCache;
+    private readonly enablePersistentRuntime: boolean;
+    private readonly interpreterCacheId: string;
 
     /** Resolved interpreter path — determined once and cached. */
     private resolvedPath?: Promise<string | null>;
@@ -155,14 +164,22 @@ export class PythonHelper {
 
     /** Per-session in-memory cache: symbol → SymbolInfo. Avoids re-calling Python for
      *  the same symbol within a single VS Code session. Keyed by the fully-qualified
-     *  symbol name so different documents sharing the same symbol hit the same entry. */
+     *  symbol name so different documents sharing the same symbol hit the same entry.
+     *  Capped at 1 000 entries — oldest evicted when full. */
     private sessionCache = new Map<string, SymbolInfo | null>();
+    private static readonly SESSION_CACHE_MAX = 1_000;
 
     private hasShownMissingPythonNotification = false;
 
-    constructor(pythonPath: string = 'python', diskCache: DiskCache) {
+    constructor(
+        pythonPath: string = 'python',
+        diskCache: DiskCache,
+        options: PythonHelperOptions = {},
+    ) {
         this.pythonPath = pythonPath;
         this.diskCache = diskCache;
+        this.enablePersistentRuntime = options.enablePersistentRuntime ?? false;
+        this.interpreterCacheId = options.interpreterCacheId ?? 'default';
         // Running from out/extension/src/pythonHelper.js
         // python-helper is at extension/python-helper/ → 3 levels up + into python-helper
         this.helperPath = path.resolve(__dirname, '../../../python-helper/helper.py');
@@ -251,6 +268,10 @@ export class PythonHelper {
     // ─── Process lifecycle ────────────────────────────────────────────────────
 
     private async getProcess(): Promise<PythonProcess | null> {
+        if (!this.enablePersistentRuntime) {
+            return null;
+        }
+
         const pythonPath = await this.ensurePythonPathResolved();
         if (!pythonPath) {
             if (!this.hasShownMissingPythonNotification) {
@@ -298,13 +319,17 @@ export class PythonHelper {
     // ─── Public API ───────────────────────────────────────────────────────────
 
     async resolveRuntime(symbol: string): Promise<SymbolInfo | null> {
+        if (!this.enablePersistentRuntime) {
+            return null;
+        }
+
         // 1. Session cache (in-memory — instant)
         if (this.sessionCache.has(symbol)) {
             return this.sessionCache.get(symbol) ?? null;
         }
 
         // 2. Disk cache (persistent across sessions)
-        const cacheKey = `runtime:${symbol}`;
+        const cacheKey = `runtime:${this.interpreterCacheId}:${symbol}`;
         const cached = this.diskCache.get(cacheKey);
         if (cached) {
             try {
@@ -322,6 +347,10 @@ export class PythonHelper {
 
         if (!result || result.error) {
             Logger.log(`PythonHelper: resolve failed for ${symbol}: ${result?.error}`);
+            if (this.sessionCache.size >= PythonHelper.SESSION_CACHE_MAX) {
+                const oldest = this.sessionCache.keys().next().value;
+                if (oldest !== undefined) this.sessionCache.delete(oldest);
+            }
             this.sessionCache.set(symbol, null);
             return null;
         }
@@ -337,12 +366,20 @@ export class PythonHelper {
             kind: result.kind,
         };
 
+        // Evict oldest entry if the cap is reached.
+        if (this.sessionCache.size >= PythonHelper.SESSION_CACHE_MAX) {
+            const oldest = this.sessionCache.keys().next().value;
+            if (oldest !== undefined) this.sessionCache.delete(oldest);
+        }
         this.sessionCache.set(symbol, info);
         this.diskCache.set(cacheKey, JSON.stringify(info));
         return info;
     }
 
     async identify(source: string, line: number, column: number): Promise<string | null> {
+        if (!this.enablePersistentRuntime) {
+            return null;
+        }
         const result = await this.send({ cmd: 'identify', source, line, col: column }, 1000);
         return result?.type ?? null;
     }
@@ -352,6 +389,9 @@ export class PythonHelper {
      * directly from source code via AST (no import needed).
      */
     async getLocalDocstring(source: string, symbol: string): Promise<SymbolInfo | null> {
+        if (!this.enablePersistentRuntime) {
+            return null;
+        }
         const result = await this.send({ cmd: 'get_docstring', source, symbol }, 2000);
         if (!result || result.error) return null;
         return {
@@ -366,8 +406,48 @@ export class PythonHelper {
     }
 
     async getPythonVersion(): Promise<string> {
+        if (!this.enablePersistentRuntime) {
+            return this.probePythonVersionMinor();
+        }
         const result = await this.send({ cmd: 'version_info' }, 2000);
         return result?.version ?? '3';
+    }
+
+    /**
+     * One-shot interpreter probe — no persistent process (used when runtimeHelper is off).
+     */
+    async probePythonVersionMinor(): Promise<string> {
+        const exe = await this.ensurePythonPathResolved();
+        if (!exe) {
+            return '3';
+        }
+
+        return new Promise((resolve) => {
+            const proc = cp.spawn(
+                exe,
+                ['-c', 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")'],
+                { stdio: ['ignore', 'pipe', 'ignore'] },
+            );
+            let out = '';
+            let settled = false;
+            const done = (v: string) => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+                resolve(v);
+            };
+            const timer = setTimeout(() => done('3'), 2000);
+            proc.stdout?.on('data', (d: Buffer) => { out += d.toString(); });
+            proc.on('error', () => done('3'));
+            proc.on('close', (code) => {
+                if (code !== 0) {
+                    done('3');
+                    return;
+                }
+                const v = out.trim();
+                done(/^\d+\.\d+$/.test(v) ? v : '3');
+            });
+        });
     }
 
     /**
@@ -376,6 +456,9 @@ export class PythonHelper {
      * Returns null if the package is not installed or the lookup fails.
      */
     async getInstalledVersion(packageName: string): Promise<string | null> {
+        if (!this.enablePersistentRuntime) {
+            return null;
+        }
         const result = await this.send({ cmd: 'pkg_version', package: packageName }, 1500);
         return result?.version ?? null;
     }

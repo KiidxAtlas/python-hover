@@ -1,6 +1,6 @@
 import * as zlib from 'zlib';
-import { Logger } from '../../extension/src/logger';
-import { HoverDoc, ResolutionSource } from '../../shared/types';
+import { Logger } from '../../../extension/src/logger';
+import { HoverDoc, ResolutionSource } from '../../../shared/types';
 
 interface InventoryItem {
     name: string;
@@ -81,7 +81,6 @@ export class InventoryParser {
                 // Key: fully qualified name (e.g. pandas.DataFrame)
                 inventory.set(name, {
                     title: name,
-                    content: `Documentation from Sphinx Inventory (${domainRole})`,
                     url: fullUrl,
                     source: ResolutionSource.Sphinx,
                     confidence: 1.0

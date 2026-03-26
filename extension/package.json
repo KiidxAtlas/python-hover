@@ -91,6 +91,11 @@
                 "category": "Python Hover"
             },
             {
+                "command": "python-hover.debugPinHover",
+                "title": "Debug Pin Current Hover",
+                "category": "Python Hover"
+            },
+            {
                 "command": "python-hover.browseModule",
                 "title": "Browse Module Symbols",
                 "category": "Python Hover"
@@ -117,199 +122,137 @@
                     "default": true,
                     "description": "Enable Python Hover documentation lookups."
                 },
+                "python-hover.runtimeHelper": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Run a persistent Python helper for runtime introspection (imports, pydoc, AST identify, installed package versions). Off by default to avoid wrong-environment imports and process churn; enable for the previous richer behavior."
+                },
+                "python-hover.docScraping": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Fetch and parse documentation HTML in the background for third-party packages. Off by default (inventory URLs + language-server text only); enable for scraped narrative content and see-also links."
+                },
+                "python-hover.astFallback": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "When runtimeHelper is enabled, use AST-based hover identification when Pylance returns an incomplete symbol (e.g. missing module path). Off by default so the language server stays authoritative."
+                },
                 "python-hover.onlineDiscovery": {
                     "type": "boolean",
                     "default": true,
-                    "description": "Enable online documentation discovery (PyPI, ReadTheDocs). If disabled, only local and static documentation will be used."
+                    "description": "Fetch documentation from the web. When disabled, only locally cached content is used."
+                },
+                "python-hover.warmupImports": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "When online discovery is on, pre-load objects.inv for packages imported in the active editor. Off by default — inventories load on first hover instead."
+                },
+                "python-hover.useKnownDocsUrls": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Use the extension's bundled package→documentation base URL map (faster for popular libs). When false, docs roots come from PyPI project URLs + objects.inv probing + ReadTheDocs-style fallback only."
+                },
+                "python-hover.buildFullCorpus": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "On first hover over any symbol from a package, scrape that package's full documentation in the background — builds your local corpus all at once instead of one symbol at a time. Requires onlineDiscovery."
                 },
                 "python-hover.docsVersion": {
                     "type": "string",
                     "default": "auto",
-                    "description": "Python version to use for documentation. Use 'auto' for automatic detection or specify a version like '3.11'."
+                    "description": "Python documentation version. 'auto' detects from your interpreter; or specify e.g. '3.11'."
                 },
                 "python-hover.maxSnippetLines": {
                     "type": "number",
                     "default": 12,
                     "minimum": 1,
                     "maximum": 100,
-                    "description": "Maximum number of lines to show in hover snippets."
-                },
-                "python-hover.fontSize": {
-                    "type": "string",
-                    "enum": [
-                        "small",
-                        "medium",
-                        "large"
-                    ],
-                    "default": "medium",
-                    "description": "Font size for hover content."
-                },
-                "python-hover.showEmojis": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Show emoji icons in hover tooltips."
-                },
-                "python-hover.showColors": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Enable colored sections in hover tooltips."
-                },
-                "python-hover.showBorders": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Show borders between sections."
-                },
-                "python-hover.cacheTTL.inventoryDays": {
-                    "type": "number",
-                    "default": 7,
-                    "minimum": 1,
-                    "description": "Number of days to cache inventory files."
-                },
-                "python-hover.cacheTTL.snippetHours": {
-                    "type": "number",
-                    "default": 48,
-                    "minimum": 1,
-                    "description": "Number of hours to cache documentation snippets."
-                },
-                "python-hover.enableKeywordDocs": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Enable keyword documentation."
-                },
-                "python-hover.enhancedMethodResolution": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Enable smart method resolution to better detect method context."
+                    "description": "Maximum lines shown in hover code snippets."
                 },
                 "python-hover.showPracticalExamples": {
                     "type": "boolean",
                     "default": true,
-                    "description": "Show practical code examples in hover documentation."
-                },
-                "python-hover.showRelatedMethods": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Show related methods and alternatives."
-                },
-                "python-hover.showVersionInfo": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Show Python version information when available."
-                },
-                "python-hover.enableDebugLogging": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "Enable verbose debug logging in the console (for troubleshooting)."
+                    "description": "Show code examples in hover documentation."
                 },
                 "python-hover.requestTimeout": {
                     "type": "number",
                     "default": 10000,
                     "minimum": 1000,
                     "maximum": 60000,
-                    "description": "Timeout in milliseconds for HTTP requests to documentation sites (default: 10 seconds)."
+                    "description": "HTTP timeout (ms) for fetching documentation pages."
                 },
-                "python-hover.openDocsInEditor": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "Open documentation links in VS Code's Simple Browser instead of external browser."
-                },
-                "python-hover.telemetry": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "Enable telemetry data collection."
-                },
-                "python-hover.debounceDelay": {
+                "python-hover.cacheTTL.inventoryDays": {
                     "type": "number",
-                    "default": 150,
-                    "minimum": 0,
-                    "maximum": 1000,
-                    "description": "Delay in milliseconds before showing hover documentation (reduces flicker when moving cursor quickly)."
+                    "default": 7,
+                    "minimum": 1,
+                    "description": "Days to keep Sphinx inventory files in the cache."
                 },
-                "python-hover.versionCacheTTL": {
+                "python-hover.cacheTTL.snippetHours": {
                     "type": "number",
-                    "default": 30,
-                    "minimum": 5,
-                    "maximum": 300,
-                    "description": "How long to cache Python version detection (in seconds)."
+                    "default": 48,
+                    "minimum": 1,
+                    "description": "Hours to keep scraped documentation pages in the corpus cache."
+                },
+                "python-hover.docsBrowser": {
+                    "type": "string",
+                    "enum": ["integrated", "external"],
+                    "default": "integrated",
+                    "enumDescriptions": [
+                        "Open in VS Code side panel",
+                        "Open in system browser"
+                    ],
+                    "description": "Where to open the Docs link in the hover toolbar."
+                },
+                "python-hover.devdocsBrowser": {
+                    "type": "string",
+                    "enum": ["integrated", "external"],
+                    "default": "external",
+                    "enumDescriptions": [
+                        "Open in VS Code side panel",
+                        "Open in system browser"
+                    ],
+                    "description": "Where to open the DevDocs link in the hover toolbar."
                 },
                 "python-hover.customLibraries": {
                     "type": "array",
                     "default": [],
-                    "description": "Custom library documentation sources. Add your own libraries with Intersphinx inventory URLs.",
+                    "description": "Custom Sphinx documentation sources. Each entry needs a name and baseUrl.",
                     "items": {
                         "type": "object",
-                        "required": [
-                            "name",
-                            "inventoryUrl",
-                            "baseUrl"
-                        ],
+                        "required": ["name", "inventoryUrl", "baseUrl"],
                         "properties": {
-                            "name": {
-                                "type": "string",
-                                "description": "Library name (e.g., 'mylib')"
-                            },
-                            "inventoryUrl": {
-                                "type": "string",
-                                "description": "URL to the Intersphinx objects.inv file"
-                            },
-                            "baseUrl": {
-                                "type": "string",
-                                "description": "Base URL for documentation (e.g., 'https://mylib.readthedocs.io/en/latest/')"
-                            }
+                            "name": { "type": "string", "description": "Library name (e.g. 'mylib')" },
+                            "inventoryUrl": { "type": "string", "description": "URL to the objects.inv file" },
+                            "baseUrl": { "type": "string", "description": "Base docs URL" }
                         }
                     }
                 },
-                "python-hover.experimental.autoDetectLibraries": {
+                "python-hover.enableDebugLogging": {
                     "type": "boolean",
                     "default": false,
-                    "description": "Automatically detect and fetch documentation for third-party libraries imported in your code."
-                },
-                "python-hover.ui.showParameterTables": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Display function parameters in formatted tables for easier reading."
+                    "description": "Enable verbose debug logging (for troubleshooting)."
                 },
                 "python-hover.ui.showSignatures": {
                     "type": "boolean",
                     "default": true,
-                    "description": "Show function/method signatures prominently at the top of hovers."
-                },
-                "python-hover.ui.showDeprecationWarnings": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Show prominent warnings for deprecated APIs with suggested alternatives."
+                    "description": "Show function/method signatures at the top of hovers."
                 },
                 "python-hover.ui.showReturnTypes": {
                     "type": "boolean",
                     "default": true,
-                    "description": "Display return type information prominently in hover tooltips."
+                    "description": "Show return type information in hover tooltips."
                 },
-                "python-hover.ui.showQuickActions": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Show quick action links (docs, copy, insert) at the top of hover tooltips."
-                },
-                "python-hover.ui.showSeeAlso": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Show 'See Also' section with related functions and methods."
-                },
-                "python-hover.ui.showPerformanceHints": {
+                "python-hover.ui.showDebugPinButton": {
                     "type": "boolean",
                     "default": false,
-                    "description": "Show time/space complexity information when available (experimental)."
-                },
-                "python-hover.ui.showKeyboardHints": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Show keyboard shortcut hints at the bottom of hover tooltips."
+                    "description": "Show a Debug button in the hover toolbar (opens raw markdown payload alongside the pin panel)."
                 },
                 "python-hover.ui.maxContentLength": {
                     "type": "number",
                     "default": 800,
                     "minimum": 200,
                     "maximum": 2000,
-                    "description": "Maximum character length for hover content before smart truncation with 'Read more...' link."
+                    "description": "Maximum characters of hover content before truncation with a 'Read more…' link."
                 }
             }
         }
@@ -317,6 +260,8 @@
     "scripts": {
         "vscode:prepublish": "npm run compile",
         "compile": "tsc -p ./",
+        "audit:hover": "npm run compile && node ./scripts/renderHoverAudit.cjs",
+        "inspect:hover": "npm run compile && node ./out/docs-engine/test/inspectHoverPipeline.js",
         "watch": "tsc -watch -p ./",
         "pretest": "npm run compile && npm run lint",
         "lint": "eslint src --ext ts",

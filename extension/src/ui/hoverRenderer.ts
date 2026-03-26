@@ -1,6 +1,13 @@
 import * as vscode from 'vscode';
 import { HoverDoc, ResolutionSource } from '../../../shared/types';
 import { Config } from '../config';
+import {
+    cleanContentAnnotations as sharedCleanContentAnnotations,
+    cleanPydocDump as sharedCleanPydocDump,
+    cleanRstArtifacts as sharedCleanRstArtifacts,
+    cleanSignature as sharedCleanSignature,
+    stripAnnotatedWrappers,
+} from './contentCleaner';
 
 export class HoverRenderer {
     private detectedVersion: string | undefined;
@@ -63,21 +70,24 @@ export class HoverRenderer {
         const icon = this.getIconForKind(doc.kind);
         const rawTitle = doc.title.replace(/^builtins\./, '');
 
+        // ### keeps tooltips readable; ## is often oversized inside hovers.
         md.appendMarkdown(`### $(${icon}) \`${rawTitle}\`\n\n`);
 
-        // ── Badge row using only confirmed-working markdown primitives ──────────
+        // ── Badge row ──────────
         const chips: string[] = [];
 
         const kindLabel = this.formatKindLabel(doc.kind);
         chips.push(`\`${kindLabel}\``);
 
-        // Source chip
+        // Source chip — any non-local doc with a URL (corpus, sphinx, static, …)
         if (doc.source === ResolutionSource.Local) {
             chips.push(`$(home) local`);
-        } else if (doc.source === ResolutionSource.Sphinx && doc.url) {
+        } else if (doc.url) {
             try {
                 const host = new URL(doc.url).hostname.replace(/^www\./, '');
-                if (host && !host.includes('docs.python.org')) {
+                if (host.includes('docs.python.org')) {
+                    chips.push(`$(book) Python docs`);
+                } else if (host) {
                     chips.push(`$(book) ${host}`);
                 }
             } catch { /* skip */ }
@@ -95,7 +105,7 @@ export class HoverRenderer {
             chips.push(`$(versions) v${doc.installedVersion}`);
         }
 
-        md.appendMarkdown(chips.join(' \u00a0\u00b7\u00a0 ') + '\n\n');
+        md.appendMarkdown(chips.join(' \u00a0·\u00a0 ') + '\n\n');
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -103,40 +113,49 @@ export class HoverRenderer {
     // ─────────────────────────────────────────────────────────────────────────
 
     private renderToolbar(md: vscode.MarkdownString, doc: HoverDoc): void {
-        const actions: string[] = [];
+        const primary: string[] = [];
+        const secondary: string[] = [];
 
-        // Pin
-        actions.push(`[$(pin) Pin](command:python-hover.pinHover "Pin this hover")`);
+        primary.push(`[$(pin) Pin](command:python-hover.pinHover "Pin this hover")`);
 
-        // Go to definition (local symbols)
+        if (this.config.showDebugPinButton) {
+            primary.push(`[$(debug-alt-small) Debug](command:python-hover.debugPinHover "Pin this hover and open a debug view")`);
+        }
+
         if (doc.source === ResolutionSource.Local) {
-            actions.push(`[$(go-to-file) Go to def](command:editor.action.revealDefinition "Jump to definition")`);
+            primary.push(`[$(go-to-file) Go to def](command:editor.action.revealDefinition "Jump to definition")`);
         }
 
-        // Official docs — always show when we have a URL
         if (doc.url) {
-            actions.push(`[$(book) Docs](${this.buildDocsUrl(doc.url)} "Open official documentation")`);
+            const docsLink = this.buildLinkUrl(doc.url, this.config.docsBrowser);
+            secondary.push(`[$(book) Docs](<${docsLink}> "Open official documentation")`);
         }
 
-        // DevDocs — scoped search
         const devdocsUrl = doc.devdocsUrl ??
             (doc.source !== ResolutionSource.Local ? this.buildFallbackDevDocsUrl(doc) : null);
         if (doc.source !== ResolutionSource.Local && devdocsUrl) {
-            actions.push(`[$(search-view-icon) DevDocs](${this.buildDocsUrl(devdocsUrl)} "Search DevDocs")`);
+            const ddLink = this.buildLinkUrl(devdocsUrl, this.config.devdocsBrowser);
+            secondary.push(`[$(search-view-icon) DevDocs](<${ddLink}> "Search DevDocs")`);
         }
 
-        // Browse module — inline in toolbar so the header is cleaner
         if (doc.module && doc.module !== 'builtins') {
-            const args = encodeURIComponent(JSON.stringify(doc.module));
-            actions.push(
-                `[$(symbol-namespace) Browse \`${doc.module}\`]` +
-                `(command:python-hover.browseModule?${args} "Browse all symbols in ${doc.module}")`
+            const args = this.encodeCommandArgs(doc.module);
+            const safeModule = doc.module.replace(/[`[\]()]/g, '');
+            secondary.push(
+                `[$(symbol-namespace) Browse \`${safeModule}\`]` +
+                `(<command:python-hover.browseModule?${args}> "Browse all symbols in ${safeModule}")`
             );
         }
 
-        if (actions.length > 0) {
-            md.appendMarkdown(actions.join('  ·  ') + '\n\n---\n\n');
+        if (primary.length === 0 && secondary.length === 0) {
+            return;
         }
+
+        let block = primary.join('  ·  ');
+        if (secondary.length > 0) {
+            block += (primary.length > 0 ? '  \n' : '') + secondary.join('  ·  ');
+        }
+        md.appendMarkdown(block + '\n\n---\n\n');
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -146,19 +165,34 @@ export class HoverRenderer {
     private renderSignature(md: vscode.MarkdownString, doc: HoverDoc): void {
         if (doc.overloads && doc.overloads.length > 1) {
             const maxShow = 3;
-            doc.overloads.slice(0, maxShow).forEach(o => md.appendCodeblock(o, 'python'));
+            doc.overloads.slice(0, maxShow).forEach(o =>
+                md.appendCodeblock(this.normalizeDisplaySignature(o), 'python')
+            );
             if (doc.overloads.length > maxShow) {
                 const extra = doc.overloads.length - maxShow;
                 md.appendMarkdown(`*+${extra} more overload${extra > 1 ? 's' : ''} — see docs*\n\n`);
             }
         } else {
-            let sig = doc.signature!;
+            let sig = this.normalizeDisplaySignature(doc.signature!);
             if (sig.startsWith('(')) {
                 const title = doc.title.replace(/^builtins\./, '');
                 sig = `${title}${sig}`;
             }
+            const MAX_SIG_LEN = 400;
+            if (sig.length > MAX_SIG_LEN) {
+                sig = this.truncateSignature(sig, MAX_SIG_LEN);
+            }
             md.appendCodeblock(sig, 'python');
         }
+    }
+
+    /**
+     * Strip Pylance-style `(kind) ` prefixes and normalize whitespace so we never
+     * render `str.upper(method) str.upper() -> str` when the title is already the qualname.
+     */
+    private normalizeDisplaySignature(raw: string): string {
+        const withoutKind = raw.replace(/^\([a-z][a-z0-9_]*\)\s+/i, '').trim();
+        return this.cleanSignature(withoutKind);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -191,16 +225,27 @@ export class HoverRenderer {
 
         content = this.cleanPydocDump(content);
         content = this.cleanRstArtifacts(content);
+        content = this.cleanContentAnnotations(content);
         if (!content.trim()) return;
 
         content = this.enhanceContent(content);
+        content = this.formatDescriptionParagraphs(content);
+        content = this.balanceCodeFences(content);
 
         const maxLen = this.config.maxContentLength;
-        if (content.length > maxLen) {
+        const wasTruncated = content.length > maxLen;
+        if (wasTruncated) {
             content = this.smartTruncate(content, maxLen);
         }
 
         md.appendMarkdown(`${content}\n\n`);
+
+        if (wasTruncated && doc.url) {
+            const moreUrl = this.buildLinkUrl(doc.url, this.config.docsBrowser);
+            md.appendMarkdown(
+                `[$(book) Continue reading in documentation…](<${moreUrl}> "Open full documentation")\n\n`,
+            );
+        }
     }
 
     private renderVersionCompatibility(md: vscode.MarkdownString, content: string): void {
@@ -274,36 +319,143 @@ export class HoverRenderer {
             }
         }
 
+        // ── Syntax block ──
         if (bnfLines.length > 0) {
             md.appendMarkdown(`**$(code) Syntax**\n\n`);
             md.appendMarkdown('```\n' + bnfLines.join('\n') + '\n```\n\n');
         }
+
+        // ── Description — format with paragraph awareness ──
         if (descLines.length > 0) {
             let desc = descLines.join('\n').trim();
             desc = this.enhanceContent(desc);
+            desc = this.formatKeywordDescription(desc);
+            desc = this.balanceCodeFences(desc);
             const maxLen = this.config.maxContentLength;
             if (desc.length > maxLen) desc = this.smartTruncate(desc, maxLen);
             md.appendMarkdown(`${desc}\n\n`);
         }
+
+        // ── Examples ──
         if (exampleLines.length > 0) {
             const ex = exampleLines.join('\n').trim();
             if (ex) {
+                md.appendMarkdown(`---\n\n**$(play) Example**\n\n`);
                 const exLines = ex.split('\n');
-                const preview = exLines.slice(0, 5).join('\n');
-                md.appendMarkdown(`**$(play) Example**\n\n`);
+                const preview = exLines.slice(0, 8).join('\n');
                 md.appendMarkdown('```python\n' + preview + '\n```\n\n');
-                if (exLines.length > 5) {
-                    md.appendMarkdown(`*+${exLines.length - 5} more lines in docs*\n\n`);
+                if (exLines.length > 8) {
+                    md.appendMarkdown(`*+${exLines.length - 8} more lines in docs*\n\n`);
                 }
             }
         }
+
+        // ── See Also — render as inline code chips ──
         if (seeAlsoText.trim()) {
-            let sa = seeAlsoText.trim()
-                .replace(/\b(?!PEP)[A-Z]{3,}\b/g, '')
-                .replace(/\*{0,2}PEP\s*(\d+)\*{0,2}/gi, '[PEP $1](https://peps.python.org/pep-$1/)')
-                .replace(/\s+/g, ' ').replace(/\s*,\s*/g, ', ').trim()
-                .replace(/^[,.\s-]+|[,.\s-]+$/g, '');
-            if (sa) md.appendMarkdown(`$(link-external) **See also:** ${sa}\n\n`);
+            this.renderKeywordSeeAlso(md, seeAlsoText);
+        }
+    }
+
+    /**
+     * Format keyword description text with visual structure:
+     * - Detect inline Python code examples and wrap in code blocks
+     * - Break wall-of-text into readable paragraphs
+     * - Highlight key phrases
+     */
+    private formatKeywordDescription(text: string): string {
+        const lines = text.split('\n');
+        const result: string[] = [];
+        let inCodeBlock = false;
+        const codeBuffer: string[] = [];
+
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            const trimmed = line.trim();
+
+            // Detect Python-like code lines (assignments, function calls, class defs, etc.)
+            const isCodeLine = this.looksLikePythonCode(trimmed);
+
+            if (isCodeLine && !inCodeBlock) {
+                // Start a code block
+                inCodeBlock = true;
+                codeBuffer.length = 0;
+                codeBuffer.push(trimmed);
+            } else if (inCodeBlock && (isCodeLine || trimmed === '' || /^\s{2,}/.test(line))) {
+                // Continue code block (code line, blank line within code, or indented continuation)
+                if (trimmed === '' && i + 1 < lines.length && !this.looksLikePythonCode(lines[i + 1].trim())) {
+                    // Blank line followed by non-code — end the code block
+                    result.push('```python\n' + codeBuffer.join('\n') + '\n```');
+                    inCodeBlock = false;
+                    result.push('');
+                } else {
+                    codeBuffer.push(trimmed);
+                }
+            } else if (inCodeBlock) {
+                // End code block
+                result.push('```python\n' + codeBuffer.join('\n') + '\n```');
+                inCodeBlock = false;
+                result.push(trimmed);
+            } else {
+                result.push(line);
+            }
+        }
+
+        // Flush any remaining code block
+        if (inCodeBlock && codeBuffer.length > 0) {
+            result.push('```python\n' + codeBuffer.join('\n') + '\n```');
+        }
+
+        return result.join('\n');
+    }
+
+    /**
+     * Heuristic: does this line look like a Python code example?
+     */
+    private looksLikePythonCode(line: string): boolean {
+        if (!line || line.length < 3) return false;
+        // Python prompts
+        if (/^>>>/.test(line) || /^\.\.\.\s/.test(line)) return true;
+        // Common code patterns: class/def/for/if/with/import/from/try/return/raise/yield/assert + space
+        if (/^(?:class|def|for|if|elif|else:|while|with|import|from|try:|except|finally:|return|raise|yield|assert|pass|break|continue|del|lambda)\s/.test(line)) return true;
+        if (/^(?:else|try|finally|pass|break|continue):?\s*$/.test(line)) return true;
+        // Assignment: `x = ...`, `foo.bar = ...`
+        if (/^[a-zA-Z_]\w*(?:\.\w+)*\s*=[^=]/.test(line)) return true;
+        // Function call on its own line: `print(...)`, `foo.bar(...)`
+        if (/^[a-zA-Z_]\w*(?:\.\w+)*\(/.test(line) && line.endsWith(')')) return true;
+        // Decorator
+        if (/^@\w+/.test(line)) return true;
+        return false;
+    }
+
+    /**
+     * Render See Also as visually clean keyword chips instead of run-on text.
+     */
+    private renderKeywordSeeAlso(md: vscode.MarkdownString, raw: string): void {
+        md.appendMarkdown(`---\n\n`);
+        let sa = raw.trim()
+            .replace(/\b(?!PEP)[A-Z]{3,}\b/g, '')
+            .replace(/\s+/g, ' ').trim();
+
+        // Extract PEP references
+        const peps: string[] = [];
+        sa = sa.replace(/\*{0,2}PEP\s*(\d+)\*{0,2}/gi, (_, n) => {
+            peps.push(`[PEP ${n}](https://peps.python.org/pep-${n}/)`);
+            return '';
+        });
+
+        // Split remaining into individual keyword/topic tokens
+        const keywords = sa
+            .replace(/[,;]+/g, ' ')
+            .split(/\s+/)
+            .map(s => s.replace(/^[,.\s-]+|[,.\s-]+$/g, '').trim())
+            .filter(s => s.length > 0 && s !== 'and' && s !== 'the');
+
+        const chips: string[] = [];
+        for (const kw of keywords) chips.push(`\`${kw}\``);
+        for (const pep of peps) chips.push(pep);
+
+        if (chips.length > 0) {
+            md.appendMarkdown(`$(link-external) **See also:** ${chips.join(' \u00a0 ')}\n\n`);
         }
     }
 
@@ -383,14 +535,18 @@ export class HoverRenderer {
             md.appendMarkdown(`$(versions) **v${doc.installedVersion}** installed\n\n`);
         }
 
-        md.appendMarkdown(`**$(symbol-field) Key exports**\n\n`);
-        md.appendMarkdown(exports.map(n => `\`${n}\``).join(' \u00a0 ') + '\n\n');
+        md.appendMarkdown(`---\n\n**$(symbol-field) Key exports**\n\n`);
+
+        // Render exports as a clean wrapped list of code chips
+        const maxShow = 20;
+        const shown = exports.slice(0, maxShow);
+        md.appendMarkdown(shown.map(n => `\`${n}\``).join(' \u00a0 ') + '\n\n');
 
         if (doc.exportCount && doc.exportCount > exports.length) {
-            const args = encodeURIComponent(JSON.stringify(doc.module || doc.title));
+            const args = this.encodeCommandArgs(doc.module || doc.title);
             md.appendMarkdown(
-                `$(info) ${doc.exportCount.toLocaleString()} indexed symbols  ·  ` +
-                `[$(symbol-namespace) Browse all](command:python-hover.browseModule?${args} "Browse all symbols")\n\n`
+                `$(info) *${doc.exportCount.toLocaleString()} indexed symbols* \u00a0·\u00a0 ` +
+                `[$(symbol-namespace) Browse all](<command:python-hover.browseModule?${args}> "Browse all symbols")\n\n`
             );
         }
     }
@@ -400,7 +556,16 @@ export class HoverRenderer {
     // ─────────────────────────────────────────────────────────────────────────
 
     private renderSeeAlso(md: vscode.MarkdownString, doc: HoverDoc): void {
-        md.appendMarkdown(`$(link-external) **See also:** ${doc.seeAlso!.join('  ·  ')}\n\n`);
+        md.appendMarkdown(`---\n\n`);
+        const items = doc.seeAlso!.map(s => {
+            // Wrap bare symbol names in backticks if not already formatted
+            const trimmed = s.trim();
+            if (/^[a-zA-Z_]\w*(?:\.\w+)*$/.test(trimmed) && !trimmed.startsWith('`')) {
+                return `\`${trimmed}\``;
+            }
+            return trimmed;
+        });
+        md.appendMarkdown(`$(link-external) **See also:** ${items.join(' \u00a0·\u00a0 ')}\n\n`);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -410,24 +575,74 @@ export class HoverRenderer {
     private renderFooter(md: vscode.MarkdownString, doc: HoverDoc): void {
         md.appendMarkdown('---\n\n');
 
-        const utils: string[] = [];
+        const parts: string[] = [];
 
         if (doc.signature) {
-            const sig = doc.signature.startsWith('(')
-                ? `${doc.title}${doc.signature}` : doc.signature;
-            const args = encodeURIComponent(JSON.stringify(sig));
-            utils.push(`[$(clippy) Copy sig](command:python-hover.copySignature?${args} "Copy signature")`);
+            // Use the no-arg command variant — the handler reads the last hover's signature
+            // instead of embedding the full signature in the URI (which breaks markdown for
+            // long signatures like FastAPI's 30-param constructors).
+            parts.push(`[$(clippy) Copy sig](command:python-hover.copySignature "Copy signature")`);
         }
         if (doc.url) {
-            const args = encodeURIComponent(JSON.stringify(doc.url));
-            utils.push(`[$(link-external) Copy URL](command:python-hover.copyUrl?${args} "Copy docs URL")`);
+            parts.push(`[$(link-external) Copy URL](command:python-hover.copyUrl "Copy docs URL")`);
         }
 
         let version = this.config.docsVersion;
         if (version === 'auto') version = this.detectedVersion || '3';
+        parts.push(`$(tag) *Python ${version}*`);
 
-        const footerParts = [...utils, `$(tag) *Python ${version}*`];
-        md.appendMarkdown(footerParts.join(' \u00a0\u00b7\u00a0 '));
+        // Source indicator
+        if (doc.source && doc.source !== ResolutionSource.Local) {
+            const srcLabel = this.getSourceLabel(doc.source);
+            if (srcLabel) parts.push(`$(cloud) *${srcLabel}*`);
+        }
+
+        md.appendMarkdown(parts.join(' \u00a0·\u00a0 '));
+    }
+
+    private getSourceLabel(source: ResolutionSource): string | null {
+        switch (source) {
+            case ResolutionSource.Sphinx: return 'Sphinx';
+            case ResolutionSource.DevDocs: return 'DevDocs';
+            case ResolutionSource.Runtime: return 'runtime';
+            case ResolutionSource.Static: return 'static';
+            case ResolutionSource.Corpus: return 'corpus';
+            default: return null;
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // SIGNATURE HELPERS
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private cleanSignature(sig: string): string {
+        return sharedCleanSignature(sig);
+    }
+
+    private stripAnnotatedWrappers(sig: string): string {
+        return stripAnnotatedWrappers(sig);
+    }
+
+    /**
+     * Truncate a signature at a sensible boundary (closing paren or comma).
+     */
+    private truncateSignature(sig: string, maxLen: number): string {
+        if (sig.length <= maxLen) return sig;
+
+        // Find the last comma before maxLen
+        let cut = sig.lastIndexOf(',', maxLen);
+        if (cut < maxLen * 0.5) cut = maxLen; // if comma is too early, just cut
+
+        const truncated = sig.substring(0, cut).trimEnd();
+        // Count unclosed parens/brackets and close them
+        let parens = 0, brackets = 0;
+        for (const ch of truncated) {
+            if (ch === '(') parens++;
+            else if (ch === ')') parens--;
+            else if (ch === '[') brackets++;
+            else if (ch === ']') brackets--;
+        }
+        return truncated + ', …' + ']'.repeat(Math.max(0, brackets)) + ')'.repeat(Math.max(0, parens));
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -435,23 +650,39 @@ export class HoverRenderer {
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
+     * Encode a value as a command URI argument string.
+     *
+     * `encodeURIComponent` does not encode `(`, `)`, `'`, `!`, `*`, or `~`.
+     * Un-encoded `)` inside a markdown link `[text](url)` terminates the URL
+     * prematurely, breaking the link and exposing raw markdown text.  This
+     * helper adds the extra encoding needed for command URI args.
+     */
+    private encodeCommandArgs(value: unknown): string {
+        return encodeURIComponent(JSON.stringify(value))
+            .replace(/\(/g, '%28')
+            .replace(/\)/g, '%29')
+            .replace(/'/g, '%27');
+    }
+
+    /**
+     * Build a URL that opens in integrated side panel or external browser
+     * based on the specified mode.
+     */
+    private buildLinkUrl(url: string, mode: 'integrated' | 'external'): string {
+        const sanitized = this.sanitizeUrl(url);
+        if (!sanitized.startsWith('http')) return sanitized;
+        if (mode === 'external') {
+            return sanitized; // VS Code will open http links in external browser
+        }
+        return `command:python-hover.openDocsSide?${this.encodeCommandArgs(sanitized)}`;
+    }
+
+    /**
      * Wraps an http(s) URL in the openDocsSide command so docs always open in
      * the persistent side panel (ViewColumn.Beside).
-     *
-     * Uses encodeURIComponent(JSON.stringify(url)) so the args are properly
-     * URL-encoded JSON — no raw `"` chars that would break the markdown link
-     * parser's title-attribute heuristic.
      */
     private buildDocsUrl(url: string): string {
-        const sanitized = this.sanitizeUrl(url);
-        if (sanitized.startsWith('http')) {
-            // VS Code command URI format: ?<url-encoded-json-args>
-            // JSON.stringify adds surrounding quotes; encodeURIComponent turns them
-            // into %22 so the markdown `[text](url "title")` parser is not confused.
-            const args = encodeURIComponent(JSON.stringify(sanitized));
-            return `command:python-hover.openDocsSide?${args}`;
-        }
-        return sanitized;
+        return this.buildLinkUrl(url, this.config.docsBrowser);
     }
 
     private buildFallbackDevDocsUrl(doc: HoverDoc): string | null {
@@ -474,6 +705,67 @@ export class HoverRenderer {
     // ─────────────────────────────────────────────────────────────────────────
     // CONTENT HELPERS
     // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Format description paragraphs for better visual structure:
+     * - Wrap inline Python code references in backticks
+     * - Detect embedded code examples and format as code blocks
+     * - Ensure proper paragraph breaks
+     */
+    private formatDescriptionParagraphs(content: string): string {
+        // Wrap bare Python identifiers that look like references (e.g., "None", "True", etc.)
+        // but only if not already in backticks or code blocks
+        const pyBuiltins = /(?<![`\w])\b(None|True|False|NotImplemented|Ellipsis|__\w+__)\b(?![`\w])/g;
+        content = content.replace(pyBuiltins, '`$1`');
+
+        // Detect lines that look like standalone code and wrap them
+        const lines = content.split('\n');
+        const result: string[] = [];
+        let i = 0;
+        while (i < lines.length) {
+            const line = lines[i];
+            const trimmed = line.trim();
+
+            // Skip lines already inside fenced code blocks
+            if (trimmed.startsWith('```')) {
+                result.push(line);
+                i++;
+                while (i < lines.length && !lines[i].trim().startsWith('```')) {
+                    result.push(lines[i]);
+                    i++;
+                }
+                if (i < lines.length) { result.push(lines[i]); i++; }
+                else { result.push('```'); } // Close unclosed code fence
+                continue;
+            }
+
+            // Detect Python code examples in prose (>>> prompts, assignments, etc.)
+            if (this.looksLikePythonCode(trimmed) && !trimmed.startsWith('$(') && !trimmed.startsWith('**')) {
+                const codeLines: string[] = [trimmed];
+                i++;
+                while (i < lines.length) {
+                    const next = lines[i].trim();
+                    if (this.looksLikePythonCode(next) || /^\.\.\./.test(next) ||
+                        (next === '' && i + 1 < lines.length && this.looksLikePythonCode(lines[i + 1]?.trim()))) {
+                        codeLines.push(next);
+                        i++;
+                    } else break;
+                }
+                // Only wrap if not a single short token that might be inline
+                if (codeLines.length > 1 || codeLines[0].length > 30) {
+                    result.push('```python\n' + codeLines.join('\n') + '\n```');
+                } else {
+                    result.push(line);
+                }
+                continue;
+            }
+
+            result.push(line);
+            i++;
+        }
+
+        return result.join('\n');
+    }
 
     private enhanceContent(content: string): string {
         const replacements: [RegExp, string][] = [
@@ -507,58 +799,26 @@ export class HoverRenderer {
     }
 
     private cleanRstArtifacts(text: string): string {
-        text = text.replace(/\.\. note::\s*/gi, '**Note:** ');
-        text = text.replace(/\.\. warning::\s*/gi, '**Warning:** ');
-        text = text.replace(/\.\. caution::\s*/gi, '**Caution:** ');
-        text = text.replace(/\.\. important::\s*/gi, '**Important:** ');
-        text = text.replace(/\.\. tip::\s*/gi, '**Tip:** ');
-        text = text.replace(/\.\. deprecated::\s*(\S+)/gi, '**Deprecated since $1:** ');
-        text = text.replace(/\.\. versionadded::\s*(\S+)/gi, '**New in $1:** ');
-        text = text.replace(/\.\. versionchanged::\s*(\S+)/gi, '**Changed in $1:** ');
-        text = text.replace(/^[ \t]*\.\.\s+[\w-]+::.*$/gm, '');
-        text = text.replace(/:(?:func|class|meth|mod|attr|exc|data|const|type|obj):`([^`]+)`/g, '`$1`');
-        text = text.replace(/\|([^|\n]+)\|_?/g, '$1');
-        text = text.replace(/__[ \t]*$/gm, '');
-        text = text.replace(/\n{3,}/g, '\n\n');
-        return text.trim();
+        return sharedCleanRstArtifacts(text);
+    }
+
+    private cleanPydocDump(text: string): string {
+        return sharedCleanPydocDump(text);
+    }
+
+    private cleanContentAnnotations(text: string): string {
+        return sharedCleanContentAnnotations(text);
     }
 
     /**
-     * Strip raw pydoc class/object dumps that slip through when `pydoc.help()`
-     * or `inspect.getdoc()` returns the class-level docstring for constants.
-     *
-     * Detects patterns like:
-     *   "Help on NoneType object:\n\nclass NoneType(object)\n | Methods defined here: ..."
-     *   "class bool(int)\n | bool(x) -> bool | ..."
-     *   Pipe-separated method listings
+     * Ensure code fences are balanced so an unclosed fence in content
+     * doesn't swallow the rest of the hover (toolbar, footer, etc.).
      */
-    private cleanPydocDump(text: string): string {
-        // Strip "Help on X object:" prefix
-        text = text.replace(/^Help on \w+ object:\s*/i, '');
-
-        // Detect pipe-separated pydoc class dump and extract only the first sentence
-        if (/^class\s+\w+.*\|/s.test(text) || /\|\s+Methods defined here:/s.test(text)) {
-            // Try to grab the class docstring (first meaningful line after the class declaration)
-            const match = text.match(/^class\s+\w+[^|]*\|\s*(.+?)(?:\s*\||$)/s);
-            if (match?.[1]) {
-                const firstLine = match[1].trim().replace(/\|/g, '').trim();
-                if (firstLine && !firstLine.startsWith('Methods defined')) {
-                    return firstLine;
-                }
-            }
-            // If no usable content, return empty
-            return '';
+    private balanceCodeFences(text: string): string {
+        const fences = text.match(/^`{3,}/gm);
+        if (fences && fences.length % 2 !== 0) {
+            text += '\n```\n';
         }
-
-        // Strip leftover pipe-continuation lines from pydoc output
-        if (text.includes(' |  ') && text.split(' |  ').length > 3) {
-            const lines = text.split(/\s*\|\s*/).filter(l => l.trim());
-            // Take only the first meaningful sentence
-            if (lines.length > 0) {
-                return lines[0].trim();
-            }
-        }
-
         return text;
     }
 

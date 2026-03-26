@@ -62,7 +62,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### 🗜️ Package Size
 
 - **Icon shrunk from 1.9 MB → 27 KB** — Resized marketplace icon from 1024×1024 to 128×128 (the size VS Code actually renders), dramatically reducing extension download size.
-- **Removed stale duplicate** — Deleted `extension/python-helper/` which was an out-of-sync copy of the Python IPC helper that shipped dead code in every `.vsix`.
+- **Removed stale duplicate** — Deleted the obsolete root-level `python-helper/` duplicate after consolidating the shipped Python IPC helper under `extension/python-helper/`.
 
 ---
 
@@ -187,7 +187,7 @@ This release represents a **ground-up rewrite** of Python Hover with a new modul
 - **`extension/`** — VS Code extension layer
   - `src/` — Activation, hover provider, LSP client, config
   - `ui/` — Hover rendering, status bar
-  - `python-helper/` — Python scripts for runtime introspection
+  - `extension/python-helper/` — Python scripts for runtime introspection
 - **`shared/`** — Common types and utilities
 
 #### **Python Helper Scripts**

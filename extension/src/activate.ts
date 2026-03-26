@@ -5,6 +5,7 @@ import { HoverProvider } from './hoverProvider';
 import { Logger } from './logger';
 import { LspClient } from './lspClient';
 import { DocsPanel } from './ui/docsPanel';
+import { HoverDebugPanel } from './ui/hoverDebugPanel';
 import { HoverPanel } from './ui/hoverPanel';
 import { StatusBarManager } from './ui/statusBar';
 
@@ -24,8 +25,13 @@ export function activate(context: vscode.ExtensionContext) {
             {
                 inventoryDays: config.inventoryCacheDays,
                 snippetHours: config.snippetCacheHours,
-            }
+            },
+            config.interpreterCacheFingerprint,
         );
+
+        // Wire status bar clear button to DiskCache.clear() so in-memory caches
+        // (memory + corpusMemory) are flushed alongside the on-disk files.
+        statusBarManager.setClearCacheCallback(() => diskCache.clear());
 
         const hoverProvider = new HoverProvider(lspClient, config, diskCache);
 
@@ -49,9 +55,31 @@ export function activate(context: vscode.ExtensionContext) {
         // Warn once if no Python language extension is active (Pylance / python-language-server)
         checkPythonExtension();
 
-        // Eagerly load inventories for common packages in the background so
-        // first-hover latency is near-zero for numpy, pandas, requests, etc.
-        hoverProvider.warmupInventories();
+        // Pre-load inventories for packages imported in the active document so
+        // first-hover latency is lower. Only runs when onlineDiscovery is enabled —
+        // inventories are fetched lazily on first hover otherwise.
+        // Only applies to real user files (file: scheme) — Pylance opens many
+        // virtual/internal type-stub documents that we must not try to warmup.
+        const warmupImportsForDocument = (document: vscode.TextDocument | undefined) => {
+            if (!document || document.languageId !== 'python') return;
+            if (!config.warmupImports || !config.onlineDiscovery) return;
+            if (document.uri.scheme !== 'file') return;
+            hoverProvider.warmupDocumentImports(document);
+        };
+
+        warmupImportsForDocument(vscode.window.activeTextEditor?.document);
+
+        context.subscriptions.push(
+            vscode.window.onDidChangeActiveTextEditor(editor => {
+                warmupImportsForDocument(editor?.document);
+            })
+        );
+
+        context.subscriptions.push(
+            vscode.workspace.onDidOpenTextDocument(document => {
+                warmupImportsForDocument(document);
+            })
+        );
 
         // Clear session cache when a document is saved (symbols may have changed)
         context.subscriptions.push(
@@ -63,18 +91,20 @@ export function activate(context: vscode.ExtensionContext) {
         // ── Commands ─────────────────────────────────────────────────────────
 
         context.subscriptions.push(
-            vscode.commands.registerCommand('python-hover.copyUrl', async (url: string) => {
-                if (url) {
-                    await vscode.env.clipboard.writeText(url);
+            vscode.commands.registerCommand('python-hover.copyUrl', async (url?: string) => {
+                const text = url || hoverProvider.getLastDoc()?.url;
+                if (text) {
+                    await vscode.env.clipboard.writeText(text);
                     vscode.window.showInformationMessage('URL copied to clipboard');
                 }
             })
         );
 
         context.subscriptions.push(
-            vscode.commands.registerCommand('python-hover.copySignature', async (sig: string) => {
-                if (sig) {
-                    await vscode.env.clipboard.writeText(sig);
+            vscode.commands.registerCommand('python-hover.copySignature', async (sig?: string) => {
+                const text = sig || hoverProvider.getLastDoc()?.signature;
+                if (text) {
+                    await vscode.env.clipboard.writeText(text);
                     vscode.window.showInformationMessage('Signature copied to clipboard');
                 }
             })
@@ -134,6 +164,19 @@ export function activate(context: vscode.ExtensionContext) {
             })
         );
 
+        context.subscriptions.push(
+            vscode.commands.registerCommand('python-hover.debugPinHover', () => {
+                const doc = hoverProvider.getLastDoc();
+                if (!doc) {
+                    vscode.window.showInformationMessage('Hover over a Python symbol first, then click Debug.');
+                    return;
+                }
+
+                HoverPanel.show(doc);
+                HoverDebugPanel.show(doc, hoverProvider.getLastRenderedHoverMarkdown() || '');
+            })
+        );
+
         // Open a docs URL in a persistent side-panel browser (ViewColumn.Beside).
         // Uses our own WebviewPanel so the column is guaranteed — VS Code's built-in
         // simpleBrowser.show ignores viewColumn when its panel is already visible.
@@ -151,7 +194,7 @@ export function activate(context: vscode.ExtensionContext) {
             vscode.commands.registerCommand('python-hover.browseModule', async (moduleName: string) => {
                 if (!moduleName) return;
 
-                type BrowseItem = vscode.QuickPickItem & { url?: string };
+                type BrowseItem = vscode.QuickPickItem & { url?: string; action?: string };
                 const results = hoverProvider.searchDocs(moduleName);
                 // Filter to symbols that belong to this module/package
                 const moduleSymbols = results.filter(r =>
@@ -165,16 +208,55 @@ export function activate(context: vscode.ExtensionContext) {
                     return;
                 }
 
+                // Group symbols by kind for a categorized view
+                const kindOrder = ['class', 'function', 'method', 'data', 'exception', 'module', 'attribute'];
+                const kindIcons: Record<string, string> = {
+                    class: '$(symbol-class)', function: '$(symbol-function)',
+                    method: '$(symbol-method)', data: '$(symbol-field)',
+                    exception: '$(warning)', module: '$(symbol-namespace)',
+                    attribute: '$(symbol-property)',
+                };
+                const kindLabels: Record<string, string> = {
+                    class: 'Classes', function: 'Functions', method: 'Methods',
+                    data: 'Data', exception: 'Exceptions', module: 'Modules',
+                    attribute: 'Attributes',
+                };
+
+                const grouped = new Map<string, typeof moduleSymbols>();
+                for (const sym of moduleSymbols) {
+                    const k = sym.kind || 'function';
+                    if (!grouped.has(k)) grouped.set(k, []);
+                    grouped.get(k)!.push(sym);
+                }
+
+                const items: BrowseItem[] = [];
+                const sortedKinds = [...grouped.keys()].sort((a, b) => {
+                    const ai = kindOrder.indexOf(a); const bi = kindOrder.indexOf(b);
+                    return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+                });
+
+                for (const kind of sortedKinds) {
+                    const syms = grouped.get(kind)!;
+                    const label = kindLabels[kind] || kind.charAt(0).toUpperCase() + kind.slice(1);
+                    items.push({ label: `${label} (${syms.length})`, kind: vscode.QuickPickItemKind.Separator, action: '' });
+                    for (const sym of syms.sort((a, b) => a.name.localeCompare(b.name))) {
+                        const icon = kindIcons[kind] || '$(symbol-misc)';
+                        const shortName = sym.name.replace(moduleName + '.', '');
+                        items.push({
+                            label: `${icon} ${shortName}`,
+                            description: sym.kind,
+                            detail: sym.name,
+                            url: sym.url,
+                        });
+                    }
+                }
+
                 const qp = vscode.window.createQuickPick<BrowseItem>();
                 qp.title = `$(symbol-module) ${moduleName} — ${moduleSymbols.length} symbols`;
                 qp.placeholder = 'Filter symbols…';
                 qp.matchOnDescription = true;
-                qp.items = moduleSymbols.map(r => ({
-                    label: r.name.replace(moduleName + '.', ''),
-                    description: r.kind,
-                    detail: r.name,
-                    url: r.url,
-                }));
+                qp.matchOnDetail = true;
+                qp.items = items;
 
                 qp.onDidAccept(() => {
                     const sel = qp.selectedItems[0] as BrowseItem;

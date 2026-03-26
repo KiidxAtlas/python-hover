@@ -18,10 +18,10 @@ export class StaticDocResolver {
         if (MAP[key.name]) {
             const info = MAP[key.name];
             return {
-                title: info.title,
-                kind: info.kind,
+                title: key.name,
                 source: ResolutionSource.Static,
                 confidence: 1.0,
+                summary: info.summary,
                 url: `https://docs.python.org/${this.pythonVersion}/${info.url}${info.anchor ? '#' + info.anchor : ''}`
             };
         }
@@ -36,8 +36,6 @@ export class StaticDocResolver {
                 return {
                     title: key.name,
                     kind: 'module',
-                    summary: modInfo.summary,
-                    content: modInfo.summary,
                     source: ResolutionSource.Static,
                     confidence: 1.0,
                     url: `https://docs.python.org/${this.pythonVersion}/${modInfo.url}`
