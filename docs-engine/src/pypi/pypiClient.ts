@@ -2,6 +2,30 @@ import * as https from 'https';
 import { DocKey, HoverDoc, ResolutionSource } from '../../../shared/types';
 import { DiskCache } from '../cache/diskCache';
 
+/**
+ * Pick the best docs/home URL from PyPI `project_urls` + optional home_page.
+ * Documentation links are preferred over source repos.
+ */
+function pickBestProjectUrl(links: Record<string, string>, homePage: string | null): string | null {
+    const entries = Object.entries(links).filter(([, v]) => typeof v === 'string' && v.trim().length > 0);
+    const labelScore = (label: string): number => {
+        const l = label.toLowerCase();
+        if (l === 'documentation' || l === 'docs') return 0;
+        if (l.includes('documentation') || l.includes('doc ') || l === 'doc') return 1;
+        if (l.includes('readthedocs') || l.includes('rtd')) return 2;
+        if (l.includes('homepage') || l === 'home' || l === 'home page' || l === 'website') return 3;
+        if (l.includes('changelog') || l.includes('release')) return 6;
+        if (l.includes('repository') || l.includes('source') || l.includes('github') || l.includes('gitlab')) return 8;
+        return 5;
+    };
+    if (entries.length > 0) {
+        entries.sort((a, b) => labelScore(a[0]) - labelScore(b[0]) || a[0].localeCompare(b[0]));
+        return entries[0][1];
+    }
+    const h = homePage?.trim();
+    return h || null;
+}
+
 export class PyPiClient {
     private diskCache: DiskCache | null;
 
@@ -44,16 +68,8 @@ export class PyPiClient {
                 links['Homepage'] = info.home_page;
             }
 
-            // Determine best URL for "url" field
-            let bestUrl: string | null = null;
-            const docKey = Object.keys(links).find(k => k.toLowerCase() === 'documentation');
-            if (docKey) {
-                bestUrl = links[docKey];
-            } else if (info.home_page) {
-                bestUrl = info.home_page;
-            } else if (Object.keys(links).length > 0) {
-                bestUrl = Object.values(links)[0];
-            }
+            // Prefer explicit documentation URLs from PyPI metadata (PEP 621 / core metadata).
+            const bestUrl = pickBestProjectUrl(links, typeof info.home_page === 'string' ? info.home_page : null);
 
             // One-line description from PyPI metadata
             const summary: string | null = (typeof info.summary === 'string' && info.summary.trim())

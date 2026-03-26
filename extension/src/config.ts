@@ -1,3 +1,4 @@
+import * as crypto from 'crypto';
 import * as vscode from 'vscode';
 
 export class Config {
@@ -11,6 +12,19 @@ export class Config {
 
     get onlineDiscovery(): boolean {
         return this.config.get('onlineDiscovery', true);
+    }
+
+    /** Pre-fetch objects.inv for imports in the active editor (off by default — lazy load on hover). */
+    get warmupImports(): boolean {
+        return this.config.get('warmupImports', false);
+    }
+
+    /**
+     * Use the bundled package → docs base URL map for fast resolution.
+     * When false, discovery uses PyPI project URLs + objects.inv probes only.
+     */
+    get useKnownDocsUrls(): boolean {
+        return this.config.get('useKnownDocsUrls', false);
     }
 
     get buildFullCorpus(): boolean {
@@ -84,5 +98,27 @@ export class Config {
             return configured;
         }
         return process.platform === 'win32' ? 'python' : 'python3';
+    }
+
+    /**
+     * Stable id for cache keys — ties disk + session caches to the configured interpreter path.
+     */
+    get interpreterCacheFingerprint(): string {
+        return crypto.createHash('sha256').update(this.pythonPath).digest('hex').slice(0, 16);
+    }
+
+    /** Persistent Python subprocess: import/inspect/pydoc (off by default for reliability). */
+    get runtimeHelperEnabled(): boolean {
+        return this.config.get('runtimeHelper', false);
+    }
+
+    /** Fetch & parse remote HTML for richer third-party hovers (off by default). */
+    get docScrapingEnabled(): boolean {
+        return this.config.get('docScraping', false);
+    }
+
+    /** When runtime helper is on, also use AST identify when LSP gives an incomplete symbol. */
+    get astFallbackEnabled(): boolean {
+        return this.config.get('astFallback', false);
     }
 }

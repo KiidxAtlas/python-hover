@@ -19,12 +19,16 @@ export class LspClient {
         const ctx = this.buildContext(document, position);
         if (!ctx) return null;
 
-        const { expression, segmentRange, queryChar } = ctx;
-        const queryPos = new vscode.Position(position.line, queryChar);
+        const { expression, segmentRange, queryChar, rightExtended } = ctx;
+        // Pylance can return different definitions when the column sits on the last
+        // character of a token vs the start. For a *single* identifier, always query
+        // at the **start** of that token so every cursor offset inside the word agrees.
+        // When we extended to `df.agg` from a hover on `df`, keep querying at the end
+        // of the full chain so we still resolve the attribute, not just the variable.
+        const queryColumn = rightExtended ? queryChar : segmentRange.start.character;
+        const queryPos = new vscode.Position(position.line, queryColumn);
 
         // Single parallel query at the canonical position.
-        // queryChar is the last char of the rightmost segment (e.g. the 'g' in
-        // 'df.agg'), which gives Pylance the best chance to resolve the attribute.
         const [definitions, hovers] = await Promise.all([
             this.lspQuery<vscode.Location[] | vscode.LocationLink[]>(
                 'vscode.executeDefinitionProvider', document.uri, queryPos,
@@ -61,7 +65,7 @@ export class LspClient {
     private buildContext(
         document: vscode.TextDocument,
         position: vscode.Position,
-    ): { expression: string; segmentRange: vscode.Range; queryChar: number } | null {
+    ): { expression: string; segmentRange: vscode.Range; queryChar: number; rightExtended: boolean } | null {
         const segmentRange = document.getWordRangeAtPosition(
             position, /[A-Za-z_][A-Za-z0-9_]*/,
         );
@@ -104,15 +108,18 @@ export class LspClient {
         const rightMatch = /^\.([A-Za-z_][A-Za-z0-9_]*)/.exec(
             line.slice(segmentRange.end.character),
         );
+        let rightExtended = false;
         if (rightMatch) {
             segments.push(rightMatch[1]);
             queryChar = segmentRange.end.character + rightMatch[0].length - 1;
+            rightExtended = true;
         }
 
         return {
             expression: segments.join('.'),
             segmentRange,
             queryChar,
+            rightExtended,
         };
     }
 

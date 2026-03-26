@@ -19,6 +19,10 @@ export interface ResolverConfig {
     /** When true, scrape the full documentation for each package in the background
      *  on first hover — builds the local corpus all at once instead of symbol-by-symbol. */
     buildFullCorpus?: boolean;
+    /** When true, prefetch HTML and extract narrative content (default off). */
+    enableDocScraping?: boolean;
+    /** When true, use bundled KNOWN_DOCS_URLS in InventoryFetcher (faster). */
+    useKnownDocsUrls?: boolean;
 }
 
 export class DocResolver {
@@ -29,6 +33,7 @@ export class DocResolver {
     private readonly staticResolver: StaticDocResolver;
     private readonly corpusResolver: StdlibCorpusResolver;
     private readonly config?: ResolverConfig;
+    private readonly enableDocScraping: boolean;
 
     /** Packages whose full corpus build has already been triggered this session. */
     private readonly fullCorpusBuilt = new Set<string>();
@@ -38,7 +43,8 @@ export class DocResolver {
             diskCache,
             '3',
             config?.customLibraries || [],
-            config?.onlineDiscovery !== false
+            config?.onlineDiscovery !== false,
+            config?.useKnownDocsUrls === true,
         );
         this.pypiClient = new PyPiClient(diskCache);
         this.fallback = new SearchFallback();
@@ -46,6 +52,7 @@ export class DocResolver {
         this.staticResolver = new StaticDocResolver();
         this.corpusResolver = new StdlibCorpusResolver();
         this.config = config;
+        this.enableDocScraping = config?.enableDocScraping === true;
     }
 
     setPythonVersion(version: string) {
@@ -111,7 +118,7 @@ export class DocResolver {
     }
 
     private prefetchInventoryEnhancements(url?: string): void {
-        if (!url) return;
+        if (!url || !this.enableDocScraping) return;
 
         void this.scraper.fetchContent(url).catch(e => {
             Logger.log(`Background scrape failed for ${url}: ${e}`);
@@ -128,6 +135,7 @@ export class DocResolver {
      * session per package regardless of how many times it is called.
      */
     private triggerFullCorpusBuild(pkg: string): void {
+        if (!this.enableDocScraping || !this.config?.buildFullCorpus) return;
         if (!pkg || this.fullCorpusBuilt.has(pkg)) return;
         this.fullCorpusBuilt.add(pkg);
 
@@ -205,7 +213,7 @@ export class DocResolver {
         let content: string | undefined;
         if (url) {
             content = this.scraper.getCachedContent(url) ?? undefined;
-            if (!content && this.config?.onlineDiscovery !== false) {
+            if (!content && this.config?.onlineDiscovery !== false && this.enableDocScraping) {
                 this.prefetchInventoryEnhancements(url);
             }
             summary = summary || this.extractSummaryFromContent(content);
@@ -266,7 +274,7 @@ export class DocResolver {
                     ? (this.scraper.getCachedContent(bestUrl) ?? undefined)
                     : undefined;
 
-                if (this.config?.onlineDiscovery !== false) {
+                if (this.config?.onlineDiscovery !== false && this.enableDocScraping) {
                     if (!cachedContent && bestUrl) {
                         this.prefetchInventoryEnhancements(bestUrl);
                     }
@@ -298,7 +306,7 @@ export class DocResolver {
                     ? (this.scraper.getCachedSeeAlso(staticDoc.url) ?? undefined)
                     : undefined;
 
-                if (!cachedContent && staticDoc.url && this.config?.onlineDiscovery !== false) {
+                if (!cachedContent && staticDoc.url && this.config?.onlineDiscovery !== false && this.enableDocScraping) {
                     this.prefetchInventoryEnhancements(staticDoc.url);
                 }
 
@@ -327,7 +335,7 @@ export class DocResolver {
                 const immediateContent = cachedScrapedContent || inventoryContent;
                 const immediateSummary = inventoryDoc.summary;
 
-                if (this.config?.onlineDiscovery !== false) {
+                if (this.config?.onlineDiscovery !== false && this.enableDocScraping) {
                     // Always fire background scrape if we don't have cached content yet
                     if (inventoryDoc.url && !cachedScrapedContent) {
                         this.prefetchInventoryEnhancements(inventoryDoc.url);

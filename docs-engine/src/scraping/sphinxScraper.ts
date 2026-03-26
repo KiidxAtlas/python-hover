@@ -31,7 +31,7 @@ export class SphinxScraper {
     }
 
     getCachedContent(url: string): string | null {
-        return this.diskCache.get(this.contentCacheKey(url));
+        return this.diskCache.get(this.contentCacheKey(url)) ?? null;
     }
 
     getCachedSeeAlso(url: string): string[] | null {

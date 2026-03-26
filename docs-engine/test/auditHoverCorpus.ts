@@ -114,7 +114,7 @@ async function main(): Promise<void> {
     const builder = new HoverDocBuilder();
     const storagePath = require('path').join(require('os').tmpdir(), 'pyhover-audit-cache');
     require('fs').mkdirSync(storagePath, { recursive: true });
-    const resolver = new DocResolver(new DiskCache(storagePath, () => { }, { inventoryDays: 1, snippetHours: 1 }), { onlineDiscovery: true, requestTimeout: 10000 });
+    const resolver = new DocResolver(new DiskCache(storagePath, () => { }, { inventoryDays: 1, snippetHours: 1 }), { onlineDiscovery: true, requestTimeout: 10000, enableDocScraping: true });
     resolver.setPythonVersion('3');
 
     for (const entry of entries) {

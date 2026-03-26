@@ -122,10 +122,35 @@
                     "default": true,
                     "description": "Enable Python Hover documentation lookups."
                 },
+                "python-hover.runtimeHelper": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Run a persistent Python helper for runtime introspection (imports, pydoc, AST identify, installed package versions). Off by default to avoid wrong-environment imports and process churn; enable for the previous richer behavior."
+                },
+                "python-hover.docScraping": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Fetch and parse documentation HTML in the background for third-party packages. Off by default (inventory URLs + language-server text only); enable for scraped narrative content and see-also links."
+                },
+                "python-hover.astFallback": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "When runtimeHelper is enabled, use AST-based hover identification when Pylance returns an incomplete symbol (e.g. missing module path). Off by default so the language server stays authoritative."
+                },
                 "python-hover.onlineDiscovery": {
                     "type": "boolean",
                     "default": true,
                     "description": "Fetch documentation from the web. When disabled, only locally cached content is used."
+                },
+                "python-hover.warmupImports": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "When online discovery is on, pre-load objects.inv for packages imported in the active editor. Off by default — inventories load on first hover instead."
+                },
+                "python-hover.useKnownDocsUrls": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Use the extension's bundled package→documentation base URL map (faster for popular libs). When false, docs roots come from PyPI project URLs + objects.inv probing + ReadTheDocs-style fallback only."
                 },
                 "python-hover.buildFullCorpus": {
                     "type": "boolean",
@@ -235,6 +260,7 @@
     "scripts": {
         "vscode:prepublish": "npm run compile",
         "compile": "tsc -p ./",
+        "audit:hover": "npm run compile && node ./scripts/renderHoverAudit.cjs",
         "inspect:hover": "npm run compile && node ./out/docs-engine/test/inspectHoverPipeline.js",
         "watch": "tsc -watch -p ./",
         "pretest": "npm run compile && npm run lint",

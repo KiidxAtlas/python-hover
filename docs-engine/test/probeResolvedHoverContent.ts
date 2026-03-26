@@ -124,7 +124,7 @@ async function main(): Promise<void> {
 
     const resolver = new DocResolver(
         new DiskCache(storagePath, () => { }, { inventoryDays: 1, snippetHours: 1 }),
-        { onlineDiscovery: true, requestTimeout: 10000 },
+        { onlineDiscovery: true, requestTimeout: 10000, enableDocScraping: true },
     );
     resolver.setPythonVersion('3');
 

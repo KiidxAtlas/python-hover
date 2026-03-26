@@ -25,7 +25,8 @@ export function activate(context: vscode.ExtensionContext) {
             {
                 inventoryDays: config.inventoryCacheDays,
                 snippetHours: config.snippetCacheHours,
-            }
+            },
+            config.interpreterCacheFingerprint,
         );
 
         // Wire status bar clear button to DiskCache.clear() so in-memory caches
@@ -61,7 +62,7 @@ export function activate(context: vscode.ExtensionContext) {
         // virtual/internal type-stub documents that we must not try to warmup.
         const warmupImportsForDocument = (document: vscode.TextDocument | undefined) => {
             if (!document || document.languageId !== 'python') return;
-            if (!config.onlineDiscovery) return;
+            if (!config.warmupImports || !config.onlineDiscovery) return;
             if (document.uri.scheme !== 'file') return;
             hoverProvider.warmupDocumentImports(document);
         };

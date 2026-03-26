@@ -43,6 +43,8 @@ const KNOWN_DOCS_URLS: Record<string, string> = {
     'urllib3': 'https://urllib3.readthedocs.io/en/stable',
     // Data validation / settings
     'pydantic': 'https://docs.pydantic.dev/latest',
+    /** Rust core types — RTD underscore URL returns 400; same Sphinx site as pydantic */
+    'pydantic_core': 'https://docs.pydantic.dev/latest',
     'attrs': 'https://www.attrs.org/en/stable',
     'marshmallow': 'https://marshmallow.readthedocs.io/en/stable',
     // Database
@@ -60,6 +62,7 @@ const KNOWN_DOCS_URLS: Record<string, string> = {
     // Async / concurrency
     'anyio': 'https://anyio.readthedocs.io/en/stable',
     'trio': 'https://trio.readthedocs.io/en/stable',
+    'typing_extensions': 'https://typing-extensions.readthedocs.io/en/stable',
     // Utilities
     'arrow': 'https://arrow.readthedocs.io/en/latest',
     'pendulum': 'https://pendulum.eustace.io/docs',
@@ -68,6 +71,9 @@ const KNOWN_DOCS_URLS: Record<string, string> = {
     'cryptography': 'https://cryptography.readthedocs.io/en/latest',
     'paramiko': 'https://docs.paramiko.org/en/stable',
     'celery': 'https://docs.celeryq.dev/en/stable',
+    /** PyPI name `python-multipart` — avoid stale github.io probes + 404 spam */
+    'python_multipart': 'https://multipart.fastapiexpert.com/en/latest',
+    'multipart': 'https://multipart.fastapiexpert.com/en/latest',
 };
 
 /** Packages to eagerly load on warmup (most commonly used). */
@@ -86,11 +92,23 @@ export class InventoryFetcher {
     private packageBaseUrls: Map<string, string>; // Cache for resolved base URLs
     /** In-flight load promises — concurrent callers share one promise instead of spawning duplicates. */
     private loadingPromises: Map<string, Promise<void>> = new Map();
+    /** Log each failed package at most once per session (avoid hover-stampedes). */
+    private failedInventoryLog = new Set<string>();
+    /** Log each redirect chain at most once per session. */
+    private redirectLogSeen = new Set<string>();
     private diskCache: DiskCache;
     private pythonVersion: string;
     private allowNetwork: boolean;
+    /** When false, skip KNOWN_DOCS_URLS — resolve via PyPI + probes + RTD fallback only. */
+    private readonly useKnownDocsUrls: boolean;
 
-    constructor(diskCache: DiskCache, pythonVersion: string = '3', customLibraries: any[] = [], allowNetwork: boolean = true) {
+    constructor(
+        diskCache: DiskCache,
+        pythonVersion: string = '3',
+        customLibraries: any[] = [],
+        allowNetwork: boolean = true,
+        useKnownDocsUrls = false,
+    ) {
         this.parser = new InventoryParser();
         this.pypiClient = new PyPiClient(diskCache);
         this.cache = new Map();
@@ -98,6 +116,7 @@ export class InventoryFetcher {
         this.diskCache = diskCache;
         this.pythonVersion = pythonVersion;
         this.allowNetwork = allowNetwork;
+        this.useKnownDocsUrls = useKnownDocsUrls;
 
         // Initialize custom libraries
         for (const lib of customLibraries) {
@@ -132,10 +151,27 @@ export class InventoryFetcher {
      */
     warmup(packages: string[] = WARMUP_PACKAGES): void {
         for (const pkg of packages) {
-            if (this.cache.has(pkg)) continue; // already loaded
-            // Fire-and-forget: errors are swallowed inside loadInventory
-            this.loadInventory(pkg).catch(() => { });
+            if (this.cache.has(pkg)) continue;
+            const isStdlibWarmup = pkg === 'typing' || pkg === 'asyncio' || pkg === 'builtins';
+            void this.ensureInventoryLoaded(pkg, undefined, isStdlibWarmup ? true : undefined).catch(() => { });
         }
+    }
+
+    /**
+     * Single entry for kicking off loads — shares the same promise as findInInventory so
+     * warmup + hovers never download the same objects.inv twice in parallel.
+     */
+    private ensureInventoryLoaded(packageName: string, version?: string, isStdlib?: boolean): Promise<void> {
+        if (this.cache.has(packageName)) {
+            return Promise.resolve();
+        }
+        let p = this.loadingPromises.get(packageName);
+        if (!p) {
+            p = this.loadInventory(packageName, version, isStdlib);
+            this.loadingPromises.set(packageName, p);
+            p.finally(() => this.loadingPromises.delete(packageName));
+        }
+        return p;
     }
 
     private async resolveBaseUrl(packageName: string, version?: string, isStdlib?: boolean): Promise<string> {
@@ -149,11 +185,13 @@ export class InventoryFetcher {
             return this.packageBaseUrls.get(packageName)!;
         }
 
-        // 3. Known pre-verified URLs (skips PyPI lookup + HEAD probing)
-        const knownUrl = KNOWN_DOCS_URLS[packageName.toLowerCase()];
-        if (knownUrl) {
-            this.packageBaseUrls.set(packageName, knownUrl);
-            return knownUrl;
+        // 3. Optional bundled URL map (fast path; off by default)
+        if (this.useKnownDocsUrls) {
+            const knownUrl = KNOWN_DOCS_URLS[packageName.toLowerCase()];
+            if (knownUrl) {
+                this.packageBaseUrls.set(packageName, knownUrl);
+                return knownUrl;
+            }
         }
 
         // 4. Dynamic PyPI Lookup + Probing
@@ -227,12 +265,7 @@ export class InventoryFetcher {
         // 1. Check in-memory cache; if missing, load — but share the in-flight promise so
         //    concurrent callers don't each trigger a separate download/parse.
         if (!this.cache.has(packageName)) {
-            if (!this.loadingPromises.has(packageName)) {
-                const p = this.loadInventory(packageName, key.version, key.isStdlib);
-                this.loadingPromises.set(packageName, p);
-                p.finally(() => this.loadingPromises.delete(packageName));
-            }
-            await this.loadingPromises.get(packageName);
+            await this.ensureInventoryLoaded(packageName, key.version, key.isStdlib);
         }
 
         const packageInventory = this.cache.get(packageName);
@@ -331,7 +364,7 @@ export class InventoryFetcher {
                 // When loading from disk cache we return early and never call resolveBaseUrl,
                 // so packageBaseUrls would stay empty without this.
                 if (!this.packageBaseUrls.has(packageName)) {
-                    const knownUrl = KNOWN_DOCS_URLS[packageName.toLowerCase()];
+                    const knownUrl = this.useKnownDocsUrls ? KNOWN_DOCS_URLS[packageName.toLowerCase()] : undefined;
                     if (knownUrl) {
                         this.packageBaseUrls.set(packageName, knownUrl);
                     } else if (isStdlib || packageName === 'builtins' || packageName === 'python') {
@@ -344,6 +377,12 @@ export class InventoryFetcher {
             } catch (e) {
                 Logger.log(`Failed to parse cached inventory for ${packageName}`);
             }
+        }
+
+        const negKey = `inv-fail:${packageName}`;
+        if (this.diskCache.get(negKey)) {
+            this.cache.set(packageName, new Map());
+            return;
         }
 
         // 2. Fetch from Network
@@ -366,7 +405,10 @@ export class InventoryFetcher {
             const obj = Object.fromEntries(inventory);
             this.diskCache.set(cacheKey, JSON.stringify(obj));
         } catch (e) {
-            Logger.log(`Failed to load inventory for ${packageName} from ${inventoryUrl}: ${e}`);
+            if (!this.failedInventoryLog.has(packageName)) {
+                this.failedInventoryLog.add(packageName);
+                Logger.log(`Failed to load inventory for ${packageName} from ${inventoryUrl}: ${e}`);
+            }
 
             // For stdlib, retry with the canonical /3/ URL in case the versioned URL
             // is unavailable (e.g. pre-release Python where docs aren't published yet).
@@ -388,8 +430,8 @@ export class InventoryFetcher {
                 }
             }
 
-            // Mark as empty to avoid repeated failures
             this.cache.set(packageName, new Map());
+            this.diskCache.set(negKey, '1');
         }
     }
 
@@ -504,7 +546,11 @@ export class InventoryFetcher {
                 if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
                     // Normalize redirect URL to HTTPS as well
                     const newUrl = this.normalizeToHttps(new URL(res.headers.location, httpsUrl).toString());
-                    Logger.log(`Following redirect for ${httpsUrl} to ${newUrl}`);
+                    const redirectKey = `${httpsUrl}→${newUrl}`;
+                    if (!this.redirectLogSeen.has(redirectKey)) {
+                        this.redirectLogSeen.add(redirectKey);
+                        Logger.log(`Following redirect for ${httpsUrl} to ${newUrl}`);
+                    }
                     this.fetchBuffer(newUrl, redirectCount + 1).then(resolve).catch(reject);
                     return;
                 }

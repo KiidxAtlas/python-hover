@@ -275,9 +275,9 @@ def _ast_signature(node) -> str | None:
             params.append("*")
 
         for i, arg in enumerate(args.kwonlyargs):
-                default_value = args.kw_defaults[i] if i < len(args.kw_defaults) else None
-                if default_value is not None:
-                    params.append(f"{arg.arg}={ast.unparse(default_value)}")
+            default_value = args.kw_defaults[i] if i < len(args.kw_defaults) else None
+            if default_value is not None:
+                params.append(f"{arg.arg}={ast.unparse(default_value)}")
             else:
                 params.append(arg.arg)
 

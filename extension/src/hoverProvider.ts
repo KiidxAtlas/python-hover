@@ -37,6 +37,8 @@ export class HoverProvider implements vscode.HoverProvider {
     private docBuilder: HoverDocBuilder;
     private aliasResolver: AliasResolver;
     private ready: Promise<void>;
+    /** Segments hover caches when the configured interpreter path changes. */
+    private readonly envCacheId: string;
 
     private diagnosticCollection: vscode.DiagnosticCollection | undefined;
     private deprecatedRanges = new Map<string, vscode.Diagnostic[]>();
@@ -72,6 +74,7 @@ export class HoverProvider implements vscode.HoverProvider {
 
     constructor(private lspClient: LspClient, private config: Config, diskCache: DiskCache) {
         this.renderer = new HoverRenderer(config);
+        this.envCacheId = config.interpreterCacheFingerprint;
         this.docResolver = new DocResolver(diskCache, {
             cacheTTL: {
                 inventoryDays: config.inventoryCacheDays,
@@ -81,8 +84,13 @@ export class HoverProvider implements vscode.HoverProvider {
             customLibraries: config.customLibraries,
             onlineDiscovery: config.onlineDiscovery,
             buildFullCorpus: config.buildFullCorpus,
+            enableDocScraping: config.docScrapingEnabled,
+            useKnownDocsUrls: config.useKnownDocsUrls,
         });
-        this.pythonHelper = new PythonHelper(config.pythonPath, diskCache);
+        this.pythonHelper = new PythonHelper(config.pythonPath, diskCache, {
+            enablePersistentRuntime: config.runtimeHelperEnabled,
+            interpreterCacheId: config.interpreterCacheFingerprint,
+        });
         this.docBuilder = new HoverDocBuilder();
         this.aliasResolver = new AliasResolver();
         this.ready = this.initializePythonVersion();
@@ -160,6 +168,15 @@ export class HoverProvider implements vscode.HoverProvider {
         this.deprecatedRanges.clear();
     }
 
+    /** Cache key stable for any cursor offset inside the same identifier token. */
+    private stableHoverPositionKey(document: vscode.TextDocument, position: vscode.Position): string {
+        const word = document.getWordRangeAtPosition(position, /[A-Za-z_][A-Za-z0-9_]*/);
+        if (word) {
+            return `${document.uri.toString()}:${document.version}:${word.start.line}:${word.start.character}:${word.end.character}`;
+        }
+        return `${document.uri.toString()}:${document.version}:${position.line}:${position.character}`;
+    }
+
     async provideHover(
         document: vscode.TextDocument,
         position: vscode.Position,
@@ -181,7 +198,7 @@ export class HoverProvider implements vscode.HoverProvider {
 
             // Fast path: if we've already resolved this position in this document version,
             // skip the entire LSP + AST + refinement pipeline and go straight to hoverCache.
-            const posKey = `${document.uri.toString()}:${document.version}:${position.line}:${position.character}`;
+            const posKey = this.stableHoverPositionKey(document, position);
             const knownKey = this.positionToKey.get(posKey);
             if (knownKey) {
                 const cached = this.hoverCache.get(knownKey);
@@ -197,7 +214,7 @@ export class HoverProvider implements vscode.HoverProvider {
             const simpleWordRange = document.getWordRangeAtPosition(position, /[a-zA-Z_][a-zA-Z0-9_]*/);
             const simpleWord = simpleWordRange ? document.getText(simpleWordRange) : '';
             if (PYTHON_STRUCTURAL_KEYWORDS.has(simpleWord)) {
-                const kwKey = `keyword:${simpleWord}`;
+                const kwKey = `${this.envCacheId}:keyword:${simpleWord}`;
                 this.positionToKey.set(posKey, kwKey);
                 const kwCached = this.hoverCache.get(kwKey);
                 if (kwCached) return kwCached;
@@ -223,7 +240,7 @@ export class HoverProvider implements vscode.HoverProvider {
                 const moduleName = NameRefinement.normalizeImportModule(lspSymbol.name);
                 if (moduleName) {
                     const isStdlib = lspSymbol.path ? isStdlibPath(lspSymbol.path) : false;
-                    const moduleKey = `__module__:${moduleName}`;
+                    const moduleKey = `${this.envCacheId}:__module__:${moduleName}`;
                     this.positionToKey.set(posKey, moduleKey);
 
                     const cached = this.hoverCache.get(moduleKey);
@@ -236,7 +253,9 @@ export class HoverProvider implements vscode.HoverProvider {
                         // Fetch module overview + installed version concurrently
                         const [moduleDoc, installedVersion] = await Promise.all([
                             this.docResolver.resolveModuleOverview(moduleName, isStdlib),
-                            this.pythonHelper.getInstalledVersion(moduleName).catch(() => null),
+                            this.config.runtimeHelperEnabled
+                                ? this.pythonHelper.getInstalledVersion(moduleName).catch(() => null)
+                                : Promise.resolve(null),
                         ]);
                         if (installedVersion) {
                             moduleDoc.installedVersion = installedVersion;
@@ -253,8 +272,11 @@ export class HoverProvider implements vscode.HoverProvider {
                 }
             }
 
-            // Run AST identification only when LSP didn't give a fully-qualified path
-            const needsAst = !lspSymbol || !lspSymbol.path || !lspSymbol.name.includes('.');
+            // AST identify: only with persistent runtime; LSP-first unless explicit fallback.
+            const canAst = this.config.runtimeHelperEnabled && this.config.astFallbackEnabled;
+            const needsAst =
+                (this.config.runtimeHelperEnabled && !lspSymbol)
+                || (canAst && !!lspSymbol && (!lspSymbol.path || !lspSymbol.name.includes('.')));
             let identifiedType: string | null = null;
             if (needsAst) {
                 if (token.isCancellationRequested) return null;
@@ -263,12 +285,16 @@ export class HoverProvider implements vscode.HoverProvider {
                 // document.version increments on every edit, so cached results stay valid
                 // until the document changes. This prevents repeated IPC calls for the
                 // same position while the user hovers or VS Code re-evaluates the hover.
-                const identifyCacheKey = `${document.uri.toString()}:${document.version}:${position.line + 1}:${position.character}`;
+                const wordForId = document.getWordRangeAtPosition(position, /[A-Za-z_][A-Za-z0-9_]*/);
+                const identifyCacheKey = wordForId
+                    ? `${document.uri.toString()}:${document.version}:${wordForId.start.line + 1}:${wordForId.start.character}:${wordForId.end.character}`
+                    : `${document.uri.toString()}:${document.version}:${position.line + 1}:${position.character}`;
                 if (this.identifyCache.has(identifyCacheKey)) {
                     identifiedType = this.identifyCache.get(identifyCacheKey) ?? null;
                 } else {
-                    // Deduplicate concurrent in-flight calls for the same position.
-                    const identifyKey = `${document.uri.toString()}:${position.line + 1}:${position.character}`;
+                    const identifyKey = wordForId
+                        ? `${document.uri.toString()}:${wordForId.start.line + 1}:${wordForId.start.character}:${wordForId.end.character}`
+                        : `${document.uri.toString()}:${position.line + 1}:${position.character}`;
                     let identifyPromise = this.inflightIdentify.get(identifyKey);
                     if (!identifyPromise) {
                         identifyPromise = this.pythonHelper.identify(
@@ -343,8 +369,8 @@ export class HoverProvider implements vscode.HoverProvider {
             // only local symbols need to be scoped per-file.
             const isLibrary = !lspSymbol.path || isLibraryPath(lspSymbol.path);
             const cacheKey = isLibrary
-                ? lspSymbol.name
-                : `${document.uri.fsPath}::${lspSymbol.name}`;
+                ? `${this.envCacheId}::${lspSymbol.name}`
+                : `${this.envCacheId}::${document.uri.fsPath}::${lspSymbol.name}`;
 
             // Record position → cacheKey so future calls skip the pipeline entirely.
             this.positionToKey.set(posKey, cacheKey);
@@ -412,12 +438,19 @@ export class HoverProvider implements vscode.HoverProvider {
             );
 
             // ── Local path: show user docstring + Pylance signature ───────────────
-            if (isLocal) {
+            // Guardrail: never show an empty "local" card for builtins like `bool`.
+            // If we can't produce any meaningful local content, fall through to the
+            // library doc resolver which can hit stdlib corpus/static docs.
+            const builtinLeaf = (lspSymbol.name ?? '').replace(/^builtins\./, '').split('.').pop() ?? '';
+            const looksLikeBuiltinType = new Set(['str', 'list', 'dict', 'set', 'tuple', 'int', 'float', 'bytes', 'bytearray', 'frozenset', 'complex', 'bool', 'object']).has(builtinLeaf);
+            const shouldPreferLibrary = (lspSymbol.module === 'builtins' || looksLikeBuiltinType) && !isDotted;
+
+            if (isLocal && !shouldPreferLibrary) {
                 let content = lspSymbol.docstring || '';
                 let signature = lspSymbol.signature;
 
                 // AST extraction for user-defined functions/classes without LSP docstring
-                if (!content && lspSymbol.name && document) {
+                if (this.config.runtimeHelperEnabled && !content && lspSymbol.name && document) {
                     const localName = lspSymbol.name.split('.').pop() ?? lspSymbol.name;
                     const astInfo = await this.pythonHelper
                         .getLocalDocstring(document.getText(), localName)
@@ -456,6 +489,10 @@ export class HoverProvider implements vscode.HoverProvider {
                     devdocsUrl: dundarDevdocsUrl,
                 };
 
+                // If we still have nothing meaningful, let the library resolver try.
+                if (!localDoc.summary && !localDoc.signature) {
+                    // fall through
+                } else {
                 this.lastDoc = localDoc;
                 const hover = this.renderer.render(localDoc);
                 if (hoverRange) hover.range = hoverRange;
@@ -467,6 +504,7 @@ export class HoverProvider implements vscode.HoverProvider {
                     this.hoverCache.set(cacheKey, hover);
                 }
                 return hover;
+                }
             }
 
             // ── Library path: resolve docs (no Python IPC) ────────────────────────
@@ -499,11 +537,12 @@ export class HoverProvider implements vscode.HoverProvider {
                 && symbolInfo.module !== 'builtins';
             const topModule = symbolInfo.module?.split('.')[0] ?? '';
 
-            const installedVersionPromise = (isThirdParty && topModule)
-                ? (this.installedVersionCache.has(topModule)
-                    ? Promise.resolve(this.installedVersionCache.get(topModule) ?? null)
+            const ivKey = `${this.envCacheId}:${topModule}`;
+            const installedVersionPromise = (this.config.runtimeHelperEnabled && isThirdParty && topModule)
+                ? (this.installedVersionCache.has(ivKey)
+                    ? Promise.resolve(this.installedVersionCache.get(ivKey) ?? null)
                     : this.pythonHelper.getInstalledVersion(topModule).catch(() => null).then(v => {
-                        this.installedVersionCache.set(topModule, v);
+                        this.installedVersionCache.set(ivKey, v);
                         return v;
                     }))
                 : Promise.resolve(null);
@@ -563,7 +602,9 @@ export class HoverProvider implements vscode.HoverProvider {
     private async resolveKeyword(word: string, cacheKey: string, hoverRange?: vscode.Range): Promise<vscode.Hover | null> {
         // Run runtime lookup and corpus resolve concurrently.
         const [runtimeInfo, resolvedDoc] = await Promise.all([
-            this.pythonHelper.resolveRuntime(word).catch(() => null),
+            this.config.runtimeHelperEnabled
+                ? this.pythonHelper.resolveRuntime(word).catch(() => null)
+                : Promise.resolve(null),
             this.docResolver.resolve(DocKeyBuilder.fromSymbol({
                 name: word, module: 'builtins', path: 'builtins',
                 kind: 'keyword', isStdlib: true,

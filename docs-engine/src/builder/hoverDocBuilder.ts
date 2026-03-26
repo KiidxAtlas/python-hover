@@ -109,6 +109,19 @@ export class HoverDocBuilder {
             }
         }
 
+        // Language-server / in-editor docstrings before fetched summaries (augment-LS mode).
+        if (symbolInfo.kind !== 'keyword') {
+            const raw = symbolInfo.docstring?.trim() ?? '';
+            if (raw.length >= 48 && !this.isUnhelpfulRuntimeFallback(symbolInfo.docstring!)) {
+                if (parsedSummary && !this.shouldPreferRawDocstring(parsedSummary, symbolInfo.docstring)) {
+                    return parsedSummary;
+                }
+                if (docstringSummary && (this.isGoodSummary(docstringSummary) || !summaryFromDocs)) {
+                    return docstringSummary;
+                }
+            }
+        }
+
         if (summaryFromDocs && this.isGoodSummary(summaryFromDocs)) {
             return summaryFromDocs;
         }

@@ -58,15 +58,21 @@ export function classifyHoverSymbol(
     const hasLibPath = !!(symbol.path && isLibraryPath(symbol.path));
     const hasUserPath = !!(symbol.path && !hasLibPath);
 
-    const nameRoot = symbol.name.split('.')[0];
-    const isDotted = symbol.name.includes('.');
+    const rawName = symbol.name || '';
+    const cleanedName = rawName.replace(/^builtins\./, '');
+    const nameRoot = cleanedName.split('.')[0];
+    const isDotted = cleanedName.includes('.');
     const isBuiltinMethod = isDotted && BUILTIN_TYPES.has(nameRoot);
+    const isBuiltinType = !isDotted && BUILTIN_TYPES.has(cleanedName);
+    const isExplicitBuiltins = (symbol.module === 'builtins' || nameRoot === 'builtins') && !hasUserPath;
     const isImportedRoot = isDotted && isDirectlyImported(documentText, nameRoot);
     const isCapClassMethod = isDotted && /^[A-Z]/.test(nameRoot) && !!symbol.signature;
 
     const isLibrary = hasLibPath
         || wasAliasResolved
         || isBuiltinMethod
+        || isBuiltinType
+        || isExplicitBuiltins
         || isImportedRoot
         || isCapClassMethod;
 

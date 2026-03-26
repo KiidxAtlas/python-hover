@@ -70,7 +70,8 @@ export class HoverRenderer {
         const icon = this.getIconForKind(doc.kind);
         const rawTitle = doc.title.replace(/^builtins\./, '');
 
-        md.appendMarkdown(`## $(${icon}) \`${rawTitle}\`\n\n`);
+        // ### keeps tooltips readable; ## is often oversized inside hovers.
+        md.appendMarkdown(`### $(${icon}) \`${rawTitle}\`\n\n`);
 
         // ── Badge row ──────────
         const chips: string[] = [];
@@ -78,13 +79,15 @@ export class HoverRenderer {
         const kindLabel = this.formatKindLabel(doc.kind);
         chips.push(`\`${kindLabel}\``);
 
-        // Source chip
+        // Source chip — any non-local doc with a URL (corpus, sphinx, static, …)
         if (doc.source === ResolutionSource.Local) {
             chips.push(`$(home) local`);
-        } else if (doc.source === ResolutionSource.Sphinx && doc.url) {
+        } else if (doc.url) {
             try {
                 const host = new URL(doc.url).hostname.replace(/^www\./, '');
-                if (host && !host.includes('docs.python.org')) {
+                if (host.includes('docs.python.org')) {
+                    chips.push(`$(book) Python docs`);
+                } else if (host) {
                     chips.push(`$(book) ${host}`);
                 }
             } catch { /* skip */ }
@@ -110,47 +113,49 @@ export class HoverRenderer {
     // ─────────────────────────────────────────────────────────────────────────
 
     private renderToolbar(md: vscode.MarkdownString, doc: HoverDoc): void {
-        const actions: string[] = [];
+        const primary: string[] = [];
+        const secondary: string[] = [];
 
-        // Pin
-        actions.push(`[$(pin) Pin](command:python-hover.pinHover "Pin this hover")`);
+        primary.push(`[$(pin) Pin](command:python-hover.pinHover "Pin this hover")`);
 
         if (this.config.showDebugPinButton) {
-            actions.push(`[$(debug-alt-small) Debug](command:python-hover.debugPinHover "Pin this hover and open a debug view")`);
+            primary.push(`[$(debug-alt-small) Debug](command:python-hover.debugPinHover "Pin this hover and open a debug view")`);
         }
 
-        // Go to definition (local symbols)
         if (doc.source === ResolutionSource.Local) {
-            actions.push(`[$(go-to-file) Go to def](command:editor.action.revealDefinition "Jump to definition")`);
+            primary.push(`[$(go-to-file) Go to def](command:editor.action.revealDefinition "Jump to definition")`);
         }
 
-        // Official docs — always show when we have a URL
         if (doc.url) {
             const docsLink = this.buildLinkUrl(doc.url, this.config.docsBrowser);
-            actions.push(`[$(book) Docs](<${docsLink}> "Open official documentation")`);
+            secondary.push(`[$(book) Docs](<${docsLink}> "Open official documentation")`);
         }
 
-        // DevDocs — scoped search
         const devdocsUrl = doc.devdocsUrl ??
             (doc.source !== ResolutionSource.Local ? this.buildFallbackDevDocsUrl(doc) : null);
         if (doc.source !== ResolutionSource.Local && devdocsUrl) {
             const ddLink = this.buildLinkUrl(devdocsUrl, this.config.devdocsBrowser);
-            actions.push(`[$(search-view-icon) DevDocs](<${ddLink}> "Search DevDocs")`);
+            secondary.push(`[$(search-view-icon) DevDocs](<${ddLink}> "Search DevDocs")`);
         }
 
-        // Browse module — inline in toolbar so the header is cleaner
         if (doc.module && doc.module !== 'builtins') {
             const args = this.encodeCommandArgs(doc.module);
             const safeModule = doc.module.replace(/[`[\]()]/g, '');
-            actions.push(
+            secondary.push(
                 `[$(symbol-namespace) Browse \`${safeModule}\`]` +
                 `(<command:python-hover.browseModule?${args}> "Browse all symbols in ${safeModule}")`
             );
         }
 
-        if (actions.length > 0) {
-            md.appendMarkdown(actions.join('  ·  ') + '\n\n---\n\n');
+        if (primary.length === 0 && secondary.length === 0) {
+            return;
         }
+
+        let block = primary.join('  ·  ');
+        if (secondary.length > 0) {
+            block += (primary.length > 0 ? '  \n' : '') + secondary.join('  ·  ');
+        }
+        md.appendMarkdown(block + '\n\n---\n\n');
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -161,25 +166,33 @@ export class HoverRenderer {
         if (doc.overloads && doc.overloads.length > 1) {
             const maxShow = 3;
             doc.overloads.slice(0, maxShow).forEach(o =>
-                md.appendCodeblock(this.cleanSignature(o), 'python')
+                md.appendCodeblock(this.normalizeDisplaySignature(o), 'python')
             );
             if (doc.overloads.length > maxShow) {
                 const extra = doc.overloads.length - maxShow;
                 md.appendMarkdown(`*+${extra} more overload${extra > 1 ? 's' : ''} — see docs*\n\n`);
             }
         } else {
-            let sig = this.cleanSignature(doc.signature!);
+            let sig = this.normalizeDisplaySignature(doc.signature!);
             if (sig.startsWith('(')) {
                 const title = doc.title.replace(/^builtins\./, '');
                 sig = `${title}${sig}`;
             }
-            // Truncate extremely long signatures (e.g. FastAPI with 30+ params)
             const MAX_SIG_LEN = 400;
             if (sig.length > MAX_SIG_LEN) {
                 sig = this.truncateSignature(sig, MAX_SIG_LEN);
             }
             md.appendCodeblock(sig, 'python');
         }
+    }
+
+    /**
+     * Strip Pylance-style `(kind) ` prefixes and normalize whitespace so we never
+     * render `str.upper(method) str.upper() -> str` when the title is already the qualname.
+     */
+    private normalizeDisplaySignature(raw: string): string {
+        const withoutKind = raw.replace(/^\([a-z][a-z0-9_]*\)\s+/i, '').trim();
+        return this.cleanSignature(withoutKind);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -220,11 +233,19 @@ export class HoverRenderer {
         content = this.balanceCodeFences(content);
 
         const maxLen = this.config.maxContentLength;
-        if (content.length > maxLen) {
+        const wasTruncated = content.length > maxLen;
+        if (wasTruncated) {
             content = this.smartTruncate(content, maxLen);
         }
 
         md.appendMarkdown(`${content}\n\n`);
+
+        if (wasTruncated && doc.url) {
+            const moreUrl = this.buildLinkUrl(doc.url, this.config.docsBrowser);
+            md.appendMarkdown(
+                `[$(book) Continue reading in documentation…](<${moreUrl}> "Open full documentation")\n\n`,
+            );
+        }
     }
 
     private renderVersionCompatibility(md: vscode.MarkdownString, content: string): void {
