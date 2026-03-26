@@ -152,9 +152,13 @@ export class DocResolver {
             url = `https://docs.python.org/${version}/library/${packageName}.html`;
         }
 
+        // Use cached scraped content if available; otherwise fire background scrape
         let content: string | undefined;
-        if (this.config?.onlineDiscovery !== false && url) {
-            content = await this.scraper.fetchContent(url).catch(() => null) ?? undefined;
+        if (url) {
+            content = this.scraper.getCachedContent(url) ?? undefined;
+            if (!content && this.config?.onlineDiscovery !== false) {
+                this.prefetchInventoryEnhancements(url);
+            }
             summary = summary || this.extractSummaryFromContent(content);
         }
 
