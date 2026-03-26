@@ -68,7 +68,13 @@
         "commands": [
             {
                 "command": "python-hover.showStatusNotification",
-                "title": "Show PyHover Status Notification"
+                "title": "PyHover: Show Actions",
+                "category": "Python Hover"
+            },
+            {
+                "command": "python-hover.openStudio",
+                "title": "Open PyHover Studio",
+                "category": "Python Hover"
             },
             {
                 "command": "python-hover.toggleOnlineDiscovery",
@@ -77,7 +83,12 @@
             },
             {
                 "command": "python-hover.clearCache",
-                "title": "Clear Documentation Cache",
+                "title": "Clear Documentation Cache (Keep Python Corpus)",
+                "category": "Python Hover"
+            },
+            {
+                "command": "python-hover.buildPythonCorpus",
+                "title": "Build Python Stdlib Corpus",
                 "category": "Python Hover"
             },
             {
@@ -104,13 +115,69 @@
                 "command": "python-hover.openDocsSide",
                 "title": "Open Docs in Side Panel",
                 "category": "Python Hover"
+            },
+            {
+                "command": "python-hover.showLogs",
+                "title": "Show PyHover Logs",
+                "category": "Python Hover"
+            },
+            {
+                "command": "python-hover.showHistory",
+                "title": "Show Hover History",
+                "category": "Python Hover"
+            },
+            {
+                "command": "python-hover.openCacheFolder",
+                "title": "Open Cache Folder",
+                "category": "Python Hover"
             }
         ],
+        "menus": {
+            "editor/context": [
+                {
+                    "command": "python-hover.searchDocs",
+                    "when": "editorLangId == python",
+                    "group": "navigation@10"
+                },
+                {
+                    "command": "python-hover.browseModule",
+                    "when": "editorLangId == python",
+                    "group": "navigation@11"
+                },
+                {
+                    "command": "python-hover.pinHover",
+                    "when": "editorLangId == python",
+                    "group": "navigation@12"
+                },
+                {
+                    "command": "python-hover.debugPinHover",
+                    "when": "editorLangId == python",
+                    "group": "navigation@13"
+                },
+                {
+                    "command": "python-hover.openStudio",
+                    "when": "editorLangId == python",
+                    "group": "navigation@14"
+                }
+            ]
+        },
         "keybindings": [
             {
                 "command": "python-hover.searchDocs",
                 "key": "ctrl+k ctrl+d",
                 "mac": "cmd+k cmd+d",
+                "when": "editorLangId == python"
+            },
+            {
+                "command": "python-hover.pinHover",
+                "key": "ctrl+k ctrl+p",
+                "mac": "cmd+k cmd+p",
+                "when": "editorLangId == python"
+            },
+            {
+                "command": "python-hover.showHistory",
+                "key": "ctrl+k ctrl+h",
+                "mac": "cmd+k cmd+h",
                 "when": "editorLangId == python"
             }
         ],
@@ -124,23 +191,23 @@
                 },
                 "python-hover.runtimeHelper": {
                     "type": "boolean",
-                    "default": false,
-                    "description": "Run a persistent Python helper for runtime introspection (imports, pydoc, AST identify, installed package versions). Off by default to avoid wrong-environment imports and process churn; enable for the previous richer behavior."
+                    "default": true,
+                    "markdownDescription": "Run the persistent Python helper for runtime introspection, keyword help, installed-version detection, and better symbol identity. Enabled by default because it substantially improves hover quality."
                 },
                 "python-hover.docScraping": {
                     "type": "boolean",
                     "default": false,
-                    "description": "Fetch and parse documentation HTML in the background for third-party packages. Off by default (inventory URLs + language-server text only); enable for scraped narrative content and see-also links."
+                    "markdownDescription": "Fetch and structure third-party documentation HTML in the background. Leave this off for a lighter experience, or enable it when you want richer narrative sections, examples, and see-also links in hovers and pinned panels."
                 },
                 "python-hover.astFallback": {
                     "type": "boolean",
-                    "default": false,
-                    "description": "When runtimeHelper is enabled, use AST-based hover identification when Pylance returns an incomplete symbol (e.g. missing module path). Off by default so the language server stays authoritative."
+                    "default": true,
+                    "markdownDescription": "When the language server returns an incomplete symbol target, use AST-based fallback identification. Enabled by default to improve local chains, literal receivers, and partially resolved names."
                 },
                 "python-hover.onlineDiscovery": {
                     "type": "boolean",
                     "default": true,
-                    "description": "Fetch documentation from the web. When disabled, only locally cached content is used."
+                    "markdownDescription": "Allow PyHover to fetch inventories and docs from the web. Disable this to keep the extension cache-only."
                 },
                 "python-hover.warmupImports": {
                     "type": "boolean",
@@ -155,7 +222,7 @@
                 "python-hover.buildFullCorpus": {
                     "type": "boolean",
                     "default": false,
-                    "description": "On first hover over any symbol from a package, scrape that package's full documentation in the background — builds your local corpus all at once instead of one symbol at a time. Requires onlineDiscovery."
+                    "markdownDescription": "On the first hover from a package, build that package’s local corpus in the background instead of caching one symbol at a time. Requires `python-hover.onlineDiscovery`."
                 },
                 "python-hover.docsVersion": {
                     "type": "string",
@@ -201,7 +268,7 @@
                         "Open in VS Code side panel",
                         "Open in system browser"
                     ],
-                    "description": "Where to open the Docs link in the hover toolbar."
+                    "markdownDescription": "Where to open official docs links from hovers, pins, and Studio."
                 },
                 "python-hover.devdocsBrowser": {
                     "type": "string",
@@ -211,7 +278,7 @@
                         "Open in VS Code side panel",
                         "Open in system browser"
                     ],
-                    "description": "Where to open the DevDocs link in the hover toolbar."
+                    "markdownDescription": "Where to open DevDocs searches from hovers and Studio."
                 },
                 "python-hover.customLibraries": {
                     "type": "array",
@@ -230,7 +297,7 @@
                 "python-hover.enableDebugLogging": {
                     "type": "boolean",
                     "default": false,
-                    "description": "Enable verbose debug logging (for troubleshooting)."
+                    "markdownDescription": "Enable verbose debug logging and surface richer troubleshooting details in the output channel and debug panels."
                 },
                 "python-hover.ui.showSignatures": {
                     "type": "boolean",
@@ -245,7 +312,7 @@
                 "python-hover.ui.showDebugPinButton": {
                     "type": "boolean",
                     "default": false,
-                    "description": "Show a Debug button in the hover toolbar (opens raw markdown payload alongside the pin panel)."
+                    "markdownDescription": "Show a Debug button in the hover toolbar so users can jump straight into the pinned debug view."
                 },
                 "python-hover.ui.maxContentLength": {
                     "type": "number",
@@ -253,6 +320,44 @@
                     "minimum": 200,
                     "maximum": 2000,
                     "description": "Maximum characters of hover content before truncation with a 'Read more…' link."
+                },
+                "python-hover.ui.compactMode": {
+                    "type": "boolean",
+                    "default": false,
+                    "markdownDescription": "Show only the signature and first sentence of the description. Overrides `showPracticalExamples`, `showReturnTypes`, and sets a short content length."
+                },
+                "python-hover.ui.showBadges": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show the badge row (deprecated, async, property, overloaded) in hover tooltips."
+                },
+                "python-hover.diagnostics.enabled": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show inline warnings for deprecated symbols (squiggles in the editor)."
+                },
+                "python-hover.hoverActivationDelay": {
+                    "type": "number",
+                    "default": 0,
+                    "minimum": 0,
+                    "maximum": 2000,
+                    "description": "Extra delay in ms before PyHover triggers resolution. Useful on slow machines or large projects to reduce unnecessary hover calls. 0 = no delay."
+                },
+                "python-hover.preloadPackages": {
+                    "type": "array",
+                    "default": [],
+                    "items": {
+                        "type": "string"
+                    },
+                    "markdownDescription": "Package names to pre-warm documentation inventories for on activation, regardless of what file is open (e.g. `[\"numpy\", \"pandas\"]`). Requires `onlineDiscovery`."
+                },
+                "python-hover.excludePatterns": {
+                    "type": "array",
+                    "default": [],
+                    "items": {
+                        "type": "string"
+                    },
+                    "markdownDescription": "Glob patterns for files where hover resolution is skipped entirely (e.g. `[\"**/migrations/**\", \"**/_generated/**\"]`)."
                 }
             }
         }

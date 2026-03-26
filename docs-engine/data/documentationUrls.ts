@@ -75,6 +75,7 @@ const EXPRESSIONS: Record<string, Info> = {
     'not in': { title: 'not in operator', url: 'reference/expressions.html', anchor: 'membership-test-operations' },
     'is': { title: 'is operator', url: 'reference/expressions.html', anchor: 'identity-comparisons' },
     'is not': { title: 'is not operator', url: 'reference/expressions.html', anchor: 'identity-comparisons' },
+    'f-string': { title: 'f-string', url: 'reference/lexical_analysis.html', anchor: 'formatted-string-literals' },
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -2,34 +2,28 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { PYHOVER_CACHE_DIR_NAME } from '../../../docs-engine/src/cache/diskCache';
-import { Logger } from '../logger';
-
-interface MenuItem extends vscode.QuickPickItem {
-    action: string;
-}
-
-const SEP: MenuItem = { label: '', kind: vscode.QuickPickItemKind.Separator, action: '' };
 
 export class StatusBarManager {
     private item: vscode.StatusBarItem;
+    private corpusItem: vscode.StatusBarItem;
     private context: vscode.ExtensionContext;
-
-    /** Callback that properly clears the DiskCache (memory + disk). Set from activate.ts. */
-    private clearCacheFn?: () => void;
 
     /** Cached cache-size string so render() never blocks on repeated dir-walks. */
     private cacheSizeLabel = '…';
     private cacheSizeExpiry = 0;
-
-    setClearCacheCallback(fn: () => void): void {
-        this.clearCacheFn = fn;
-    }
+    /** Whether an async walk is currently in flight (prevents parallel redundant walks). */
+    private cacheSizeWalking = false;
+    /** Cached extension version — read once from package.json. */
+    private cachedVersion: string | undefined;
 
     constructor(context: vscode.ExtensionContext) {
         this.context = context;
         this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
         this.item.command = 'python-hover.showStatusNotification';
+        this.corpusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 101);
+        this.corpusItem.command = 'python-hover.buildPythonCorpus';
         this.context.subscriptions.push(this.item);
+        this.context.subscriptions.push(this.corpusItem);
 
         this.registerCommands();
         this.render();
@@ -42,7 +36,10 @@ export class StatusBarManager {
     }
 
     /** Force a re-render (e.g. after cache wipe). */
-    public update() { this.render(); }
+    public update() {
+        this.cacheSizeExpiry = 0;
+        this.render();
+    }
 
     // ─────────────────────────────────────────────────────────────────────────
     // RENDER
@@ -54,21 +51,29 @@ export class StatusBarManager {
         const version = this.getVersion();
         const cacheSize = this.getCacheSizeInMB();
 
-        this.item.text = `${online ? '$(globe)' : '$(circle-slash)'} PyHover  $(database) ${cacheSize}`;
+        this.item.text = `${online ? '$(globe)' : '$(circle-slash)'} PyHover ${cacheSize}`;
         const mode = online ? '$(globe) Online' : '$(circle-slash) Offline';
         const tt = new vscode.MarkdownString(
             `**PyHover** v${version}\n\n` +
             `${mode}  ·  $(database) ${cacheSize}\n\n` +
-            `*Click for options*`
+            `Click for quick actions like search, browse, corpus tools, and Studio.`
         );
         tt.supportThemeIcons = true;
         this.item.tooltip = tt;
+        this.corpusItem.text = '$(book) Build Corpus';
+
+        const corpusTooltip = new vscode.MarkdownString(
+            'Build the Python stdlib corpus once for richer built-in and keyword hovers.\n\n' +
+            'Clear Cache keeps the Python corpus intact.'
+        );
+        this.corpusItem.tooltip = corpusTooltip;
 
         this.item.backgroundColor = online
             ? undefined
             : new vscode.ThemeColor('statusBarItem.warningBackground');
 
         this.item.show();
+        this.corpusItem.show();
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -78,151 +83,105 @@ export class StatusBarManager {
     private registerCommands() {
         this.context.subscriptions.push(
             vscode.commands.registerCommand('python-hover.showStatusNotification', async () => {
+                type StatusAction = vscode.QuickPickItem & { command?: string };
                 const cfg = vscode.workspace.getConfiguration('python-hover');
                 const online = cfg.get<boolean>('onlineDiscovery', true);
-                const debug = cfg.get<boolean>('enableDebugLogging', false);
-                const version = this.getVersion();
                 const cacheSize = this.getCacheSizeInMB();
 
-                const items: MenuItem[] = [
-                    // ── Mode ─────────────────────────────────────────────────
+                const items: StatusAction[] = [
+                    { label: 'Workspace', kind: vscode.QuickPickItemKind.Separator },
                     {
-                        label: online
-                            ? '$(globe) Online Mode  $(check)'
-                            : '$(circle-slash) Offline Mode',
-                        description: online
-                            ? 'Docs fetched from web  ·  click to go offline'
-                            : 'Using local cache only  ·  click to go online',
-                        action: 'toggle-online',
-                    },
-
-                    // ── Documentation ─────────────────────────────────────────
-                    { ...SEP, label: 'Documentation' },
-                    {
-                        label: '$(search) Search Docs…',
-                        description: 'Ctrl+K Ctrl+D',
-                        detail: 'Search indexed Python symbols',
-                        action: 'search',
+                        label: online ? '$(globe) Online discovery: on' : '$(circle-slash) Online discovery: off',
+                        description: `Cache ${cacheSize}`,
+                        command: 'python-hover.toggleOnlineDiscovery',
                     },
                     {
-                        label: '$(pin) Pin Last Hover',
-                        description: 'Open pinned documentation panel',
-                        action: 'pin',
-                    },
-
-                    // ── Cache ─────────────────────────────────────────────────
-                    { ...SEP, label: 'Cache' },
-                    {
-                        label: `$(database) Cache — ${cacheSize}`,
-                        description: 'Click to open cache folder',
-                        action: 'open-cache',
+                        label: '$(book) Build Python corpus',
+                        description: 'Fetch richer built-in and keyword docs',
+                        command: 'python-hover.buildPythonCorpus',
                     },
                     {
-                        label: '$(trash) Clear Cache',
-                        description: 'Delete all cached documentation',
-                        action: 'clear-cache',
+                        label: '$(trash) Clear documentation cache',
+                        description: 'Keeps the Python corpus intact',
+                        command: 'python-hover.clearCache',
                     },
-
-                    // ── Settings ──────────────────────────────────────────────
-                    { ...SEP, label: 'Settings' },
+                    { label: 'Explore', kind: vscode.QuickPickItemKind.Separator },
                     {
-                        label: '$(output) View Logs',
-                        description: 'Open PyHover output channel',
-                        action: 'logs',
+                        label: '$(search) Search Python docs',
+                        description: 'Jump straight to indexed symbol search',
+                        command: 'python-hover.searchDocs',
                     },
                     {
-                        label: debug
-                            ? '$(bug) Debug Logging  $(check)'
-                            : '$(bug) Debug Logging',
-                        description: debug
-                            ? 'Verbose logging on — click to disable'
-                            : 'Click to enable verbose logging',
-                        action: 'toggle-debug',
+                        label: '$(symbol-namespace) Browse indexed modules',
+                        description: 'Open the module picker from cached indexes',
+                        command: 'python-hover.browseModule',
                     },
                     {
-                        label: '$(gear) Open Settings',
-                        description: 'Configure PyHover options',
-                        action: 'settings',
+                        label: '$(layout) Open PyHover Studio',
+                        description: 'Open the full workspace panel only when you need it',
+                        command: 'python-hover.openStudio',
                     },
-
-                    // ── Links ─────────────────────────────────────────────────
-                    { ...SEP, label: 'Links' },
+                    { label: 'History', kind: vscode.QuickPickItemKind.Separator },
                     {
-                        label: '$(github) GitHub',
-                        description: 'Report bugs · request features · contribute',
-                        action: 'github',
+                        label: '$(history) Hover history',
+                        description: 'Recent symbols you hovered',
+                        command: 'python-hover.showHistory',
+                    },
+                    { label: 'Cache', kind: vscode.QuickPickItemKind.Separator },
+                    {
+                        label: '$(folder-opened) View cache folder',
+                        description: `${cacheSize} — open in file explorer`,
+                        command: 'python-hover.openCacheFolder',
+                    },
+                    { label: 'Support', kind: vscode.QuickPickItemKind.Separator },
+                    {
+                        label: '$(settings-gear) Open settings',
+                        description: 'Configure PyHover behavior',
+                        command: 'workbench.action.openSettings',
                     },
                     {
-                        label: '$(heart) Sponsor',
-                        description: 'Buy me a coffee ☕',
-                        action: 'sponsor',
+                        label: '$(output) Show logs',
+                        description: 'Inspect resolver and cache output',
+                        command: 'python-hover.showLogs',
+                    },
+                    {
+                        label: '$(heart) Sponsor PyHover',
+                        description: 'Support development on GitHub Sponsors',
+                        command: 'python-hover.openSponsor',
+                    },
+                    {
+                        label: '$(coffee) Buy Me a Coffee',
+                        description: 'One-time donation via buymeacoffee.com',
+                        command: 'python-hover.openDonate',
                     },
                 ];
 
-                const qp = vscode.window.createQuickPick<MenuItem>();
-                qp.title = `🐍 PyHover v${version}`;
-                qp.placeholder = 'Select an action…';
-                qp.items = items;
-                qp.matchOnDescription = true;
-
-                qp.onDidAccept(async () => {
-                    const sel = qp.selectedItems[0];
-                    qp.hide();
-                    if (!sel) return;
-
-                    switch (sel.action) {
-                        case 'toggle-online': {
-                            const next = !online;
-                            await cfg.update('onlineDiscovery', next, vscode.ConfigurationTarget.Global);
-                            vscode.window.showInformationMessage(
-                                `PyHover: online discovery ${next ? 'enabled' : 'disabled'}`
-                            );
-                            break;
-                        }
-                        case 'search':
-                            vscode.commands.executeCommand('python-hover.searchDocs');
-                            break;
-                        case 'pin':
-                            vscode.commands.executeCommand('python-hover.pinHover');
-                            break;
-                        case 'open-cache':
-                            this.openCacheFolder();
-                            break;
-                        case 'clear-cache':
-                            await this.clearCache();
-                            break;
-                        case 'logs':
-                            Logger.show();
-                            break;
-                        case 'toggle-debug': {
-                            const next = !debug;
-                            await cfg.update('enableDebugLogging', next, vscode.ConfigurationTarget.Global);
-                            vscode.window.showInformationMessage(
-                                `PyHover: debug logging ${next ? 'enabled' : 'disabled'}`
-                            );
-                            break;
-                        }
-                        case 'settings':
-                            vscode.commands.executeCommand(
-                                'workbench.action.openSettings',
-                                'python-hover'
-                            );
-                            break;
-                        case 'github':
-                            vscode.env.openExternal(
-                                vscode.Uri.parse('https://github.com/KiidxAtlas/python-hover')
-                            );
-                            break;
-                        case 'sponsor':
-                            vscode.env.openExternal(
-                                vscode.Uri.parse('https://buymeacoffee.com/kiidxatlas')
-                            );
-                            break;
-                    }
+                const picked = await vscode.window.showQuickPick(items, {
+                    title: 'PyHover Actions',
+                    placeHolder: 'Choose a PyHover action',
+                    matchOnDescription: true,
                 });
 
-                qp.onDidHide(() => qp.dispose());
-                qp.show();
+                if (!picked?.command) {
+                    return;
+                }
+
+                if (picked.command === 'workbench.action.openSettings') {
+                    await vscode.commands.executeCommand(picked.command, 'python-hover');
+                    return;
+                }
+
+                if (picked.command === 'python-hover.openSponsor') {
+                    await vscode.env.openExternal(vscode.Uri.parse('https://github.com/sponsors/KiidxAtlas'));
+                    return;
+                }
+
+                if (picked.command === 'python-hover.openDonate') {
+                    await vscode.env.openExternal(vscode.Uri.parse('https://buymeacoffee.com/kiidxatlas'));
+                    return;
+                }
+
+                await vscode.commands.executeCommand(picked.command);
             })
         );
 
@@ -243,66 +202,70 @@ export class StatusBarManager {
     // HELPERS
     // ─────────────────────────────────────────────────────────────────────────
 
-    private async clearCache() {
-        try {
-            if (this.clearCacheFn) {
-                // Preferred path: delegates to DiskCache which also clears in-memory caches.
-                this.clearCacheFn();
-            } else {
-        // Fallback: direct file removal (in-memory caches may still hold stale data).
-                const p = this.getCachePath();
-                if (fs.existsSync(p)) {
-                    fs.rmSync(p, { recursive: true, force: true });
-                }
-            }
-            this.cacheSizeExpiry = 0; // invalidate cached size
-            vscode.window.showInformationMessage('$(check) PyHover cache cleared');
-            this.render();
-        } catch (e) {
-            vscode.window.showErrorMessage(`PyHover: failed to clear cache — ${e}`);
-        }
-    }
-
-    private openCacheFolder() {
-        const p = this.getCachePath();
-        if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true });
-        vscode.env.openExternal(vscode.Uri.file(p));
-    }
-
     private getVersion(): string {
+        if (this.cachedVersion !== undefined) return this.cachedVersion;
         try {
             const pkg = JSON.parse(
                 fs.readFileSync(path.join(this.context.extensionPath, 'package.json'), 'utf8')
             );
-            return pkg.version as string;
-        } catch { return '?'; }
+            this.cachedVersion = pkg.version as string;
+        } catch {
+            this.cachedVersion = '?';
+        }
+        return this.cachedVersion!;
     }
 
+    /**
+     * Returns the cached cache-size label immediately (never blocks).
+     * Kicks off an async walk in the background if the TTL has expired.
+     * render() is called again once the walk completes so the UI updates.
+     */
     private getCacheSizeInMB(): string {
         const now = Date.now();
         if (now < this.cacheSizeExpiry) return this.cacheSizeLabel;
+        if (this.cacheSizeWalking) return this.cacheSizeLabel;
 
+        this.cacheSizeWalking = true;
         const p = this.getCachePath();
-        if (!fs.existsSync(p)) {
-            this.cacheSizeLabel = '0 MB';
-        } else {
-            let total = 0;
-            const walk = (dir: string) => {
-                try {
-                    for (const f of fs.readdirSync(dir)) {
-                        const fp = path.join(dir, f);
-                        const st = fs.statSync(fp);
-                        if (st.isDirectory()) walk(fp);
-                        else total += st.size;
-                    }
-                } catch { /* ignore */ }
-            };
-            walk(p);
-            this.cacheSizeLabel = `${(total / 1_048_576).toFixed(1)} MB`;
-        }
+        this.computeCacheSizeAsync(p).then(label => {
+            this.cacheSizeLabel = label;
+            this.cacheSizeExpiry = Date.now() + 10_000;
+            this.cacheSizeWalking = false;
+            this.render();
+        }).catch(() => {
+            this.cacheSizeWalking = false;
+        });
 
-        this.cacheSizeExpiry = now + 10_000; // recompute at most every 10 s
         return this.cacheSizeLabel;
+    }
+
+    private async computeCacheSizeAsync(dir: string): Promise<string> {
+        try {
+            await fs.promises.access(dir);
+        } catch {
+            return '0 MB';
+        }
+        const total = await this.walkDirAsync(dir);
+        return `${(total / 1_048_576).toFixed(1)} MB`;
+    }
+
+    private async walkDirAsync(dir: string): Promise<number> {
+        let total = 0;
+        try {
+            const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+            await Promise.all(entries.map(async entry => {
+                const fp = path.join(dir, entry.name);
+                if (entry.isDirectory()) {
+                    total += await this.walkDirAsync(fp);
+                } else {
+                    try {
+                        const st = await fs.promises.stat(fp);
+                        total += st.size;
+                    } catch { /* ignore */ }
+                }
+            }));
+        } catch { /* ignore */ }
+        return total;
     }
 
     private getCachePath(): string {

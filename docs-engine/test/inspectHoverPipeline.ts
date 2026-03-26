@@ -269,6 +269,50 @@ function main(): void {
                 docstring: 'Return a new path with the file suffix changed.',
             },
         },
+        {
+            label: 'Keyword docs preserve official links and see-also references',
+            symbolInfo: {
+                name: 'for',
+                qualname: 'for',
+                module: 'builtins',
+                kind: 'keyword',
+                isStdlib: true,
+                docstring: [
+                    'The "for" statement',
+                    '',
+                    'See also: [range](https://docs.python.org/3/library/stdtypes.html#range)',
+                ].join('\n'),
+            },
+            docs: {
+                title: 'for',
+                source: ResolutionSource.Corpus,
+                confidence: 1,
+                content: [
+                    'The "for" statement',
+                    '',
+                    'See also [range](https://docs.python.org/3/library/stdtypes.html#range)',
+                ].join('\n'),
+                url: 'https://docs.python.org/3/reference/compound_stmts.html#the-for-statement',
+                sourceUrl: 'https://github.com/python/cpython/blob/main/Doc/reference/compound_stmts.rst?plain=1',
+                seeAlso: ['[range](https://docs.python.org/3/library/stdtypes.html#range)'],
+            },
+        },
+        {
+            label: 'F-string docs can target language reference instead of str',
+            symbolInfo: {
+                name: 'f-string',
+                qualname: 'f-string',
+                module: 'builtins',
+                kind: 'keyword',
+                isStdlib: true,
+            },
+            docs: {
+                title: 'f-string',
+                source: ResolutionSource.Static,
+                confidence: 1,
+                url: 'https://docs.python.org/3/reference/lexical_analysis.html#formatted-string-literals',
+            },
+        },
     ];
 
     for (const testCase of cases) {

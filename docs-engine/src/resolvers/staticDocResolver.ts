@@ -13,6 +13,12 @@ const BUILTIN_CONSTANTS = new Set([
 
 const BUILTIN_EXCEPTION_PATTERN = /^[A-Z][A-Za-z0-9]+(?:Error|Exception|Warning|Exit)$/;
 
+/** Builtin types that are documented in the richer stdtypes page. */
+const BUILTIN_STD_TYPES = new Set([
+    'bool', 'bytearray', 'bytes', 'complex', 'dict', 'float', 'frozenset',
+    'int', 'list', 'memoryview', 'range', 'set', 'slice', 'str', 'tuple',
+]);
+
 /** Actual Python builtin functions — only these should get a functions.html URL. */
 const KNOWN_BUILTIN_FUNCTIONS = new Set([
     'abs', 'aiter', 'all', 'anext', 'any', 'ascii',
@@ -63,8 +69,10 @@ export class StaticDocResolver {
 
         const builtinUrl = this.resolveBuiltinUrl(key);
         if (builtinUrl) {
+            const builtinKind = this.resolveBuiltinKind(key);
             return {
                 title: key.qualname || key.name,
+                kind: builtinKind,
                 source: ResolutionSource.Static,
                 confidence: 0.7,
                 url: builtinUrl,
@@ -105,6 +113,10 @@ export class StaticDocResolver {
             return `https://docs.python.org/${this.pythonVersion}/library/stdtypes.html#${qualname}`;
         }
 
+        if (BUILTIN_STD_TYPES.has(qualname)) {
+            return `https://docs.python.org/${this.pythonVersion}/library/stdtypes.html#${qualname}`;
+        }
+
         if (BUILTIN_CONSTANTS.has(qualname)) {
             return `https://docs.python.org/${this.pythonVersion}/library/constants.html#${qualname}`;
         }
@@ -119,6 +131,33 @@ export class StaticDocResolver {
 
         // Unknown bare name in builtins — don't guess functions.html for method
         // names like "upper" that leaked through without their owner type.
+        return undefined;
+    }
+
+    private resolveBuiltinKind(key: DocKey): string | undefined {
+        const qualname = (key.qualname || key.name).replace(/^builtins\./, '');
+        if (!qualname) return undefined;
+
+        if (qualname.includes('.')) {
+            return 'method';
+        }
+
+        if (BUILTIN_STD_TYPES.has(qualname)) {
+            return 'class';
+        }
+
+        if (BUILTIN_CONSTANTS.has(qualname)) {
+            return 'constant';
+        }
+
+        if (BUILTIN_EXCEPTION_PATTERN.test(qualname)) {
+            return 'class';
+        }
+
+        if (KNOWN_BUILTIN_FUNCTIONS.has(qualname)) {
+            return 'function';
+        }
+
         return undefined;
     }
 }

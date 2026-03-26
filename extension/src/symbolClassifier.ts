@@ -147,6 +147,7 @@ export function isLibraryPath(p: string): boolean {
         || /\/libs\//.test(normalizedPath)
         || /[/\\]lib[/\\]/i.test(p)
         || normalizedPath.includes('/typeshed/')
+        || normalizedPath.includes('/typeshed-fallback/')
         || normalizedPath.includes('/stubs/')
     );
 }

@@ -1,6 +1,6 @@
 import * as https from 'https';
 import { Logger } from '../../../extension/src/logger';
-import { DocKey, HoverDoc } from '../../../shared/types';
+import { DocKey, HoverDoc, IndexedSymbolSummary } from '../../../shared/types';
 import { DiskCache } from '../cache/diskCache';
 import { PyPiClient } from '../pypi/pypiClient';
 import { InventoryParser } from './inventoryParser';
@@ -85,6 +85,11 @@ const WARMUP_PACKAGES = [
     'typing', 'asyncio', 'builtins',
 ];
 
+const DOCS_REQUEST_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (compatible; PyHover/0.6; +https://github.com/KiidxAtlas/python-hover)',
+    'Accept': '*/*',
+};
+
 export class InventoryFetcher {
     private static readonly STDLIB_INVENTORY_CACHE = '__python_stdlib__';
     private static readonly CORPUS_META_PAGE_PATTERNS = [
@@ -166,6 +171,25 @@ export class InventoryFetcher {
             const isStdlibWarmup = pkg === 'typing' || pkg === 'asyncio' || pkg === 'builtins';
             void this.ensureInventoryLoaded(pkg, undefined, isStdlibWarmup ? true : undefined).catch(() => { });
         }
+    }
+
+    async ensurePackageLoaded(packageName: string, version?: string, isStdlib?: boolean): Promise<void> {
+        await this.ensureInventoryLoaded(packageName, version, isStdlib);
+    }
+
+    async hydrateCachedInventories(): Promise<string[]> {
+        const cachedPackages = this.diskCache.listCachedInventoryPackages();
+        if (cachedPackages.length === 0) {
+            return this.getIndexedPackages();
+        }
+
+        await Promise.all(
+            cachedPackages.map(packageName =>
+                this.ensurePackageLoaded(packageName, undefined, packageName === 'builtins').catch(() => undefined)
+            )
+        );
+
+        return this.getIndexedPackages();
     }
 
     /**
@@ -263,7 +287,7 @@ export class InventoryFetcher {
         const httpsUrl = this.normalizeToHttps(url);
 
         return new Promise((resolve) => {
-            const req = https.request(httpsUrl, { method: 'HEAD', timeout: 5000 }, (res) => {
+            const req = https.request(httpsUrl, { method: 'HEAD', timeout: 5000, headers: DOCS_REQUEST_HEADERS }, (res) => {
                 // Accept 200 OK or 3xx Redirects (which fetchBuffer handles)
                 if (res.statusCode && (res.statusCode === 200 || (res.statusCode >= 300 && res.statusCode < 400))) {
                     resolve(true);
@@ -531,14 +555,18 @@ export class InventoryFetcher {
         return this.cache.get(packageName)?.size ?? 0;
     }
 
-    searchSymbols(query: string): Array<{ name: string; url: string; kind: string; package: string }> {
+    searchSymbols(query: string): IndexedSymbolSummary[] {
         const q = query.toLowerCase().trim();
         if (!q) return [];
-        const results: Array<{ name: string; url: string; kind: string; package: string }> = [];
+        const results: IndexedSymbolSummary[] = [];
+        const seen = new Set<string>();
         for (const [pkg, inventory] of this.cache) {
             for (const [name, doc] of inventory) {
                 if (name.toLowerCase().includes(q)) {
-                    results.push({ name, url: doc.url || '', kind: doc.kind || 'symbol', package: pkg });
+                    const key = `${name}|${doc.url || ''}|${doc.kind || 'symbol'}`;
+                    if (seen.has(key)) continue;
+                    seen.add(key);
+                    results.push(this.toIndexedSymbolSummary(name, doc, pkg));
                 }
             }
         }
@@ -553,6 +581,69 @@ export class InventoryFetcher {
                 return a.name.localeCompare(b.name);
             })
             .slice(0, 200);
+    }
+
+    getModuleSymbols(moduleName: string, maxSymbols = 5000): IndexedSymbolSummary[] {
+        const normalized = moduleName.trim();
+        if (!normalized) return [];
+
+        const results: IndexedSymbolSummary[] = [];
+        const seen = new Set<string>();
+        for (const [pkg, inventory] of this.cache) {
+            for (const [name, doc] of inventory) {
+                if (name === normalized || name.startsWith(`${normalized}.`) || pkg === normalized) {
+                    const key = `${name}|${doc.url || ''}|${doc.kind || 'symbol'}`;
+                    if (seen.has(key)) continue;
+                    seen.add(key);
+                    results.push(this.toIndexedSymbolSummary(name, doc, pkg));
+                }
+            }
+        }
+
+        return results
+            .sort((a, b) => a.name.localeCompare(b.name))
+            .slice(0, maxSymbols);
+    }
+
+    getIndexedPackages(): string[] {
+        return [...this.cache.keys()].sort((a, b) => a.localeCompare(b));
+    }
+
+    private toIndexedSymbolSummary(name: string, doc: HoverDoc, pkg: string): IndexedSymbolSummary {
+        return {
+            name,
+            url: doc.url || '',
+            kind: doc.kind || 'symbol',
+            package: pkg,
+            title: doc.title || name,
+            module: doc.module,
+            signature: doc.signature,
+            summary: this.extractPreviewText(doc),
+            sourceUrl: doc.sourceUrl,
+        };
+    }
+
+    private extractPreviewText(doc: HoverDoc): string | undefined {
+        const candidate = doc.summary
+            || doc.structuredContent?.summary
+            || doc.structuredContent?.description
+            || doc.content;
+        const cleaned = candidate
+            ?.replace(/```[\s\S]*?```/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+
+        if (!cleaned) return undefined;
+        if (
+            cleaned.startsWith('Documentation for')
+            || cleaned.startsWith('Documentation from')
+            || cleaned === 'No documentation found.'
+            || cleaned === 'Documentation lookup failed.'
+        ) {
+            return undefined;
+        }
+
+        return cleaned;
     }
 
     getIndexedSymbolCount(): number {
@@ -583,6 +674,27 @@ export class InventoryFetcher {
         return [...pages];
     }
 
+    getPackageSymbolTargets(packageName: string, maxTargets = 20_000): Array<{ corpusPackage: string; url: string }> {
+        const inventory = this.cache.get(packageName);
+        if (!inventory) return [];
+
+        const targets: Array<{ corpusPackage: string; url: string }> = [];
+        const seen = new Set<string>();
+
+        for (const [name, doc] of inventory) {
+            if (!doc.url || this.shouldSkipCorpusPageUrl(doc.url.split('#')[0])) continue;
+
+            const corpusPackage = name.includes('.') ? name.split('.')[0] : packageName;
+            const targetKey = `${corpusPackage}:${doc.url}`;
+            if (seen.has(targetKey)) continue;
+            seen.add(targetKey);
+            targets.push({ corpusPackage, url: doc.url });
+            if (targets.length >= maxTargets) break;
+        }
+
+        return targets;
+    }
+
     private shouldSkipCorpusPageUrl(url: string): boolean {
         return InventoryFetcher.CORPUS_META_PAGE_PATTERNS.some(pattern => pattern.test(url));
     }
@@ -596,7 +708,7 @@ export class InventoryFetcher {
         const httpsUrl = this.normalizeToHttps(url);
 
         return new Promise((resolve, reject) => {
-            const req = https.get(httpsUrl, { timeout: 5000 }, (res) => {
+            const req = https.get(httpsUrl, { timeout: 5000, headers: DOCS_REQUEST_HEADERS }, (res) => {
                 if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
                     // Normalize redirect URL to HTTPS as well
                     const newUrl = this.normalizeToHttps(new URL(res.headers.location, httpsUrl).toString());

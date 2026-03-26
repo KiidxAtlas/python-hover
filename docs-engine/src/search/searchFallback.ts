@@ -61,9 +61,11 @@ export class SearchFallback {
     getDevDocsUrl(key: DocKey): string | null {
         const cleanName = (key.qualname || key.name).replace(/^builtins\./, '');
 
-        // ── stdlib ────────────────────────────────────────────────────────
+        // DevDocs is reliable for known 3rd-party doc sets.
+        // It is not reliable enough for stdlib keywords/operators or unknown packages,
+        // where search often lands on unrelated entries.
         if (key.isStdlib || !key.package || key.package === 'builtins') {
-            return `https://devdocs.io/#q=${encodeURIComponent(`python~3 ${cleanName}`)}`;
+            return null;
         }
 
         // ── known third-party ─────────────────────────────────────────────
@@ -76,9 +78,7 @@ export class SearchFallback {
         }
 
         // ── unknown package ───────────────────────────────────────────────
-        // Fall back scoped to Python 3 docs — prevents cross-language results
-        // (e.g. haxe~python appearing for "python isinstance").
-        return `https://devdocs.io/#q=${encodeURIComponent(`python~3 ${cleanName}`)}`;
+        return null;
     }
 
     async search(key: DocKey): Promise<HoverDoc> {

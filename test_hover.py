@@ -6,16 +6,16 @@ import os.path
 from pathlib import Path
 from typing import List, Optional, Union
 
+import click
 import fastapi
 import numpy as np
 import pandas as pd
-import click
-
 
 # ── Builtins ──────────────────────────────────────────────────────────────────
 x = [1, 2, 3]  # hover over [  →  list
 y = {"a": 1}  # hover over {  →  dict
 z = "hello"  # hover over "  →  str
+template = f"value={z}"  # hover over the leading f / opening quote  →  f-string docs
 n = None  # hover over None
 e = ...  # hover over ...  →  Ellipsis
 
@@ -86,6 +86,9 @@ def greet(name: Optional[str] = None) -> str:  # hover over Optional
     return f"Hello {name}"
 
 
+debug_label = f"{x=} {joined_text}"  # hover over the f-string prefix / opening quote
+
+
 def process(items: List[Union[int, str]]) -> None:  # hover over Union
     pass
 
@@ -106,3 +109,9 @@ class Person:
 p = Person("Alice", 30)
 msg = p.greet()  # hover over greet
 person_name = p.name.upper()  # hover over upper
+person_badge = f"{p.name=} ({p.age})"  # hover over the f-string prefix / opening quote
+
+
+@staticmethod
+class Employee(Person):
+    """A simple employee class."""

@@ -78,6 +78,20 @@ function getProbeCases(): ProbeCase[] {
             isStdlib: true,
             docstring: 'The type of the None singleton.',
         },
+        {
+            name: 'for',
+            module: 'builtins',
+            qualname: 'for',
+            kind: 'keyword',
+            isStdlib: true,
+        },
+        {
+            name: 'f-string',
+            module: 'builtins',
+            qualname: 'f-string',
+            kind: 'keyword',
+            isStdlib: true,
+        },
         // ── Package corpus cases ──────────────────────────────────────
         {
             name: 'numpy.array',

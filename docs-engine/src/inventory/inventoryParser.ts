@@ -82,6 +82,7 @@ export class InventoryParser {
                 inventory.set(name, {
                     title: name,
                     url: fullUrl,
+                    kind: this.mapRoleToKind(domainRole),
                     source: ResolutionSource.Corpus,
                     confidence: 1.0
                 });
@@ -92,5 +93,28 @@ export class InventoryParser {
         }
 
         return inventory;
+    }
+
+    private mapRoleToKind(domainRole: string): string | undefined {
+        const role = domainRole.split(':').pop()?.toLowerCase();
+        switch (role) {
+            case 'method':
+            case 'staticmethod':
+            case 'classmethod':
+                return 'method';
+            case 'function':
+                return 'function';
+            case 'class':
+            case 'exception':
+                return 'class';
+            case 'module':
+                return 'module';
+            case 'attribute':
+            case 'property':
+            case 'data':
+                return 'attribute';
+            default:
+                return undefined;
+        }
     }
 }

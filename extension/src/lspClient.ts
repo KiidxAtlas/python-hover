@@ -47,6 +47,12 @@ export class LspClient {
         // Definition path gives us the exact module prefix.
         await this.applyDefinitionInfo(result, [definitions]);
 
+        // Some inherited/dynamic methods have weak hover data at the call site but
+        // good signature metadata at the actual definition location.
+        if (!result.signature || !result.docstring) {
+            await this.hydrateFromDefinitionHover(result, [definitions]);
+        }
+
         return result;
     }
 
@@ -230,6 +236,34 @@ export class LspClient {
         }
 
         if (module) result.module = module;
+    }
+
+    private async hydrateFromDefinitionHover(
+        result: LspSymbol,
+        definitions: (vscode.Location[] | vscode.LocationLink[] | undefined)[],
+    ): Promise<void> {
+        const loc = this.firstLocation(definitions);
+        if (!loc) return;
+
+        const hovers = await this.lspQuery<vscode.Hover[]>(
+            'vscode.executeHoverProvider',
+            loc.uri,
+            loc.range.start,
+        );
+        if (!hovers || hovers.length === 0) return;
+
+        const hydrated: LspSymbol = { name: result.name };
+        this.applyHoverInfo(hydrated, [hovers], []);
+
+        if (!result.signature && hydrated.signature) {
+            result.signature = hydrated.signature;
+        }
+        if (!result.docstring && hydrated.docstring) {
+            result.docstring = hydrated.docstring;
+        }
+        if (!result.kind && hydrated.kind) {
+            result.kind = hydrated.kind;
+        }
     }
 
     // ─── LSP helpers ─────────────────────────────────────────────────────────

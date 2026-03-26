@@ -6,6 +6,9 @@ export class Config {
         return vscode.workspace.getConfiguration('python-hover');
     }
 
+    /** Memoized fingerprint — recomputed when the interpreter path has changed. */
+    private _fingerprintCache: { path: string; fingerprint: string } | undefined;
+
     get isEnabled(): boolean {
         return this.config.get('enable', true);
     }
@@ -102,14 +105,19 @@ export class Config {
 
     /**
      * Stable id for cache keys — ties disk + session caches to the configured interpreter path.
+     * Memoized per interpreter path to avoid re-hashing on every hover.
      */
     get interpreterCacheFingerprint(): string {
-        return crypto.createHash('sha256').update(this.pythonPath).digest('hex').slice(0, 16);
+        const p = this.pythonPath;
+        if (this._fingerprintCache?.path === p) return this._fingerprintCache.fingerprint;
+        const fingerprint = crypto.createHash('sha256').update(p).digest('hex').slice(0, 16);
+        this._fingerprintCache = { path: p, fingerprint };
+        return fingerprint;
     }
 
-    /** Persistent Python subprocess: import/inspect/pydoc (off by default for reliability). */
+    /** Persistent Python subprocess: import/inspect/pydoc (enabled by default for richer hover resolution). */
     get runtimeHelperEnabled(): boolean {
-        return this.config.get('runtimeHelper', false);
+        return this.config.get('runtimeHelper', true);
     }
 
     /** Fetch & parse remote HTML for richer third-party hovers (off by default). */
@@ -119,10 +127,34 @@ export class Config {
 
     /** When runtime helper is on, also use AST identify when LSP gives an incomplete symbol. */
     get astFallbackEnabled(): boolean {
-        return this.config.get('astFallback', false);
+        return this.config.get('astFallback', true);
     }
 
     get enableDebugLogging(): boolean {
         return this.config.get('enableDebugLogging', false);
+    }
+
+    get compactMode(): boolean {
+        return this.config.get('ui.compactMode', false);
+    }
+
+    get showBadges(): boolean {
+        return this.config.get('ui.showBadges', true);
+    }
+
+    get diagnosticsEnabled(): boolean {
+        return this.config.get('diagnostics.enabled', true);
+    }
+
+    get hoverActivationDelay(): number {
+        return Math.min(Math.max(this.config.get('hoverActivationDelay', 0), 0), 2000);
+    }
+
+    get preloadPackages(): string[] {
+        return this.config.get<string[]>('preloadPackages', []).filter(p => typeof p === 'string' && p.trim().length > 0);
+    }
+
+    get excludePatterns(): string[] {
+        return this.config.get<string[]>('excludePatterns', []);
     }
 }

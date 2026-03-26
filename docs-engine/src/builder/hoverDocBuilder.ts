@@ -18,18 +18,28 @@ export class HoverDocBuilder {
 
     build(symbolInfo: SymbolInfo, docs: HoverDoc | null): HoverDoc {
         const parsedDocstring = this.parser.parse(symbolInfo.docstring || '');
+        const structuredContent = docs?.structuredContent;
+        const structuredParameters = this.extractParametersFromStructuredContent(structuredContent);
+        const structuredReturns = this.extractReturnFromStructuredContent(structuredContent);
+        const structuredRaises = this.extractRaisesFromStructuredContent(structuredContent);
 
         const title = this.buildTitle(symbolInfo);
-        const signature = symbolInfo.signature;
+        const signature = symbolInfo.kind === 'keyword'
+            ? undefined
+            : this.sanitizeSignature(
+                symbolInfo.signature || structuredContent?.signature || this.extractSignatureFromContent(docs?.content, title)
+            );
         const summary = this.buildSummary(parsedDocstring, docs, symbolInfo);
-        const parameters = parsedDocstring.parameters;
+        const parameters = parsedDocstring.parameters && parsedDocstring.parameters.length > 0
+            ? parsedDocstring.parameters
+            : structuredParameters;
         const badges = this.buildBadges(symbolInfo, parsedDocstring);
         const examples = this.buildExamples(parsedDocstring, docs);
-        const notes = parsedDocstring.notes;
-        const kind = this.inferKind(symbolInfo);
+        const notes = this.buildNotes(parsedDocstring, docs);
+        const kind = this.inferKind(symbolInfo, docs);
 
         // Ensure we don't pass placeholder content in the legacy field
-        let legacyContent = docs?.content;
+        let legacyContent = structuredContent?.description || docs?.content;
         if (legacyContent && PLACEHOLDER_MSGS.some(p => legacyContent!.startsWith(p) || legacyContent === p)) {
             legacyContent = undefined;
         }
@@ -40,17 +50,19 @@ export class HoverDocBuilder {
             signature: signature,
             summary: summary,
             parameters: parameters,
-            returns: parsedDocstring.returns,
-            raises: parsedDocstring.raises,
+            returns: parsedDocstring.returns || structuredReturns,
+            raises: parsedDocstring.raises && parsedDocstring.raises.length > 0 ? parsedDocstring.raises : structuredRaises,
             notes: notes,
             examples: examples,
             url: docs?.url,
             devdocsUrl: docs?.devdocsUrl,
+            sourceUrl: docs?.sourceUrl,
             links: docs?.links,
             badges: badges,
             source: docs?.source || ResolutionSource.Runtime,
             confidence: docs?.confidence || 0.5,
             content: legacyContent,
+            structuredContent,
             overloads: symbolInfo.overloads,
             protocolHints: symbolInfo.protocolHints,
             seeAlso: docs?.seeAlso,
@@ -83,7 +95,7 @@ export class HoverDocBuilder {
     }
 
     private buildSummary(parsed: ParsedDocstring, docs: HoverDoc | null, symbolInfo: SymbolInfo): string | undefined {
-        let content = docs?.content;
+        let content = docs?.structuredContent?.description || docs?.content;
         if (content && PLACEHOLDER_MSGS.some(p => content!.startsWith(p) || content === p)) {
             content = undefined;
         }
@@ -148,19 +160,37 @@ export class HoverDocBuilder {
     }
 
     private buildExamples(parsed: ParsedDocstring, docs: HoverDoc | null): string[] | undefined {
-        const examples: string[] = [];
+        const examples = new Set<string>();
 
         // 1. Static/Enhanced Examples (High quality)
+        if (docs?.structuredContent?.examples) {
+            docs.structuredContent.examples.forEach(example => examples.add(example));
+        }
+
         if (docs && docs.examples) {
-            examples.push(...docs.examples);
+            docs.examples.forEach(example => examples.add(example));
         }
 
         // 2. Parsed Runtime Examples
         if (parsed.examples) {
-            examples.push(...parsed.examples);
+            parsed.examples.forEach(example => examples.add(example));
         }
 
-        return examples.length > 0 ? examples : undefined;
+        return examples.size > 0 ? [...examples] : undefined;
+    }
+
+    private buildNotes(parsed: ParsedDocstring, docs: HoverDoc | null): string[] | undefined {
+        const notes = new Set<string>();
+
+        if (docs?.structuredContent?.notes) {
+            docs.structuredContent.notes.forEach(note => notes.add(note));
+        }
+
+        if (parsed.notes) {
+            parsed.notes.forEach(note => notes.add(note));
+        }
+
+        return notes.size > 0 ? [...notes] : undefined;
     }
 
     private buildBadges(symbolInfo: SymbolInfo, parsed: ParsedDocstring): Badge[] {
@@ -325,6 +355,8 @@ export class HoverDocBuilder {
         if (!trimmed) return undefined;
         if (/^[-=~^#*]{3,}$/.test(trimmed)) return undefined;
         if (/^```/.test(trimmed)) return undefined;
+        if (/^`{1,3}\s*[A-Za-z_][\w.]*\s*`{0,3}$/.test(trimmed)) return undefined;
+        if (/^``\s+[A-Za-z_][\w.]*$/.test(trimmed)) return undefined;
         if (this.isUnhelpfulRuntimeFallback(trimmed)) return undefined;
         if (/^:(?:param|type|returns?|raises?|rtype|yield|ytype|example|examples)\b/i.test(trimmed)) return undefined;
 
@@ -397,8 +429,32 @@ export class HoverDocBuilder {
         return line.includes('->') || /^\w+(?:\.\w+)*\(.*\)$/.test(line);
     }
 
-    private inferKind(symbolInfo: SymbolInfo): string {
+    private extractSignatureFromContent(content?: string, title?: string): string | undefined {
+        if (!content?.trim()) return undefined;
+
+        const fenceMatch = content.match(/```(?:python)?\n([\s\S]*?)\n```/i);
+        const firstLine = fenceMatch?.[1]
+            ?.split('\n')
+            .map(line => line.trim())
+            .find(Boolean);
+        if (!firstLine) return undefined;
+        if (firstLine.length > 240) return undefined;
+
+        const leaf = title?.split('.').pop();
+        if (leaf && firstLine.startsWith(`${leaf}(`)) {
+            return firstLine;
+        }
+
+        if (/^[A-Za-z_][\w.]*\(.*\)$/.test(firstLine)) {
+            return firstLine;
+        }
+
+        return undefined;
+    }
+
+    private inferKind(symbolInfo: SymbolInfo, docs?: HoverDoc | null): string {
         if (symbolInfo.kind) return symbolInfo.kind;
+        if (docs?.kind) return docs.kind;
 
         if (symbolInfo.name === symbolInfo.module) return 'package';
 
@@ -415,5 +471,149 @@ export class HoverDocBuilder {
         }
 
         return 'symbol';
+    }
+
+    private sanitizeSignature(signature?: string): string | undefined {
+        if (!signature) return undefined;
+        return signature.replace(/\s*\[\[source\]\]\([^\s)]+\)/gi, '').trim();
+    }
+
+    private extractParametersFromStructuredContent(structuredContent?: HoverDoc['structuredContent']) {
+        if (!structuredContent?.sections?.length) return undefined;
+
+        const parameters: NonNullable<HoverDoc['parameters']> = [];
+        let currentField: 'parameters' | 'returns' | 'raises' | undefined;
+
+        for (const section of structuredContent.sections) {
+            const nextField = this.getStructuredFieldKind(section.title);
+            if (nextField) {
+                currentField = nextField;
+            } else if (section.title) {
+                currentField = undefined;
+            }
+
+            if (currentField !== 'parameters') continue;
+            const parameter = this.parseStructuredParameter(section.content);
+            if (parameter) {
+                parameters.push(parameter);
+            }
+        }
+
+        return parameters.length > 0 ? parameters : undefined;
+    }
+
+    private extractReturnFromStructuredContent(structuredContent?: HoverDoc['structuredContent']) {
+        if (!structuredContent?.sections?.length) return undefined;
+
+        let currentField: 'parameters' | 'returns' | 'raises' | undefined;
+        for (const section of structuredContent.sections) {
+            const nextField = this.getStructuredFieldKind(section.title);
+            if (nextField) {
+                currentField = nextField;
+            } else if (section.title) {
+                currentField = undefined;
+            }
+
+            if (currentField !== 'returns') continue;
+            const parsed = this.parseStructuredTypedEntry(section.content);
+            if (parsed) {
+                return {
+                    type: parsed.label,
+                    description: parsed.description,
+                };
+            }
+        }
+
+        return undefined;
+    }
+
+    private extractRaisesFromStructuredContent(structuredContent?: HoverDoc['structuredContent']) {
+        if (!structuredContent?.sections?.length) return undefined;
+
+        const raises: NonNullable<HoverDoc['raises']> = [];
+        let currentField: 'parameters' | 'returns' | 'raises' | undefined;
+
+        for (const section of structuredContent.sections) {
+            const nextField = this.getStructuredFieldKind(section.title);
+            if (nextField) {
+                currentField = nextField;
+            } else if (section.title) {
+                currentField = undefined;
+            }
+
+            if (currentField !== 'raises') continue;
+            const parsed = this.parseStructuredTypedEntry(section.content);
+            if (parsed) {
+                raises.push({
+                    type: parsed.label,
+                    description: parsed.description,
+                });
+            }
+        }
+
+        return raises.length > 0 ? raises : undefined;
+    }
+
+    private getStructuredFieldKind(title?: string): 'parameters' | 'returns' | 'raises' | undefined {
+        if (!title) return undefined;
+        if (/^(?:Parameters|Args|Arguments)$/i.test(title)) return 'parameters';
+        if (/^Returns?$/i.test(title)) return 'returns';
+        if (/^Raises?$/i.test(title)) return 'raises';
+        return undefined;
+    }
+
+    private parseStructuredParameter(content: string): NonNullable<HoverDoc['parameters']>[number] | undefined {
+        const parsed = this.parseStructuredTypedEntry(content);
+        if (!parsed) return undefined;
+
+        return {
+            name: parsed.label,
+            type: parsed.type,
+            description: parsed.description,
+        };
+    }
+
+    private parseStructuredTypedEntry(content: string): { label: string; type?: string; description?: string } | undefined {
+        const normalized = content.trim().replace(/\[\[source\]\]\([^\s)]+\)/gi, '');
+        if (!normalized) return undefined;
+
+        const lines = normalized.split('\n').map(line => line.trim()).filter(Boolean);
+        if (lines.length === 0) return undefined;
+
+        const heading = lines[0];
+        const parsedHeading = this.parseStructuredHeading(heading);
+        if (!parsedHeading) return undefined;
+
+        const description = lines.slice(1).join(' ').trim() || undefined;
+        return {
+            label: parsedHeading.label,
+            type: parsedHeading.type,
+            description,
+        };
+    }
+
+    private parseStructuredHeading(heading: string): { label: string; type?: string } | undefined {
+        const compact = heading.replace(/\s+/g, ' ').trim();
+        const boldWrapped = compact.match(/^\*\*(.+)\*\*$/);
+        const inner = boldWrapped ? boldWrapped[1].trim() : compact;
+
+        const malformedBold = /^\*{4}([^*]+)\*{2}(.+?)\*{2}$/.exec(compact);
+        if (malformedBold) {
+            return {
+                label: malformedBold[1].trim(),
+                type: malformedBold[2].trim(),
+            };
+        }
+
+        const typed = /^([^:]+?)\s*:\s*(.+)$/.exec(inner);
+        if (typed) {
+            return {
+                label: typed[1].replace(/^\*+|\*+$/g, '').trim(),
+                type: typed[2].replace(/^\*+|\*+$/g, '').trim(),
+            };
+        }
+
+        const cleaned = inner.replace(/^\*+|\*+$/g, '').trim();
+        return cleaned ? { label: cleaned } : undefined;
     }
 }
