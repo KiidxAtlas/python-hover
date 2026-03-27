@@ -9,6 +9,16 @@ const BUILTIN_TYPES = new Set([
 ]);
 
 export class LspClient {
+    private static internalHoverRequests = new Map<string, number>();
+
+    static isInternalHoverRequest(uri: vscode.Uri, position: vscode.Position): boolean {
+        const key = this.hoverRequestKey(uri, position);
+        return (this.internalHoverRequests.get(key) ?? 0) > 0;
+    }
+
+    private static hoverRequestKey(uri: vscode.Uri, position: vscode.Position): string {
+        return `${uri.toString()}:${position.line}:${position.character}`;
+    }
 
     // ─── Public API ───────────────────────────────────────────────────────────
 
@@ -33,8 +43,9 @@ export class LspClient {
             this.lspQuery<vscode.Location[] | vscode.LocationLink[]>(
                 'vscode.executeDefinitionProvider', document.uri, queryPos,
             ),
-            this.lspQuery<vscode.Hover[]>(
-                'vscode.executeHoverProvider', document.uri, queryPos,
+            this.executeExternalHoverQuery(
+                document.uri,
+                queryPos,
             ),
         ]);
 
@@ -245,8 +256,7 @@ export class LspClient {
         const loc = this.firstLocation(definitions);
         if (!loc) return;
 
-        const hovers = await this.lspQuery<vscode.Hover[]>(
-            'vscode.executeHoverProvider',
+        const hovers = await this.executeExternalHoverQuery(
             loc.uri,
             loc.range.start,
         );
@@ -273,6 +283,29 @@ export class LspClient {
             vscode.commands.executeCommand<T>(command, ...args),
             new Promise<undefined>(r => setTimeout(() => r(undefined), LSP_TIMEOUT_MS)),
         ]).catch(() => undefined);
+    }
+
+    private async executeExternalHoverQuery(
+        uri: vscode.Uri,
+        position: vscode.Position,
+    ): Promise<vscode.Hover[] | undefined> {
+        const key = LspClient.hoverRequestKey(uri, position);
+        LspClient.internalHoverRequests.set(key, (LspClient.internalHoverRequests.get(key) ?? 0) + 1);
+
+        try {
+            return await this.lspQuery<vscode.Hover[]>(
+                'vscode.executeHoverProvider',
+                uri,
+                position,
+            );
+        } finally {
+            const remaining = (LspClient.internalHoverRequests.get(key) ?? 1) - 1;
+            if (remaining <= 0) {
+                LspClient.internalHoverRequests.delete(key);
+            } else {
+                LspClient.internalHoverRequests.set(key, remaining);
+            }
+        }
     }
 
     private firstLocation(

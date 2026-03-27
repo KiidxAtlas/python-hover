@@ -4,6 +4,10 @@ All notable changes to Python Hover will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.7.1] - 2026-03-26
+
+Runtime bugfixes
+
 ---
 
 ## [0.7.0] - 2026-03-26
@@ -240,42 +244,50 @@ This release represents a **ground-up rewrite** of Python Hover with a new modul
 ### ✨ New Features
 
 #### **Hybrid Resolution Engine**
+
 - **LSP + Runtime + Static** — Three-layer symbol resolution for maximum accuracy
 - **AST-based Type Detection** — Identifies literal types (`list`, `dict`, `str`, etc.) even in unsaved files
 - **Typeshed Parsing** — Extracts precise signatures and overloads from `.pyi` stub files
 - **Protocol Hints** — Shows structural typing information (e.g., "Supports `__iter__`")
 
 #### **Automatic Python Version Detection**
+
 - Detects your active Python interpreter version (e.g., 3.11, 3.12, 3.13)
 - Documentation URLs automatically point to the correct Python version docs
 - No more seeing Python 3.9 docs when you're on 3.12!
 
 #### **Static Data Layer (Instant, Offline)**
+
 - **100+ Operators & Keywords** — Instant docs for `def`, `class`, `lambda`, `==`, `is`, `in`, and all Python operators
 - **Typing Constructs** — Rich explanations for `Optional`, `Union`, `Literal`, `Protocol`, `TypeVar`, etc.
 - Curated examples that appear instantly—no network required
 
 #### **Smart Signature Refinement**
+
 - Infers class context from `self` parameter type hints
 - Fixes common LSP misresolutions (e.g., `append` → `list.append`)
 - Handles Pylance's `Self@ClassName` format automatically
 
 #### **Improved Alias Resolution**
+
 - Detects import aliases like `import pandas as pd`
 - Resolves `pd.DataFrame` → `pandas.DataFrame` for correct documentation lookup
 
 #### **Configurable Online Discovery**
+
 - New `python-hover.onlineDiscovery` setting to disable network requests
 - Perfect for air-gapped environments or when you want pure offline mode
 - Static data layer still provides rich documentation when offline
 
 #### **Custom Library Support**
+
 - Define custom Sphinx inventory URLs for internal/private libraries
 - Configure via `python-hover.customLibraries` setting
 
 ### 🏗️ Architecture Changes
 
 #### **Modular Codebase**
+
 - **`docs-engine/`** — Standalone documentation resolution engine
   - `inventory/` — Sphinx `objects.inv` fetching, parsing, caching
   - `pypi/` — PyPI metadata and documentation URL discovery
@@ -290,6 +302,7 @@ This release represents a **ground-up rewrite** of Python Hover with a new modul
 - **`shared/`** — Common types and utilities
 
 #### **Python Helper Scripts**
+
 - `resolver.py` — Runtime symbol resolution via `inspect` module
 - `identifier.py` — AST-based literal type detection
 - `safe_import.py` — Timeout-protected module imports (prevents hangs)
@@ -315,14 +328,14 @@ This release represents a **ground-up rewrite** of Python Hover with a new modul
 
 New settings added:
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `python-hover.onlineDiscovery` | `true` | Enable/disable network requests |
-| `python-hover.docsVersion` | `"auto"` | Python version for docs (`"auto"`, `"3.11"`, etc.) |
-| `python-hover.inventoryCacheDays` | `7` | Days to cache Sphinx inventories |
-| `python-hover.snippetCacheHours` | `24` | Hours to cache documentation snippets |
-| `python-hover.requestTimeout` | `5000` | Network request timeout in ms |
-| `python-hover.customLibraries` | `[]` | Custom library inventory definitions |
+| Setting                             | Default    | Description                                            |
+| ----------------------------------- | ---------- | ------------------------------------------------------ |
+| `python-hover.onlineDiscovery`    | `true`   | Enable/disable network requests                        |
+| `python-hover.docsVersion`        | `"auto"` | Python version for docs (`"auto"`, `"3.11"`, etc.) |
+| `python-hover.inventoryCacheDays` | `7`      | Days to cache Sphinx inventories                       |
+| `python-hover.snippetCacheHours`  | `24`     | Hours to cache documentation snippets                  |
+| `python-hover.requestTimeout`     | `5000`   | Network request timeout in ms                          |
+| `python-hover.customLibraries`    | `[]`     | Custom library inventory definitions                   |
 
 ### 📦 Dependencies
 
