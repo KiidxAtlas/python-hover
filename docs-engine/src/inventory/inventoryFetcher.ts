@@ -112,6 +112,14 @@ export class InventoryFetcher {
     private failedInventoryLog = new Set<string>();
     /** Log each redirect chain at most once per session. */
     private redirectLogSeen = new Set<string>();
+    /** Cache resolved inventory lookups so fallback strategy scans are not repeated. */
+    private inventoryLookupCache = new Map<string, HoverDoc | null>();
+    /** Cache query-derived symbol lists until inventories change. */
+    private searchCache = new Map<string, IndexedSymbolSummary[]>();
+    private moduleSymbolsCache = new Map<string, IndexedSymbolSummary[]>();
+    private indexedPackagesCache: string[] | undefined;
+    private indexedPackageSummariesCache: Array<{ name: string; count: number }> | undefined;
+    private indexedSymbolCountCache: number | undefined;
     private diskCache: DiskCache;
     private pythonVersion: string;
     private allowNetwork: boolean;
@@ -143,6 +151,15 @@ export class InventoryFetcher {
                 // Ideally we should have a way to force inventory URL.
             }
         }
+    }
+
+    private invalidateDerivedCaches(): void {
+        this.inventoryLookupCache.clear();
+        this.searchCache.clear();
+        this.moduleSymbolsCache.clear();
+        this.indexedPackagesCache = undefined;
+        this.indexedPackageSummariesCache = undefined;
+        this.indexedSymbolCountCache = undefined;
     }
 
     public setPythonVersion(version: string) {
@@ -306,6 +323,17 @@ export class InventoryFetcher {
 
     async findInInventory(key: DocKey): Promise<HoverDoc | null> {
         const packageName = key.package;
+        const lookupKey = [
+            packageName,
+            key.version || '',
+            key.isStdlib ? '1' : '0',
+            key.module,
+            key.qualname,
+            key.name,
+        ].join('|');
+        if (this.inventoryLookupCache.has(lookupKey)) {
+            return this.inventoryLookupCache.get(lookupKey) ?? null;
+        }
 
         // 1. Check in-memory cache; if missing, load — but share the in-flight promise so
         //    concurrent callers don't each trigger a separate download/parse.
@@ -317,18 +345,24 @@ export class InventoryFetcher {
         if (packageInventory) {
             // Strategy 1: Exact match on qualname (e.g. "DataFrame" -> "DataFrame")
             if (packageInventory.has(key.qualname)) {
-                return packageInventory.get(key.qualname)!;
+                const exact = packageInventory.get(key.qualname)!;
+                this.inventoryLookupCache.set(lookupKey, exact);
+                return exact;
             }
 
             // Strategy 2: Module + Qualname (e.g. "pandas.DataFrame")
             const moduleQualname = `${key.module}.${key.qualname}`;
             if (packageInventory.has(moduleQualname)) {
-                return packageInventory.get(moduleQualname)!;
+                const moduleExact = packageInventory.get(moduleQualname)!;
+                this.inventoryLookupCache.set(lookupKey, moduleExact);
+                return moduleExact;
             }
 
             // Strategy 3: Name as provided (e.g. "pandas.DataFrame")
             if (packageInventory.has(key.name)) {
-                return packageInventory.get(key.name)!;
+                const named = packageInventory.get(key.name)!;
+                this.inventoryLookupCache.set(lookupKey, named);
+                return named;
             }
 
             // Strategy 4: Strip 'builtins.' prefix for builtins package
@@ -336,13 +370,17 @@ export class InventoryFetcher {
             if (packageName === 'builtins') {
                 const simpleName = key.qualname.replace(/^builtins\./, '');
                 if (packageInventory.has(simpleName)) {
-                    return packageInventory.get(simpleName)!;
+                    const builtinSimple = packageInventory.get(simpleName)!;
+                    this.inventoryLookupCache.set(lookupKey, builtinSimple);
+                    return builtinSimple;
                 }
 
                 // Also try without any prefix if name has one
                 const nameSimple = key.name.replace(/^builtins\./, '');
                 if (packageInventory.has(nameSimple)) {
-                    return packageInventory.get(nameSimple)!;
+                    const builtinName = packageInventory.get(nameSimple)!;
+                    this.inventoryLookupCache.set(lookupKey, builtinName);
+                    return builtinName;
                 }
             }
 
@@ -357,7 +395,9 @@ export class InventoryFetcher {
                     const candidate = `${packageName}.${suffix}`;
                     if (packageInventory.has(candidate)) {
                         Logger.log(`Inventory: Strategy 5 matched ${key.name} → ${candidate}`);
-                        return packageInventory.get(candidate)!;
+                        const suffixMatch = packageInventory.get(candidate)!;
+                        this.inventoryLookupCache.set(lookupKey, suffixMatch);
+                        return suffixMatch;
                     }
                 }
             }
@@ -381,16 +421,19 @@ export class InventoryFetcher {
                     }
                     if (candidates.length === 1) {
                         Logger.log(`Inventory: Strategy 6 matched ${key.name} → ${candidates[0].name}`);
+                        this.inventoryLookupCache.set(lookupKey, candidates[0].doc);
                         return candidates[0].doc;
                     } else if (candidates.length > 1) {
                         candidates.sort((a, b) => a.depth - b.depth || a.name.length - b.name.length);
                         Logger.log(`Inventory: Strategy 6 matched ${key.name} → ${candidates[0].name} (${candidates.length} candidates)`);
+                        this.inventoryLookupCache.set(lookupKey, candidates[0].doc);
                         return candidates[0].doc;
                     }
                 }
             }
         }
 
+        this.inventoryLookupCache.set(lookupKey, null);
         return null;
     }
 
@@ -408,6 +451,7 @@ export class InventoryFetcher {
                 if (packageName !== inventoryCacheName) {
                     this.cache.set(packageName, inventory);
                 }
+                this.invalidateDerivedCaches();
 
                 // Restore the base URL so module-overview hovers can build a Docs link.
                 // When loading from disk cache we return early and never call resolveBaseUrl,
@@ -462,6 +506,7 @@ export class InventoryFetcher {
             if (packageName !== inventoryCacheName) {
                 this.cache.set(packageName, inventory);
             }
+            this.invalidateDerivedCaches();
             this.packageBaseUrls.set(inventoryCacheName, baseUrl);
             this.packageBaseUrls.set(packageName, baseUrl);
             Logger.log(`Loaded inventory for ${packageName}: ${inventory.size} items`);
@@ -488,6 +533,7 @@ export class InventoryFetcher {
                     if (packageName !== inventoryCacheName) {
                         this.cache.set(packageName, inventory);
                     }
+                    this.invalidateDerivedCaches();
                     this.packageBaseUrls.set(inventoryCacheName, fallbackBase);
                     this.packageBaseUrls.set(packageName, fallbackBase);
                     Logger.log(`Loaded stdlib inventory from canonical URL: ${inventory.size} items`);
@@ -504,6 +550,7 @@ export class InventoryFetcher {
             if (packageName !== inventoryCacheName) {
                 this.cache.set(packageName, empty);
             }
+            this.invalidateDerivedCaches();
             this.diskCache.set(negKey, '1');
         }
     }
@@ -558,6 +605,10 @@ export class InventoryFetcher {
     searchSymbols(query: string): IndexedSymbolSummary[] {
         const q = query.toLowerCase().trim();
         if (!q) return [];
+        const cached = this.searchCache.get(q);
+        if (cached) {
+            return cached;
+        }
         const results: IndexedSymbolSummary[] = [];
         const seen = new Set<string>();
         for (const [pkg, inventory] of this.cache) {
@@ -570,7 +621,7 @@ export class InventoryFetcher {
                 }
             }
         }
-        return results
+        const finalResults = results
             .sort((a, b) => {
                 const aq = a.name.toLowerCase(), bq = b.name.toLowerCase();
                 if (aq === q && bq !== q) return -1;
@@ -581,32 +632,66 @@ export class InventoryFetcher {
                 return a.name.localeCompare(b.name);
             })
             .slice(0, 200);
+        this.searchCache.set(q, finalResults);
+        return finalResults;
     }
 
     getModuleSymbols(moduleName: string, maxSymbols = 5000): IndexedSymbolSummary[] {
         const normalized = moduleName.trim();
         if (!normalized) return [];
 
+        const cacheKey = `${normalized}:${maxSymbols}`;
+        const cached = this.moduleSymbolsCache.get(cacheKey);
+        if (cached) {
+            return cached;
+        }
+
         const results: IndexedSymbolSummary[] = [];
         const seen = new Set<string>();
-        for (const [pkg, inventory] of this.cache) {
+        const exactInventory = this.cache.get(normalized);
+        const inventories = exactInventory
+            ? [[normalized, exactInventory] as const]
+            : [...this.cache.entries()];
+
+        for (const [pkg, inventory] of inventories) {
             for (const [name, doc] of inventory) {
                 if (name === normalized || name.startsWith(`${normalized}.`) || pkg === normalized) {
-                    const key = `${name}|${doc.url || ''}|${doc.kind || 'symbol'}`;
-                    if (seen.has(key)) continue;
-                    seen.add(key);
+                    const symbolKey = `${name}|${doc.url || ''}|${doc.kind || 'symbol'}`;
+                    if (seen.has(symbolKey)) continue;
+                    seen.add(symbolKey);
                     results.push(this.toIndexedSymbolSummary(name, doc, pkg));
                 }
             }
         }
 
-        return results
+        const finalResults = results
             .sort((a, b) => a.name.localeCompare(b.name))
             .slice(0, maxSymbols);
+        this.moduleSymbolsCache.set(cacheKey, finalResults);
+        return finalResults;
     }
 
     getIndexedPackages(): string[] {
-        return [...this.cache.keys()].sort((a, b) => a.localeCompare(b));
+        if (this.indexedPackagesCache) {
+            return this.indexedPackagesCache;
+        }
+
+        this.indexedPackagesCache = [...this.cache.keys()]
+            .filter(name => name !== InventoryFetcher.STDLIB_INVENTORY_CACHE)
+            .sort((a, b) => a.localeCompare(b));
+        return this.indexedPackagesCache;
+    }
+
+    getIndexedPackageSummaries(): Array<{ name: string; count: number }> {
+        if (this.indexedPackageSummariesCache) {
+            return this.indexedPackageSummariesCache;
+        }
+
+        this.indexedPackageSummariesCache = this.getIndexedPackages().map(name => ({
+            name,
+            count: this.cache.get(name)?.size ?? 0,
+        }));
+        return this.indexedPackageSummariesCache;
     }
 
     private toIndexedSymbolSummary(name: string, doc: HoverDoc, pkg: string): IndexedSymbolSummary {
@@ -647,8 +732,13 @@ export class InventoryFetcher {
     }
 
     getIndexedSymbolCount(): number {
+        if (this.indexedSymbolCountCache !== undefined) {
+            return this.indexedSymbolCountCache;
+        }
+
         let n = 0;
         for (const inv of this.cache.values()) n += inv.size;
+        this.indexedSymbolCountCache = n;
         return n;
     }
 

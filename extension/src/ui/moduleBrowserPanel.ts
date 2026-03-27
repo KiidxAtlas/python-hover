@@ -21,7 +21,7 @@ export class ModuleBrowserPanel {
         { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true },
         {
           enableScripts: true,
-          retainContextWhenHidden: true,
+          retainContextWhenHidden: false,
         }
       );
 
@@ -445,6 +445,18 @@ export class ModuleBrowserPanel {
     };
   }
 
+  function hasInitialPreviewData(preview) {
+    return Boolean(preview.summary || preview.signature || preview.sourceUrl);
+  }
+
+  for (const symbol of symbols) {
+    const preview = initialPreview(symbol);
+    if (hasInitialPreviewData(preview)) {
+      previewCache.set(symbol.name, preview);
+      requestedPreviews.add(symbol.name);
+    }
+  }
+
   function previewFor(item) {
     return previewCache.get(item.name) || initialPreview(item);
   }
@@ -707,12 +719,22 @@ export class ModuleBrowserPanel {
       return;
     }
 
+    let didChange = false;
     for (const preview of message.previews) {
       if (preview && preview.name) {
-        previewCache.set(preview.name, preview);
+        const previous = previewCache.get(preview.name);
+        const next = JSON.stringify(preview);
+        const current = previous ? JSON.stringify(previous) : '';
+        if (next !== current) {
+          previewCache.set(preview.name, preview);
+          didChange = true;
+        }
       }
     }
-    render();
+
+    if (didChange) {
+      render();
+    }
   });
 
   queryInput.addEventListener('input', render);

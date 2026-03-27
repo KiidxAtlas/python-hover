@@ -4,6 +4,19 @@ All notable changes to Python Hover will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.7.2] - 2026-03-27
+
+Performance and safety improvements
+
+- Reduced repeated hover cost by caching short-lived LSP symbol resolution, definition-document symbol trees, and definition-site hover lookups.
+- Deduplicated the pre-cache hover pipeline by stable position so concurrent hovers share the same expensive first-phase work.
+- Reused cached inventory package summaries in Studio instead of recomputing per-package symbol counts.
+- Reduced module browser renderer churn by seeding preview cards from indexed metadata and rerendering only when preview payloads actually change.
+- Released hidden webview context for docs, studio, module browser, and pinned hover panels to lower renderer memory pressure.
+- Hardened docs and hover link handling by narrowing trusted commands and restricting docs panel navigation to safe http(s) URLs.
+
+---
+
 ## [0.7.1] - 2026-03-26
 
 Runtime bugfixes

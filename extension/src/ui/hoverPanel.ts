@@ -12,7 +12,7 @@ export class HoverPanel {
             'pythonHoverPanel',
             doc.title,
             { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true },
-          { enableScripts: false, enableCommandUris: true, retainContextWhenHidden: true },
+          { enableScripts: false, enableCommandUris: true, retainContextWhenHidden: false },
         );
         this.panel.webview.html = this.renderHtml(doc);
         this.panel.onDidDispose(() => {
@@ -63,9 +63,11 @@ export class HoverPanel {
   private buildDocsHref(url: string): string {
     const trimmed = url.trim();
     if (!trimmed) return '';
-    if (trimmed.startsWith('command:')) return trimmed;
     if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
       return `command:python-hover.openDocsSide?${this.encodeCommandArgs(trimmed)}`;
+    }
+    if (trimmed.startsWith('file://') || trimmed.startsWith('/')) {
+      return trimmed;
     }
     return trimmed;
   }

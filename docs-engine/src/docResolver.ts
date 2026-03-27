@@ -79,6 +79,10 @@ export class DocResolver {
         return this.inventoryFetcher.getIndexedPackages();
     }
 
+    getIndexedPackageSummaries() {
+        return this.inventoryFetcher.getIndexedPackageSummaries();
+    }
+
     async hydrateCachedInventories(): Promise<string[]> {
         return this.inventoryFetcher.hydrateCachedInventories();
     }

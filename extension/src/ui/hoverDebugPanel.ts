@@ -11,7 +11,7 @@ export class HoverDebugPanel {
             'pythonHoverDebugPanel',
             `${doc.title} Debug`,
             { viewColumn: vscode.ViewColumn.Three, preserveFocus: true },
-          { enableScripts: false, enableCommandUris: true, retainContextWhenHidden: true },
+          { enableScripts: false, enableCommandUris: true, retainContextWhenHidden: false },
         );
         this.panel.webview.html = this.renderHtml(doc, hoverMarkdown);
         this.panel.onDidDispose(() => {

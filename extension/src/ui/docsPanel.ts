@@ -13,6 +13,7 @@ import * as vscode from 'vscode';
 export class DocsPanel {
     private static _instance: DocsPanel | undefined;
     private panel: vscode.WebviewPanel | undefined;
+  private pendingNavigationTimer: ReturnType<typeof setTimeout> | undefined;
 
     static getInstance(): DocsPanel {
         if (!DocsPanel._instance) {
@@ -22,34 +23,71 @@ export class DocsPanel {
     }
 
     show(url: string): void {
+      const safeUrl = this.normalizeWebUrl(url);
+      if (!safeUrl) {
+        return;
+      }
+
         if (this.panel) {
             // Panel already exists — navigate to the new URL, stay in whatever column it's in
-            this.panel.title = this.titleFromUrl(url);
+          this.panel.title = this.titleFromUrl(safeUrl);
             this.panel.reveal(undefined, /* preserveFocus */ true);
             // Small delay so the webview is visible before we post a message
-            setTimeout(() => {
-                this.panel?.webview.postMessage({ type: 'navigate', url });
+          clearTimeout(this.pendingNavigationTimer);
+          this.pendingNavigationTimer = setTimeout(() => {
+            this.pendingNavigationTimer = undefined;
+            this.panel?.webview.postMessage({ type: 'navigate', url: safeUrl });
             }, 50);
         } else {
             // First open — create in the beside column so it never covers the code editor
             this.panel = vscode.window.createWebviewPanel(
                 'pyhover.docsBrowser',
-                this.titleFromUrl(url),
+              this.titleFromUrl(safeUrl),
                 { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true },
                 {
                     enableScripts: true,
-                    retainContextWhenHidden: true,   // keep state when hidden
+                  retainContextWhenHidden: false,
                 }
             );
-            this.panel.webview.html = this.buildHtml(url);
-            this.panel.onDidDispose(() => { this.panel = undefined; });
+          this.panel.webview.onDidReceiveMessage(message => {
+            if (message?.type !== 'openExternal' || typeof message.url !== 'string') {
+              return;
+            }
+
+            const externalUrl = this.normalizeWebUrl(message.url);
+            if (!externalUrl) {
+              return;
+            }
+
+            void vscode.env.openExternal(vscode.Uri.parse(externalUrl));
+          });
+          this.panel.webview.html = this.buildHtml(safeUrl);
+          this.panel.onDidDispose(() => {
+            clearTimeout(this.pendingNavigationTimer);
+            this.pendingNavigationTimer = undefined;
+            this.panel = undefined;
+          });
         }
     }
 
     dispose(): void {
+      clearTimeout(this.pendingNavigationTimer);
+      this.pendingNavigationTimer = undefined;
         this.panel?.dispose();
         this.panel = undefined;
     }
+
+  private normalizeWebUrl(url: string): string | null {
+    try {
+      const parsed = new URL(url.trim());
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        return null;
+      }
+      return parsed.toString();
+    } catch {
+      return null;
+    }
+  }
 
     private titleFromUrl(url: string): string {
         try {
@@ -61,6 +99,7 @@ export class DocsPanel {
     }
 
     private buildHtml(initialUrl: string): string {
+      const nonce = String(Date.now());
         const safe = initialUrl
             .replace(/&/g, '&amp;')
             .replace(/"/g, '&quot;')
@@ -72,8 +111,8 @@ export class DocsPanel {
 <meta charset="UTF-8">
 <meta http-equiv="Content-Security-Policy"
   content="default-src 'none';
-           frame-src *;
-           script-src 'unsafe-inline';
+           frame-src http: https:;
+           script-src 'nonce-${nonce}';
            style-src 'unsafe-inline';">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -127,22 +166,37 @@ export class DocsPanel {
   <button class="btn sec" id="ext-btn" title="Open in system browser">↗</button>
 </div>
 <iframe id="frame" src="${safe}"
-  sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation">
+  sandbox="allow-same-origin allow-scripts allow-forms">
 </iframe>
-<script>
+<script nonce="${nonce}">
+  const vscode = acquireVsCodeApi();
   const bar   = document.getElementById('url-bar');
   const frame = document.getElementById('frame');
 
+  function normalizeUrl(url) {
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        return null;
+      }
+      return parsed.toString();
+    } catch {
+      return null;
+    }
+  }
+
   function navigate(url) {
-    if (!url) url = bar.value.trim();
-    if (!url) return;
-    bar.value  = url;
-    frame.src  = url;
+    const target = normalizeUrl(url || bar.value.trim());
+    if (!target) return;
+    bar.value  = target;
+    frame.src  = target;
   }
 
   document.getElementById('go-btn').addEventListener('click', () => navigate());
   document.getElementById('ext-btn').addEventListener('click', () => {
-    window.open(bar.value.trim() || frame.src, '_blank');
+    const target = normalizeUrl(bar.value.trim() || frame.src);
+    if (!target) return;
+    vscode.postMessage({ type: 'openExternal', url: target });
   });
   bar.addEventListener('keydown', e => { if (e.key === 'Enter') navigate(); });
 

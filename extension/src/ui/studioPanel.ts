@@ -66,7 +66,7 @@ export class StudioPanel {
             vscode.ViewColumn.Active,
             {
                 enableScripts: true,
-                retainContextWhenHidden: true,
+                retainContextWhenHidden: false,
             },
         );
 

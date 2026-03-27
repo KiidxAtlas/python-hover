@@ -94,6 +94,10 @@ export class HoverProvider implements vscode.HoverProvider {
      *  Concurrent hovers at the same position share one IPC call instead of flooding Python. */
     private inflightIdentify = new Map<string, Promise<string | null>>();
 
+    /** In-flight hover requests by stable cursor position.
+     *  Deduplicates the expensive pre-cache phase (LSP + AST + refinement) before a symbol cache key exists. */
+    private inflightPositionHovers = new Map<string, Promise<vscode.Hover | null>>();
+
     /** Persistent identify cache: "uri:docVersion:line:col" → result.
      *  Avoids repeated IPC calls for the same position in the same document version. */
     private identifyCache = new Map<string, string | null>();
@@ -115,6 +119,10 @@ export class HoverProvider implements vscode.HoverProvider {
     private negativeHoverCache = new Map<string, number>();
     /** Imported roots per document version to avoid reparsing full files on every hover. */
     private importedRootsCache = new Map<string, ReadonlySet<string>>();
+    /** Full document text per document version to avoid repeated getText() calls per hover. */
+    private documentTextCache = new Map<string, string>();
+    /** Alias resolutions per document version and symbol. */
+    private aliasResolutionCache = new Map<string, string>();
     /** Hover docs addressable by command token so Pin/Debug/Copy act on the hovered card, not mutable global state. */
     private commandDocCache = new Map<string, HoverDoc>();
 
@@ -174,7 +182,7 @@ export class HoverProvider implements vscode.HoverProvider {
     warmupDocumentImports(document: vscode.TextDocument): void {
         if (document.languageId !== 'python') return;
 
-        const packages = extractImportedRoots(document.getText());
+        const packages = extractImportedRoots(this.getDocumentText(document));
         if (packages.length > 0) {
             this.docResolver.warmupInventories(packages);
         }
@@ -234,6 +242,10 @@ export class HoverProvider implements vscode.HoverProvider {
 
     getIndexedPackages() {
         return this.docResolver.getIndexedPackages();
+    }
+
+    getIndexedPackageSummaries() {
+        return this.docResolver.getIndexedPackageSummaries();
     }
 
     async hydrateCachedInventories(): Promise<string[]> {
@@ -328,12 +340,15 @@ export class HoverProvider implements vscode.HoverProvider {
     clearSessionCache(): void {
         this.hoverCache.clear();
         this.identifyCache.clear();
+        this.inflightPositionHovers.clear();
         this.positionToKey.clear();
         this.installedVersionCache.clear();
         this.loggedAliasResolutions.clear();
         this.hoverLogTimestamps.clear();
         this.negativeHoverCache.clear();
         this.importedRootsCache.clear();
+        this.documentTextCache.clear();
+        this.aliasResolutionCache.clear();
         // commandDocCache is intentionally NOT cleared here — the Pin / Debug
         // command tokens in already-rendered hovers must remain valid after a
         // document save so the user can still act on them without re-hovering.
@@ -342,17 +357,75 @@ export class HoverProvider implements vscode.HoverProvider {
         this.deprecatedRanges.clear();
     }
 
+    private documentVersionCacheKey(document: vscode.TextDocument): string {
+        return `${document.uri.toString()}:${document.version}`;
+    }
+
+    private getDocumentText(document: vscode.TextDocument): string {
+        const cacheKey = this.documentVersionCacheKey(document);
+        const cached = this.documentTextCache.get(cacheKey);
+        if (cached !== undefined) {
+            return cached;
+        }
+
+        const text = document.getText();
+        this.documentTextCache.set(cacheKey, text);
+        this.evictIfNeeded(this.documentTextCache);
+        return text;
+    }
+
     private importedRootsForDocument(document: vscode.TextDocument): ReadonlySet<string> {
-        const cacheKey = `${document.uri.toString()}:${document.version}`;
+        const cacheKey = this.documentVersionCacheKey(document);
         const cached = this.importedRootsCache.get(cacheKey);
         if (cached) {
             return cached;
         }
 
-        const roots = new Set(extractImportedRoots(document.getText()));
+        const roots = new Set(extractImportedRoots(this.getDocumentText(document)));
         this.importedRootsCache.set(cacheKey, roots);
         this.evictIfNeeded(this.importedRootsCache);
         return roots;
+    }
+
+    private resolveAliasForDocument(document: vscode.TextDocument, documentText: string, symbol: string): string {
+        const cacheKey = `${this.documentVersionCacheKey(document)}:${symbol}`;
+        const cached = this.aliasResolutionCache.get(cacheKey);
+        if (cached !== undefined) {
+            return cached;
+        }
+
+        const resolved = this.aliasResolver.resolve(documentText, symbol);
+        this.aliasResolutionCache.set(cacheKey, resolved);
+        this.evictIfNeeded(this.aliasResolutionCache);
+        return resolved;
+    }
+
+    private addDeprecatedDiagnostic(document: vscode.TextDocument, position: vscode.Position, hoverDoc: HoverDoc): void {
+        if (!this.diagnosticCollection) {
+            return;
+        }
+
+        const range = document.getWordRangeAtPosition(position)
+            ?? new vscode.Range(position, position);
+        const message = `${hoverDoc.title} is deprecated.${hoverDoc.summary ? ' ' + hoverDoc.summary.slice(0, 120) : ''}`;
+        const uriStr = document.uri.toString();
+        const existing = this.deprecatedRanges.get(uriStr) ?? [];
+        const alreadyTracked = existing.some(diag =>
+            diag.code === 'deprecated'
+            && diag.message === message
+            && diag.range.isEqual(range),
+        );
+        if (alreadyTracked) {
+            return;
+        }
+
+        const diag = new vscode.Diagnostic(range, message, vscode.DiagnosticSeverity.Warning);
+        diag.source = 'PyHover';
+        diag.code = 'deprecated';
+
+        const updated = [...existing, diag];
+        this.deprecatedRanges.set(uriStr, updated);
+        this.diagnosticCollection.set(document.uri, updated);
     }
 
     private rememberCommandDoc(doc: HoverDoc, commandToken: string): HoverDoc {
@@ -381,6 +454,7 @@ export class HoverProvider implements vscode.HoverProvider {
         token: vscode.CancellationToken,
     ): Promise<vscode.Hover | null> {
         try {
+            const hoverStartedAt = Date.now();
             if (LspClient.isInternalHoverRequest(document.uri, position)) {
                 return null;
             }
@@ -445,6 +519,15 @@ export class HoverProvider implements vscode.HoverProvider {
                 if (inflight) return inflight;
             }
 
+            const inflightByPosition = this.inflightPositionHovers.get(posKey);
+            if (inflightByPosition) {
+                return inflightByPosition;
+            }
+
+            const documentText = this.getDocumentText(document);
+
+            const hoverPromise = (async () => {
+
             // ── Structural keyword fast-path ──────────────────────────────────────
             // When the cursor is directly on a structural keyword (class, def, for, …)
             // we bypass LSP entirely — Pylance would otherwise resolve the *following*
@@ -465,7 +548,13 @@ export class HoverProvider implements vscode.HoverProvider {
             }
 
             // ── Phase 1: LSP + AST (sequential — AST branches on LSP result) ──────
+                const lspStartedAt = Date.now();
             let lspSymbol = await this.lspClient.resolveSymbol(document, position);
+                Logger.debugDuration('Hover LSP phase', lspStartedAt, {
+                    file: document.uri.fsPath,
+                    line: position.line + 1,
+                    symbol: lspSymbol?.name,
+                }, 40);
             this.logHoverEvent(`request:${posKey}:${lspSymbol?.name ?? segmentText}`, `Hover requested for ${segmentText || '<unknown>'}`, {
                 file: document.uri.fsPath,
                 line: position.line + 1,
@@ -545,6 +634,7 @@ export class HoverProvider implements vscode.HoverProvider {
                 ));
             let identifiedType: string | null = null;
             if (needsAst) {
+                const identifyStartedAt = Date.now();
                 if (token.isCancellationRequested) return null;
 
                 // Cache identify results by document version + position.
@@ -564,7 +654,7 @@ export class HoverProvider implements vscode.HoverProvider {
                     let identifyPromise = this.inflightIdentify.get(identifyKey);
                     if (!identifyPromise) {
                         identifyPromise = this.pythonHelper.identify(
-                            document.getText(),
+                            documentText,
                             position.line + 1,
                             position.character,
                         );
@@ -574,6 +664,12 @@ export class HoverProvider implements vscode.HoverProvider {
                     identifiedType = await identifyPromise;
                     this.identifyCache.set(identifyCacheKey, identifiedType);
                 }
+                Logger.debugDuration('Hover AST identify phase', identifyStartedAt, {
+                    file: document.uri.fsPath,
+                    line: position.line + 1,
+                    symbol: lspSymbol?.name ?? segmentText,
+                    identifiedType,
+                }, 30);
             }
 
             // Docstring string literals — suppress hover entirely so hovering """..."""
@@ -642,7 +738,7 @@ export class HoverProvider implements vscode.HoverProvider {
 
             // Alias resolution (e.g. pd.DataFrame → pandas.DataFrame)
             const originalName = lspSymbol.name;
-            const resolvedName = this.aliasResolver.resolve(document.getText(), lspSymbol.name);
+                const resolvedName = this.resolveAliasForDocument(document, documentText, lspSymbol.name);
             if (resolvedName !== originalName) {
                 lspSymbol.name = resolvedName;
             }
@@ -692,10 +788,34 @@ export class HoverProvider implements vscode.HoverProvider {
 
             // ── Register in-flight promise to deduplicate concurrent same-symbol hovers ─
             const wasAliasResolved = resolvedName !== originalName;
-            const resolutionPromise = this.resolveAndRender(lspSymbol, document, position, cacheKey, wasAliasResolved, importedRoots, segmentRange, token);
+                const resolutionPromise = this.resolveAndRender(
+                    lspSymbol,
+                    document,
+                    documentText,
+                    position,
+                    cacheKey,
+                    wasAliasResolved,
+                    importedRoots,
+                    segmentRange,
+                    token,
+                );
             this.inflightHovers.set(cacheKey, resolutionPromise);
             resolutionPromise.finally(() => this.inflightHovers.delete(cacheKey));
-            return resolutionPromise;
+                return resolutionPromise.then(result => {
+                    Logger.debugDuration('Hover total pipeline', hoverStartedAt, {
+                        file: document.uri.fsPath,
+                        line: position.line + 1,
+                        symbol: lspSymbol?.name,
+                        resolved: !!result,
+                    }, 60);
+                    return result;
+                });
+
+            })();
+
+            this.inflightPositionHovers.set(posKey, hoverPromise);
+            hoverPromise.finally(() => this.inflightPositionHovers.delete(posKey));
+            return hoverPromise;
 
         } catch (e) {
             Logger.error('HoverProvider failed', e);
@@ -706,6 +826,7 @@ export class HoverProvider implements vscode.HoverProvider {
     private async resolveAndRender(
         lspSymbol: LspSymbol,
         document: vscode.TextDocument,
+        documentText: string,
         position: vscode.Position,
         cacheKey: string,
         wasAliasResolved: boolean,
@@ -714,6 +835,7 @@ export class HoverProvider implements vscode.HoverProvider {
         token: vscode.CancellationToken,
     ): Promise<vscode.Hover | null> {
         try {
+            const resolveStartedAt = Date.now();
             if (token.isCancellationRequested) return null;
 
             // ── Classify: local user code vs library symbol ───────────────────────
@@ -729,7 +851,7 @@ export class HoverProvider implements vscode.HoverProvider {
 
             const { isBuiltinMethod, isDotted, isLocal } = classifyHoverSymbol(
                 lspSymbol,
-                document.getText(),
+                importedRoots,
                 wasAliasResolved,
             );
 
@@ -755,7 +877,7 @@ export class HoverProvider implements vscode.HoverProvider {
                         ? lspSymbol.name.slice(modulePrefix.length)
                         : lspSymbol.name;
                     const astInfo = await this.pythonHelper
-                        .getLocalDocstring(document.getText(), localName)
+                        .getLocalDocstring(documentText, localName)
                         .catch(() => null);
                     if (astInfo?.docstring) content = astInfo.docstring;
                     if (astInfo?.signature && !signature) signature = astInfo.signature;
@@ -789,7 +911,7 @@ export class HoverProvider implements vscode.HoverProvider {
                     }
                     if (className) {
                         const classInfo = await this.pythonHelper
-                            .getLocalDocstring(document.getText(), className)
+                            .getLocalDocstring(documentText, className)
                             .catch(() => null);
                         if (classInfo?.docstring) {
                             content = classInfo.docstring;
@@ -839,6 +961,10 @@ export class HoverProvider implements vscode.HoverProvider {
                 if (content || !isDotted) {
                     this.hoverCache.set(cacheKey, hover);
                 }
+                    Logger.debugDuration('Hover local render', resolveStartedAt, {
+                        symbol: lspSymbol.name,
+                        hasContent: !!content,
+                    }, 30);
                 return hover;
                 }
             }
@@ -1004,23 +1130,17 @@ export class HoverProvider implements vscode.HoverProvider {
 
             // Deprecated API diagnostics
             if (this.config.diagnosticsEnabled && hoverDoc.badges?.some(b => b.label === 'deprecated') && this.diagnosticCollection) {
-                const range = document.getWordRangeAtPosition(position)
-                    ?? new vscode.Range(position, position);
-                const message = `${hoverDoc.title} is deprecated.${hoverDoc.summary ? ' ' + hoverDoc.summary.slice(0, 120) : ''}`;
-                const diag = new vscode.Diagnostic(range, message, vscode.DiagnosticSeverity.Warning);
-                diag.source = 'PyHover';
-                diag.code = 'deprecated';
-                const uriStr = document.uri.toString();
-                const existing = this.deprecatedRanges.get(uriStr) ?? [];
-                existing.push(diag);
-                this.deprecatedRanges.set(uriStr, existing);
-                this.diagnosticCollection.set(document.uri, this.deprecatedRanges.get(uriStr)!);
+                this.addDeprecatedDiagnostic(document, position, hoverDoc);
             }
 
             const hover = this.renderer.render(hoverDoc);
             if (hoverRange) hover.range = hoverRange;
             this.hoverCache.set(cacheKey, hover);
             this.negativeHoverCache.delete(cacheKey);
+            Logger.debugDuration('Hover docs resolve+render', resolveStartedAt, {
+                symbol: symbolInfo.name,
+                source: hoverDoc.source,
+            }, 40);
 
             // Record in hover history ring buffer (skip module-overview entries).
             if (hoverDoc.title && hoverDoc.kind !== 'module') {

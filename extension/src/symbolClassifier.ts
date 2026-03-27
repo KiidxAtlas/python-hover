@@ -57,7 +57,7 @@ export interface SymbolClassification {
 
 export function classifyHoverSymbol(
     symbol: LspSymbol,
-    documentText: string,
+    importedRoots: ReadonlySet<string>,
     wasAliasResolved: boolean,
 ): SymbolClassification {
     const hasLibPath = !!(symbol.path && isLibraryPath(symbol.path));
@@ -70,7 +70,7 @@ export function classifyHoverSymbol(
     const isBuiltinMethod = isDotted && BUILTIN_TYPES.has(nameRoot);
     const isBuiltinType = !isDotted && BUILTIN_TYPES.has(cleanedName);
     const isExplicitBuiltins = (symbol.module === 'builtins' || nameRoot === 'builtins') && !hasUserPath;
-    const isImportedRoot = isDotted && isDirectlyImported(documentText, nameRoot);
+    const isImportedRoot = isDotted && importedRoots.has(nameRoot);
     const isCapClassMethod = isDotted && /^[A-Z]/.test(nameRoot) && !!symbol.signature;
 
     const isLibrary = hasLibPath
@@ -150,9 +150,4 @@ export function isLibraryPath(p: string): boolean {
         || normalizedPath.includes('/typeshed-fallback/')
         || normalizedPath.includes('/stubs/')
     );
-}
-
-function isDirectlyImported(text: string, root: string): boolean {
-    const escapedRoot = root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return new RegExp(`^\\s*(?:import|from)\\s+${escapedRoot}\\b`, 'm').test(text);
 }

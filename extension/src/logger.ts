@@ -37,6 +37,24 @@ export class Logger {
         this.log(`[debug] ${message}`, data);
     }
 
+    public static debugDuration(message: string, startedAt: number, data?: any, minDurationMs = 0) {
+        if (!this._debugEnabled) {
+            return;
+        }
+
+        const durationMs = Date.now() - startedAt;
+        if (durationMs < minDurationMs) {
+            return;
+        }
+
+        const payload = data && typeof data === 'object'
+            ? { ...data, durationMs }
+            : data !== undefined
+                ? { detail: data, durationMs }
+                : { durationMs };
+        this.log(`[debug] ${message}`, payload);
+    }
+
     public static error(message: string, error?: any) {
         if (!this._outputChannel) {
             return;

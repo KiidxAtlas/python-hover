@@ -2,6 +2,10 @@ import * as vscode from 'vscode';
 import { LspSymbol } from '../../shared/types';
 
 const LSP_TIMEOUT_MS = 2000;
+const RESOLVED_SYMBOL_CACHE_TTL_MS = 4000;
+const DOCUMENT_SYMBOL_CACHE_TTL_MS = 15000;
+const HOVER_QUERY_CACHE_TTL_MS = 4000;
+const MAX_CACHE_ENTRIES = 256;
 
 const BUILTIN_TYPES = new Set([
     'str', 'list', 'dict', 'set', 'tuple', 'int', 'float',
@@ -10,6 +14,12 @@ const BUILTIN_TYPES = new Set([
 
 export class LspClient {
     private static internalHoverRequests = new Map<string, number>();
+    private readonly resolvedSymbolCache = new Map<string, { expiresAt: number; value: LspSymbol | null }>();
+    private readonly inflightResolvedSymbols = new Map<string, Promise<LspSymbol | null>>();
+    private readonly documentSymbolCache = new Map<string, { expiresAt: number; value: vscode.DocumentSymbol[] | undefined }>();
+    private readonly inflightDocumentSymbols = new Map<string, Promise<vscode.DocumentSymbol[] | undefined>>();
+    private readonly hoverQueryCache = new Map<string, { expiresAt: number; value: vscode.Hover[] | undefined }>();
+    private readonly inflightHoverQueries = new Map<string, Promise<vscode.Hover[] | undefined>>();
 
     static isInternalHoverRequest(uri: vscode.Uri, position: vscode.Position): boolean {
         const key = this.hoverRequestKey(uri, position);
@@ -23,6 +33,36 @@ export class LspClient {
     // ─── Public API ───────────────────────────────────────────────────────────
 
     async resolveSymbol(
+        document: vscode.TextDocument,
+        position: vscode.Position,
+    ): Promise<LspSymbol | null> {
+        const cacheKey = this.positionCacheKey(document, position);
+        const cached = this.resolvedSymbolCache.get(cacheKey);
+        if (cached && cached.expiresAt > Date.now()) {
+            return this.cloneSymbol(cached.value);
+        }
+        if (cached) {
+            this.resolvedSymbolCache.delete(cacheKey);
+        }
+
+        const inflight = this.inflightResolvedSymbols.get(cacheKey);
+        if (inflight) {
+            return inflight.then(value => this.cloneSymbol(value));
+        }
+
+        const resolution = this.resolveSymbolUncached(document, position);
+        this.inflightResolvedSymbols.set(cacheKey, resolution);
+
+        try {
+            const result = await resolution;
+            this.setCacheEntry(this.resolvedSymbolCache, cacheKey, this.cloneSymbol(result), RESOLVED_SYMBOL_CACHE_TTL_MS);
+            return this.cloneSymbol(result);
+        } finally {
+            this.inflightResolvedSymbols.delete(cacheKey);
+        }
+    }
+
+    private async resolveSymbolUncached(
         document: vscode.TextDocument,
         position: vscode.Position,
     ): Promise<LspSymbol | null> {
@@ -289,16 +329,36 @@ export class LspClient {
         uri: vscode.Uri,
         position: vscode.Position,
     ): Promise<vscode.Hover[] | undefined> {
+        const cacheKey = this.uriPositionCacheKey(uri, position);
+        const cached = this.hoverQueryCache.get(cacheKey);
+        if (cached && cached.expiresAt > Date.now()) {
+            return cached.value;
+        }
+        if (cached) {
+            this.hoverQueryCache.delete(cacheKey);
+        }
+
+        const inflight = this.inflightHoverQueries.get(cacheKey);
+        if (inflight) {
+            return inflight;
+        }
+
         const key = LspClient.hoverRequestKey(uri, position);
         LspClient.internalHoverRequests.set(key, (LspClient.internalHoverRequests.get(key) ?? 0) + 1);
 
+        const query = this.lspQuery<vscode.Hover[]>(
+            'vscode.executeHoverProvider',
+            uri,
+            position,
+        );
+        this.inflightHoverQueries.set(cacheKey, query);
+
         try {
-            return await this.lspQuery<vscode.Hover[]>(
-                'vscode.executeHoverProvider',
-                uri,
-                position,
-            );
+            const result = await query;
+            this.setCacheEntry(this.hoverQueryCache, cacheKey, result, HOVER_QUERY_CACHE_TTL_MS);
+            return result;
         } finally {
+            this.inflightHoverQueries.delete(cacheKey);
             const remaining = (LspClient.internalHoverRequests.get(key) ?? 1) - 1;
             if (remaining <= 0) {
                 LspClient.internalHoverRequests.delete(key);
@@ -324,9 +384,7 @@ export class LspClient {
 
     private async resolveSymbolAtLocation(loc: vscode.Location): Promise<string | null> {
         try {
-            const symbols = await this.lspQuery<vscode.DocumentSymbol[]>(
-                'vscode.executeDocumentSymbolProvider', loc.uri,
-            );
+            const symbols = await this.getDocumentSymbols(loc.uri);
             if (!symbols) return null;
 
             const findPath = (list: vscode.DocumentSymbol[]): string[] | null => {
@@ -376,6 +434,76 @@ export class LspClient {
             return mod || null;
         }
         return null;
+    }
+
+    private async getDocumentSymbols(uri: vscode.Uri): Promise<vscode.DocumentSymbol[] | undefined> {
+        const cacheKey = this.documentCacheKey(uri);
+        const cached = this.documentSymbolCache.get(cacheKey);
+        if (cached && cached.expiresAt > Date.now()) {
+            return cached.value;
+        }
+        if (cached) {
+            this.documentSymbolCache.delete(cacheKey);
+        }
+
+        const inflight = this.inflightDocumentSymbols.get(cacheKey);
+        if (inflight) {
+            return inflight;
+        }
+
+        const query = this.lspQuery<vscode.DocumentSymbol[]>(
+            'vscode.executeDocumentSymbolProvider', uri,
+        );
+        this.inflightDocumentSymbols.set(cacheKey, query);
+
+        try {
+            const result = await query;
+            this.setCacheEntry(this.documentSymbolCache, cacheKey, result, DOCUMENT_SYMBOL_CACHE_TTL_MS);
+            return result;
+        } finally {
+            this.inflightDocumentSymbols.delete(cacheKey);
+        }
+    }
+
+    private positionCacheKey(document: vscode.TextDocument, position: vscode.Position): string {
+        return `${document.uri.toString()}:${document.version}:${position.line}:${position.character}`;
+    }
+
+    private uriPositionCacheKey(uri: vscode.Uri, position: vscode.Position): string {
+        return `${this.documentCacheKey(uri)}:${position.line}:${position.character}`;
+    }
+
+    private documentCacheKey(uri: vscode.Uri): string {
+        const openDocument = vscode.workspace.textDocuments.find(document => document.uri.toString() === uri.toString());
+        return openDocument ? `${uri.toString()}:${openDocument.version}` : uri.toString();
+    }
+
+    private cloneSymbol(symbol: LspSymbol | null): LspSymbol | null {
+        if (!symbol) {
+            return null;
+        }
+
+        return {
+            ...symbol,
+            overloads: symbol.overloads ? [...symbol.overloads] : undefined,
+            protocolHints: symbol.protocolHints ? [...symbol.protocolHints] : undefined,
+        };
+    }
+
+    private setCacheEntry<T>(cache: Map<string, { expiresAt: number; value: T }>, key: string, value: T, ttlMs: number): void {
+        cache.delete(key);
+        cache.set(key, {
+            expiresAt: Date.now() + ttlMs,
+            value,
+        });
+
+        while (cache.size > MAX_CACHE_ENTRIES) {
+            const oldestKey = cache.keys().next().value;
+            if (!oldestKey) {
+                break;
+            }
+            cache.delete(oldestKey);
+        }
     }
 
     private scanPastBalanced(line: string, index: number): number {

@@ -335,10 +335,7 @@ export function activate(context: vscode.ExtensionContext) {
                 pythonStdlibCorpusEntries: overview.pythonStdlibCorpusEntries,
                 hasPythonStdlibCorpus: overview.hasPythonStdlibCorpus,
                 lastHoverTitle: hoverProvider.getLastDoc()?.title,
-                indexedPackages: hoverProvider.getIndexedPackages().map(name => ({
-                    name,
-                    count: hoverProvider.getModuleSymbols(name).length,
-                })),
+                indexedPackages: hoverProvider.getIndexedPackageSummaries(),
             };
         };
         const refreshStudio = () => {

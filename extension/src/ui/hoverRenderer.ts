@@ -20,9 +20,19 @@ export class HoverRenderer {
 
     render(doc: HoverDoc): vscode.Hover {
         const md = new vscode.MarkdownString();
-        md.isTrusted = true;
+        md.isTrusted = {
+            enabledCommands: [
+                'python-hover.pinHover',
+                'python-hover.debugPinHover',
+                'python-hover.copySignature',
+                'python-hover.copyUrl',
+                'python-hover.copyImport',
+                'python-hover.browseModule',
+                'python-hover.openDocsSide',
+                'editor.action.revealDefinition',
+            ],
+        };
         md.supportThemeIcons = true;
-        md.supportHtml = true;
 
         this.renderHeader(md, doc);
         this.renderToolbar(md, doc);
@@ -1123,7 +1133,6 @@ export class HoverRenderer {
 
     private sanitizeUrl(url: string): string {
         if (!url) return '';
-        if (url.startsWith('command:')) return url;
         if (/^[a-zA-Z]:\\/.test(url)) return vscode.Uri.file(url).toString();
         if (url.startsWith('/')) return vscode.Uri.file(url).toString();
         if (!url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('file://')) {

@@ -164,7 +164,7 @@ export class Config {
     }
 
     get hoverActivationDelay(): number {
-        return Math.min(Math.max(this.config.get('hoverActivationDelay', 0), 0), 2000);
+        return Math.min(Math.max(this.config.get('hoverActivationDelay', 75), 0), 2000);
     }
 
     get preloadPackages(): string[] {

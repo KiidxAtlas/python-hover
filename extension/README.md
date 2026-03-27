@@ -178,7 +178,7 @@ Works with zero config. Everything below is optional:
 | `python-hover.ui.showSeeAlso` | `true` | Show related links and see-also references |
 | `python-hover.requestTimeout` | `10000` | Network timeout in milliseconds |
 | `python-hover.cacheTTL.inventoryDays` | `7` | Retention hint for inventory downloads; cached inventories persist until you clear the cache |
-| `python-hover.hoverActivationDelay` | `0` | Extra delay before resolution starts on slower machines |
+| `python-hover.hoverActivationDelay` | `75` | Extra delay before resolution starts on slower machines |
 | `python-hover.ui.maxContentLength` | `800` | Max characters before "Read more…" truncation |
 
 <details>
