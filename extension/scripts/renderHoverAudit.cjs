@@ -65,14 +65,14 @@ printSample('Stdlib-style API (corpus + URL)', {
 });
 
 // ── Third-party with long signature ───────────────────────────────────────
-printSample('Third-party method (Sphinx source chip)', {
+printSample('Third-party method (corpus source chip)', {
     title: 'FastAPI.get',
     kind: 'method',
     signature: '(self, path: str) -> Callable[..., Any]',
     summary: 'Add a path operation using HTTP GET.',
     url: 'https://fastapi.tiangolo.com/reference/fastapi/#fastapi.FastAPI.get',
     devdocsUrl: 'https://devdocs.io/fastapi/',
-    source: ResolutionSource.Sphinx,
+    source: ResolutionSource.Corpus,
     module: 'fastapi',
 });
 
@@ -96,7 +96,7 @@ printSample('Import line module card', {
     installedVersion: '2.2.0',
     url: 'https://pandas.pydata.org/docs/index.html',
     devdocsUrl: 'https://devdocs.io/pandas~2/',
-    source: ResolutionSource.Sphinx,
+    source: ResolutionSource.Corpus,
     module: 'pandas',
 });
 

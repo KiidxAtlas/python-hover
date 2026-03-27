@@ -54,31 +54,29 @@ export class SearchFallback {
      * pressing Tab in the DevDocs UI.  This prevents cross-language results
      * (e.g. Haxe's Python-target API docs) from appearing.
      *
-     * stdlib  → always scoped to `python`
+     * stdlib  → scoped to `python~3`
      * known 3rd-party → scoped to its registered DevDocs doc-set name
-     * unknown 3rd-party → no URL returned (null); caller decides what to show
+     * unknown 3rd-party → unscoped search (symbol name only)
      */
     getDevDocsUrl(key: DocKey): string | null {
         const cleanName = (key.qualname || key.name).replace(/^builtins\./, '');
+        const leafTerm = cleanName.split('.').slice(-2).join('.') || cleanName;
 
-        // ── stdlib ────────────────────────────────────────────────────────
+        // ── stdlib / builtins ─────────────────────────────────────────────
         if (key.isStdlib || !key.package || key.package === 'builtins') {
-            return `https://devdocs.io/#q=${encodeURIComponent(`python~3 ${cleanName}`)}`;
+            return `https://devdocs.io/#q=${encodeURIComponent(`python~3 ${leafTerm}`)}`;
         }
 
         // ── known third-party ─────────────────────────────────────────────
         const docSet = DEVDOCS_DOC_SETS[key.package.toLowerCase()];
         if (docSet) {
-            // Trim very long dotted paths: 'numpy.ndarray.mean' → 'ndarray.mean'
-            const parts = cleanName.split('.');
-            const searchTerm = parts.length > 2 ? parts.slice(-2).join('.') : cleanName;
-            return `https://devdocs.io/#q=${encodeURIComponent(`${docSet} ${searchTerm}`)}`;
+            return `https://devdocs.io/#q=${encodeURIComponent(`${docSet} ${leafTerm}`)}`;
         }
 
-        // ── unknown package ───────────────────────────────────────────────
-        // Fall back scoped to Python 3 docs — prevents cross-language results
-        // (e.g. haxe~python appearing for "python isinstance").
-        return `https://devdocs.io/#q=${encodeURIComponent(`python~3 ${cleanName}`)}`;
+        // ── unknown third-party ───────────────────────────────────────────
+        // No registered doc set — use an unscoped DevDocs search so the button
+        // still resolves to something useful.
+        return `https://devdocs.io/#q=${encodeURIComponent(leafTerm)}`;
     }
 
     async search(key: DocKey): Promise<HoverDoc> {

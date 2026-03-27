@@ -21,6 +21,31 @@ export enum ResolutionSource {
     Local = 'Local'
 }
 
+export interface IndexedSymbolSummary {
+    name: string;
+    url: string;
+    kind: string;
+    package: string;
+    title?: string;
+    module?: string;
+    signature?: string;
+    summary?: string;
+    sourceUrl?: string;
+}
+
+export interface IndexedSymbolPreview {
+    name: string;
+    title?: string;
+    kind?: string;
+    module?: string;
+    summary?: string;
+    signature?: string;
+    url?: string;
+    sourceUrl?: string;
+    source?: ResolutionSource;
+    installedVersion?: string;
+}
+
 export interface HoverDoc {
     title: string;
     kind?: string;
@@ -40,6 +65,7 @@ export interface HoverDoc {
     confidence: number; // 0.0 to 1.0
     metadata?: Record<string, any>;
     content?: string; // Legacy support
+    structuredContent?: StructuredHoverContent;
     overloads?: string[];
     protocolHints?: string[];
     seeAlso?: string[];        // Links scraped from Sphinx "See also" sections
@@ -47,6 +73,27 @@ export interface HoverDoc {
     moduleExports?: string[];     // Key exported names shown in module overview hover
     exportCount?: number;         // Total indexed symbol count for this module
     installedVersion?: string;    // Installed package version (from importlib.metadata)
+    latestVersion?: string;         // Latest version published on PyPI
+    license?: string;               // Package license (e.g. "MIT", "Apache-2.0")
+    requiresPython?: string;        // Minimum Python version (e.g. ">=3.9")
+}
+
+export interface StructuredHoverSection {
+    kind: 'paragraph' | 'code' | 'note' | 'list';
+    role?: 'summary' | 'description' | 'example' | 'note';
+    title?: string;
+    content: string;
+    language?: string;
+    items?: string[];
+}
+
+export interface StructuredHoverContent {
+    signature?: string;
+    summary?: string;
+    description?: string;
+    examples?: string[];
+    notes?: string[];
+    sections: StructuredHoverSection[];
 }
 
 export interface ParameterInfo {

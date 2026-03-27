@@ -2,7 +2,7 @@
 
 # 🐍 Python Hover
 
-### Stop alt-tabbing. Get answers in 2 seconds, never leaving your editor.
+### Stop alt-tabbing. Instant Python documentation on hover — docstrings, signatures, type hints, and examples, never leaving VS Code.
 
 [![Visual Studio Marketplace Version](https://img.shields.io/visual-studio-marketplace/v/KiidxAtlas.python-hover?color=blue&label=VS%20Marketplace&logo=visual-studio-code&style=for-the-badge)](https://marketplace.visualstudio.com/items?itemName=KiidxAtlas.python-hover)
 [![Downloads](https://img.shields.io/visual-studio-marketplace/d/KiidxAtlas.python-hover?color=success&style=for-the-badge&logo=microsoft)](https://marketplace.visualstudio.com/items?itemName=KiidxAtlas.python-hover)
@@ -11,6 +11,7 @@
 <br />
 
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/kiidxatlas)
+[![GitHub Sponsors](https://img.shields.io/badge/GitHub%20Sponsors-EA4AAA?style=for-the-badge&logo=github-sponsors&logoColor=white)](https://github.com/sponsors/KiidxAtlas)
 
 <br />
 
@@ -45,7 +46,7 @@ Python Hover is **Option B**. Zero configuration. Instant. Accurate.
 
 ## ✨ What Makes It Different
 
-Most hover extensions show you a one-liner from PyPI. **Python Hover fetches from the actual Sphinx documentation** — the same source as the official docs.
+Most hover extensions show you a one-liner from PyPI. **Python Hover fetches from the actual Sphinx documentation** — the same source as the official docs site — and combines it with live runtime introspection (docstrings, `__init__` signatures, `@dataclass` fields, `asyncio` coroutine parameters) for true Python IntelliSense on hover.
 
 | | Generic hover | **Python Hover** |
 |---|---|---|
@@ -166,13 +167,18 @@ Works with zero config. Everything below is optional:
 | Setting | Default | Description |
 |---|---|---|
 | `python-hover.enable` | `true` | Enable or disable the extension |
+| `python-hover.runtimeHelper` | `true` | Use the persistent Python helper for runtime introspection and better symbol identity |
 | `python-hover.onlineDiscovery` | `true` | Fetch Sphinx inventories and docs from the web |
+| `python-hover.docScraping` | `false` | Fetch richer third-party documentation prose, examples, and see-also sections |
 | `python-hover.docsVersion` | `"auto"` | Python docs version (`"auto"`, `"3.11"`, `"3.12"`, ...) |
 | `python-hover.ui.showSignatures` | `true` | Show function signatures in hover |
+| `python-hover.ui.showParameters` | `true` | Show the parameters table in hover |
+| `python-hover.ui.maxParameters` | `6` | Maximum number of parameters shown before truncating the table |
 | `python-hover.showPracticalExamples` | `true` | Show code examples in hover |
+| `python-hover.ui.showSeeAlso` | `true` | Show related links and see-also references |
 | `python-hover.requestTimeout` | `10000` | Network timeout in milliseconds |
-| `python-hover.cacheTTL.inventoryDays` | `7` | Days to keep Sphinx inventories cached on disk |
-| `python-hover.debounceDelay` | `150` | Milliseconds before showing hover (reduces flicker) |
+| `python-hover.cacheTTL.inventoryDays` | `7` | Retention hint for inventory downloads; cached inventories persist until you clear the cache |
+| `python-hover.hoverActivationDelay` | `0` | Extra delay before resolution starts on slower machines |
 | `python-hover.ui.maxContentLength` | `800` | Max characters before "Read more…" truncation |
 
 <details>
@@ -221,9 +227,9 @@ In offline mode you still get:
 <summary><b>Hover not appearing?</b></summary>
 
 1. Make sure the Python extension (`ms-python.python`) is installed and active
-2. Check Python Hover is enabled: `Ctrl+Shift+P` → "Python Hover: Enable"
+2. Check the `python-hover.enable` setting is still `true`
 3. Reload VS Code: `Ctrl+Shift+P` → "Reload Window"
-4. Check the output panel: View → Output → "Python Hover"
+4. Run `PyHover: Show Actions` and choose `Show PyHover Logs`
 
 </details>
 
@@ -232,8 +238,9 @@ In offline mode you still get:
 
 1. Make sure the library is imported in the file you are hovering
 2. Check the library has Sphinx docs (most popular packages do)
-3. Clear cache and retry: `Ctrl+Shift+P` → "Python Hover: Clear Cache"
-4. For private packages, use the `customLibraries` setting
+3. Confirm `python-hover.onlineDiscovery` is enabled
+4. Run `PyHover: Show Actions` and choose `Clear Documentation Cache (Keep Python Corpus)` if you want to force a fresh fetch
+5. For private packages, use the `customLibraries` setting
 
 </details>
 

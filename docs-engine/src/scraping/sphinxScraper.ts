@@ -1,6 +1,12 @@
 import * as https from 'https';
 import { Logger } from '../../../extension/src/logger';
+import { StructuredHoverContent, StructuredHoverSection } from '../../../shared/types';
 import { DiskCache } from '../cache/diskCache';
+
+const DOCS_REQUEST_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (compatible; PyHover/0.6; +https://github.com/KiidxAtlas/python-hover)',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+};
 
 export class SphinxScraper {
     private diskCache: DiskCache;
@@ -22,34 +28,22 @@ export class SphinxScraper {
         return url;
     }
 
-    private contentCacheKey(url: string): string {
-        return `scrape-content:${this.normalizeToHttps(url)}`;
+    getCachedContent(packageName: string, url: string, group?: string): string | null {
+        return this.diskCache.getCorpusEntry(packageName, this.normalizeToHttps(url), group)?.content ?? null;
     }
 
-    private seeAlsoCacheKey(url: string): string {
-        return `scrape-seealso:${this.normalizeToHttps(url)}`;
+    getCachedStructuredContent(packageName: string, url: string, group?: string): StructuredHoverContent | null {
+        return this.diskCache.getCorpusEntry(packageName, this.normalizeToHttps(url), group)?.structuredContent ?? null;
     }
 
-    getCachedContent(url: string): string | null {
-        return this.diskCache.get(this.contentCacheKey(url)) ?? null;
+    getCachedSeeAlso(packageName: string, url: string, group?: string): string[] | null {
+        return this.diskCache.getCorpusEntry(packageName, this.normalizeToHttps(url), group)?.seeAlso ?? null;
     }
 
-    getCachedSeeAlso(url: string): string[] | null {
-        const cached = this.diskCache.get(this.seeAlsoCacheKey(url));
-        if (!cached) return null;
-
-        try {
-            const parsed = JSON.parse(cached);
-            return Array.isArray(parsed) ? parsed.filter(item => typeof item === 'string') : null;
-        } catch {
-            return null;
-        }
-    }
-
-    async fetchSeeAlso(url: string): Promise<string[]> {
+    async fetchSeeAlso(packageName: string, url: string, group?: string, forceRefresh = false): Promise<string[]> {
         try {
             const normalizedUrl = this.normalizeToHttps(url);
-            const cached = this.getCachedSeeAlso(normalizedUrl);
+            const cached = forceRefresh ? null : this.getCachedSeeAlso(packageName, normalizedUrl, group);
             if (cached) return cached;
 
             const [baseUrl, anchor] = normalizedUrl.split('#');
@@ -58,7 +52,7 @@ export class SphinxScraper {
             if (!anchor || !html) return [];
 
             const extracted = this.extractSeeAlso(html, anchor, baseUrl);
-            this.diskCache.set(this.seeAlsoCacheKey(normalizedUrl), JSON.stringify(extracted));
+            this.diskCache.setCorpusEntry(packageName, normalizedUrl, { seeAlso: extracted }, group);
             return extracted;
         } catch {
             return [];
@@ -98,10 +92,10 @@ export class SphinxScraper {
         return [...new Set(results)].slice(0, 8); // dedupe + limit
     }
 
-    async fetchContent(url: string): Promise<string | null> {
+    async fetchContent(packageName: string, url: string, group?: string, forceRefresh = false): Promise<string | null> {
         try {
             const normalizedUrl = this.normalizeToHttps(url);
-            const cached = this.getCachedContent(normalizedUrl);
+            const cached = forceRefresh ? null : this.getCachedContent(packageName, normalizedUrl, group);
             if (cached) return cached;
 
             const [baseUrl, anchor] = normalizedUrl.split('#');
@@ -117,7 +111,12 @@ export class SphinxScraper {
                 : this.extractPageSummary(html!, baseUrl);
 
             if (extracted) {
-                this.diskCache.set(this.contentCacheKey(normalizedUrl), extracted);
+                const derivedSeeAlso = this.deriveSeeAlsoFromMarkdown(extracted);
+                this.diskCache.setCorpusEntry(packageName, normalizedUrl, {
+                    content: extracted,
+                    structuredContent: this.deriveStructuredContent(extracted),
+                    seeAlso: derivedSeeAlso.length > 0 ? derivedSeeAlso : undefined,
+                }, group);
             }
 
             return extracted;
@@ -125,6 +124,261 @@ export class SphinxScraper {
             Logger.error(`SphinxScraper failed for ${url}:`, e);
             return null;
         }
+    }
+
+    deriveStructuredContent(markdown: string): StructuredHoverContent | undefined {
+        const trimmed = this.stripOrphanFenceLines(markdown.trim());
+        if (!trimmed) return undefined;
+
+        const blocks = this.splitMarkdownBlocks(trimmed);
+        const sections: StructuredHoverSection[] = [];
+        const examples: string[] = [];
+        const notes: string[] = [];
+        let summary: string | undefined;
+        let signature: string | undefined;
+        let pendingTitle: string | undefined;
+        let activeRole: StructuredHoverSection['role'] | undefined;
+
+        for (const [blockIndex, block] of blocks.entries()) {
+            const title = this.extractSectionTitle(block);
+            if (title) {
+                if (!signature && this.isSignatureLikeParagraph(title)) {
+                    signature = title;
+                    pendingTitle = undefined;
+                    activeRole = undefined;
+                    continue;
+                }
+                pendingTitle = title;
+                activeRole = this.inferSectionRole(title);
+                continue;
+            }
+
+            const titleForSection = pendingTitle;
+            const role = titleForSection ? this.inferSectionRole(titleForSection) : activeRole ?? 'description';
+            if (this.extractSeeAlsoItems(block)) {
+                pendingTitle = undefined;
+                activeRole = undefined;
+                continue;
+            }
+
+            const fenced = this.parseFencedCodeBlock(block);
+            if (fenced) {
+                const code = fenced.code.trim();
+                if (!code) continue;
+
+                if (!signature) {
+                    const candidate = this.extractSignatureFromCodeBlock(code);
+                    if (candidate && role !== 'example') {
+                        signature = candidate;
+                        pendingTitle = undefined;
+                        continue;
+                    }
+                }
+
+                const sectionRole = role === 'example' ? 'example' : 'description';
+                sections.push({
+                    kind: 'code',
+                    role: sectionRole,
+                    title: titleForSection,
+                    content: code,
+                    language: fenced.language || undefined,
+                });
+                if (sectionRole === 'example') {
+                    examples.push(code);
+                }
+                pendingTitle = undefined;
+                continue;
+            }
+
+            if (this.isDoctestTranscriptBlock(block)) {
+                const code = block.trim();
+                sections.push({
+                    kind: 'code',
+                    role: 'example',
+                    title: titleForSection,
+                    content: code,
+                    language: 'python',
+                });
+                examples.push(code);
+                pendingTitle = undefined;
+                continue;
+            }
+
+            const normalized = block.trim();
+            if (!normalized) {
+                pendingTitle = undefined;
+                continue;
+            }
+
+            if (!signature && this.isSignatureLikeParagraph(normalized)) {
+                signature = normalized;
+                pendingTitle = undefined;
+                continue;
+            }
+
+            if (this.isGrammarLikeParagraph(normalized)) {
+                sections.push({
+                    kind: 'code',
+                    role: 'description',
+                    title: titleForSection || 'Syntax',
+                    content: this.normalizeGrammarParagraph(normalized),
+                    language: 'text',
+                });
+                pendingTitle = undefined;
+                continue;
+            }
+
+            const listItems = this.parseListItems(normalized);
+            if (listItems) {
+                const sectionRole = role === 'note'
+                    ? 'note'
+                    : role === 'example'
+                        ? 'example'
+                        : 'description';
+                sections.push({
+                    kind: 'list',
+                    role: sectionRole,
+                    title: titleForSection,
+                    content: normalized,
+                    items: listItems,
+                });
+                if (sectionRole === 'note') {
+                    notes.push(...listItems);
+                } else if (sectionRole === 'example') {
+                    examples.push(listItems.map(item => `- ${item}`).join('\n'));
+                }
+                pendingTitle = undefined;
+                continue;
+            }
+
+            if (this.isNoteLikeParagraph(normalized) || role === 'note') {
+                sections.push({
+                    kind: 'note',
+                    role: 'note',
+                    title: titleForSection,
+                    content: normalized,
+                });
+                notes.push(normalized);
+                pendingTitle = undefined;
+                continue;
+            }
+
+            if (role === 'example') {
+                sections.push({
+                    kind: 'paragraph',
+                    role: 'example',
+                    title: titleForSection,
+                    content: normalized,
+                });
+                examples.push(normalized);
+                pendingTitle = undefined;
+                continue;
+            }
+
+            const summaryCandidate = this.stripExampleLeadIn(normalized, blocks[blockIndex + 1]);
+            if (!summary && summaryCandidate) {
+                summary = summaryCandidate;
+                sections.push({
+                    kind: 'paragraph',
+                    role: 'summary',
+                    title: titleForSection,
+                    content: summaryCandidate,
+                });
+                activeRole = summaryCandidate !== normalized ? 'example' : undefined;
+                pendingTitle = undefined;
+                continue;
+            }
+
+            sections.push({
+                kind: 'paragraph',
+                role: 'description',
+                title: titleForSection,
+                content: normalized,
+            });
+            pendingTitle = undefined;
+        }
+
+        const descriptionParts = sections
+            .filter(section => section.role === 'description')
+            .map(section => this.serializeSection(section));
+        const description = descriptionParts.length > 0 ? descriptionParts.join('\n\n') : undefined;
+
+        if (!signature && !summary && !description && examples.length === 0 && notes.length === 0) {
+            return undefined;
+        }
+
+        return {
+            signature,
+            summary,
+            description,
+            examples: examples.length > 0 ? examples : undefined,
+            notes: notes.length > 0 ? notes : undefined,
+            sections,
+        };
+    }
+
+    private extractSectionTitle(block: string): string | undefined {
+        const trimmed = block.trim();
+        const boldMatch = /^\*\*([^*\n][\s\S]*?)\*\*$/.exec(trimmed);
+        if (boldMatch) {
+            return this.normalizeSectionTitle(boldMatch[1]);
+        }
+
+        const headingMatch = /^#{1,6}\s+(.+)$/.exec(trimmed);
+        if (headingMatch) {
+            return this.normalizeSectionTitle(headingMatch[1]);
+        }
+
+        return undefined;
+    }
+
+    private normalizeSectionTitle(title: string): string {
+        return title.replace(/\s+/g, ' ').trim().replace(/:$/, '');
+    }
+
+    private inferSectionRole(title?: string): StructuredHoverSection['role'] {
+        if (!title) return 'description';
+
+        if (/^(?:Examples?|Usage|Demo)\b/i.test(title)) return 'example';
+        if (/^(?:Note|Notes|Warning|Warnings|Caution|Important|Tip|Tips|Changed in version|New in version|Deprecated)\b/i.test(title)) {
+            return 'note';
+        }
+
+        return 'description';
+    }
+
+    private parseListItems(block: string): string[] | undefined {
+        const lines = block
+            .split('\n')
+            .map(line => line.trim())
+            .filter(Boolean);
+        if (lines.length === 0) return undefined;
+
+        const items: string[] = [];
+        for (const line of lines) {
+            const bulletMatch = /^(?:[-*]|\d+\.)\s+(.+)$/.exec(line);
+            if (!bulletMatch) {
+                return undefined;
+            }
+            items.push(bulletMatch[1].trim());
+        }
+
+        return items.length > 0 ? items : undefined;
+    }
+
+    private serializeSection(section: StructuredHoverSection): string {
+        const heading = section.title ? `**${section.title}**\n\n` : '';
+
+        if (section.kind === 'code') {
+            const language = section.language || 'python';
+            return `${heading}\`\`\`${language}\n${section.content}\n\`\`\``;
+        }
+
+        if (section.kind === 'list' && section.items && section.items.length > 0) {
+            return `${heading}${section.items.map(item => `- ${item}`).join('\n')}`;
+        }
+
+        return `${heading}${section.content}`;
     }
 
     private extractPageSummary(html: string, pageUrl: string): string | null {
@@ -168,6 +422,145 @@ export class SphinxScraper {
         return paragraphs.length > 0 ? paragraphs.join('\n\n') : null;
     }
 
+    private splitMarkdownBlocks(markdown: string): string[] {
+        const blocks: string[] = [];
+        const lines = markdown.split('\n');
+        const current: string[] = [];
+        let inFence = false;
+
+        const flush = () => {
+            const block = current.join('\n').trim();
+            if (block) blocks.push(block);
+            current.length = 0;
+        };
+
+        for (const [lineIndex, line] of lines.entries()) {
+            if (/^```/.test(line.trim())) {
+                if (!inFence && !this.hasFenceAhead(lines, lineIndex + 1)) {
+                    continue;
+                }
+                if (!inFence && current.length > 0) {
+                    flush();
+                }
+                current.push(line);
+                inFence = !inFence;
+                if (!inFence) {
+                    flush();
+                }
+                continue;
+            }
+
+            if (inFence) {
+                current.push(line);
+                continue;
+            }
+
+            if (!line.trim()) {
+                flush();
+                continue;
+            }
+
+            current.push(line);
+        }
+
+        flush();
+        return blocks;
+    }
+
+    private hasFenceAhead(lines: string[], startIndex: number): boolean {
+        for (let index = startIndex; index < lines.length; index++) {
+            if (/^```/.test(lines[index].trim())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private extractSeeAlsoItems(block: string): string[] | undefined {
+        const trimmed = block.trim();
+        const match = /^See also\s+([\s\S]+)$/i.exec(trimmed);
+        if (!match) return undefined;
+
+        const raw = match[1].trim();
+        if (!raw) return undefined;
+
+        const links = [...raw.matchAll(/\[([^\]]+)\]\(([^)]+)\)/g)].map(([, text, href]) => `[${text}](${href})`);
+        if (links.length > 0) {
+            return links;
+        }
+
+        return raw
+            .split(/,|\s+or\s+/i)
+            .map(item => item.trim())
+            .filter(Boolean);
+    }
+
+    private isDoctestTranscriptBlock(block: string): boolean {
+        const lines = block
+            .split('\n')
+            .map(line => line.trim())
+            .filter(Boolean);
+        if (lines.length === 0) return false;
+
+        const promptLines = lines.filter(line => /^>>>\s/.test(line) || /^\.\.\.\s/.test(line)).length;
+        if (promptLines === 0) return false;
+
+        return promptLines >= 1;
+    }
+
+    private stripExampleLeadIn(text: string, nextBlock?: string): string {
+        if (!nextBlock) return text;
+        if (!/(?:For example|Examples?)\s*:\s*$/i.test(text)) return text;
+        if (!this.isDoctestTranscriptBlock(nextBlock) && !this.parseFencedCodeBlock(nextBlock)) {
+            return text;
+        }
+
+        return text.replace(/\s*(?:For example|Examples?)\s*:\s*$/i, '').trim();
+    }
+
+    deriveSeeAlsoFromMarkdown(markdown: string): string[] {
+        const blocks = this.splitMarkdownBlocks(markdown);
+        const items = blocks
+            .map(block => this.extractSeeAlsoItems(block) ?? [])
+            .flat();
+        return [...new Set(items)];
+    }
+
+    private parseFencedCodeBlock(block: string): { language: string; code: string } | null {
+        const match = /^```([A-Za-z0-9_-]*)\n([\s\S]*?)\n```$/.exec(block.trim());
+        if (!match) return null;
+        return {
+            language: match[1] || '',
+            code: match[2],
+        };
+    }
+
+    private extractSignatureFromCodeBlock(code: string): string | undefined {
+        const lines = code
+            .split('\n')
+            .map(line => line.trim())
+            .filter(Boolean);
+        if (lines.length !== 1) return undefined;
+
+        const candidate = lines[0];
+        if (candidate.includes('#')) return undefined;
+        return this.isSignatureLikeParagraph(candidate) ? candidate : undefined;
+    }
+
+    private isSignatureLikeParagraph(text: string): boolean {
+        const normalized = text.replace(/[`*_]/g, '').trim();
+        if (!normalized) return false;
+
+        return /^(?:class|async\s+def|def)\s+[A-Za-z_][\w.]*\s*\(.*\)\s*(?:->\s*.+)?$/i.test(normalized)
+            || /^[A-Za-z_][\w.]*\s*\(.*\)\s*(?:->\s*.+)?$/.test(normalized);
+    }
+
+    private isNoteLikeParagraph(text: string): boolean {
+        return /^(?:Note|Warning|Caution|Important|Tip):\s+/i.test(text)
+            || /^(?:New|Changed|Added) in version\s+/i.test(text)
+            || /^Deprecated since\s+/i.test(text);
+    }
+
     /** Insert into htmlCache, evicting the oldest entry when the cap is reached. */
     private setHtmlCache(url: string, html: string): void {
         if (this.htmlCache.size >= SphinxScraper.HTML_CACHE_MAX) {
@@ -180,7 +573,7 @@ export class SphinxScraper {
     private fetchHtml(url: string): Promise<string> {
         const httpsUrl = this.normalizeToHttps(url);
         return new Promise((resolve, reject) => {
-            const req = https.get(httpsUrl, { timeout: this.timeout }, (res) => {
+            const req = https.get(httpsUrl, { timeout: this.timeout, headers: DOCS_REQUEST_HEADERS }, (res) => {
                 if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
                     const redirectUrl = this.normalizeToHttps(new URL(res.headers.location, httpsUrl).toString());
                     this.fetchHtml(redirectUrl).then(resolve).catch(reject);
@@ -226,32 +619,15 @@ export class SphinxScraper {
         let content = '';
 
         if (tagName === 'dt') {
-            // Sphinx function/class anchor: capture the <dd> that follows the <dt>
+            // Sphinx definitions can have multiple consecutive <dt> signatures before
+            // a shared <dd> body (for example, range(stop) and range(start, stop, step)).
+            // Capture the signature block plus the shared body so summary extraction can
+            // skip the signatures and use the first real paragraph.
             const rest = html.substring(tagStart);
-            const dtCloseIdx = rest.indexOf('</dt>');
+            const dtBlock = this.extractDefinitionListEntry(rest);
 
-            if (dtCloseIdx !== -1) {
-                const afterDt = rest.substring(dtCloseIdx + 5);
-                // Find the immediately following <dd>
-                const ddOpenMatch = afterDt.match(/^(\s*)<dd([^>]*)>/i);
-                if (ddOpenMatch) {
-                    const ddTagLen = ddOpenMatch[0].length;
-                    const ddBodyStart = ddTagLen;
-                    const ddEnd = this.findBalancedClose(afterDt, 0, 'dd');
-                    if (ddEnd !== -1) {
-                        content = afterDt.substring(ddBodyStart, ddEnd);
-                    } else {
-                        content = afterDt.substring(ddBodyStart, ddBodyStart + 4000);
-                    }
-                } else {
-                    // No <dd> — fall back to capturing until next sibling dt or </dl>
-                    const nextDt = rest.indexOf('<dt', 1);
-                    const endDl = rest.indexOf('</dl>');
-                    let end = rest.length;
-                    if (nextDt !== -1) end = Math.min(end, nextDt);
-                    if (endDl !== -1) end = Math.min(end, endDl);
-                    content = rest.substring(0, end);
-                }
+            if (dtBlock) {
+                content = dtBlock;
             } else {
                 // Malformed HTML — capture a safe chunk
                 content = rest.substring(0, 3000);
@@ -268,13 +644,148 @@ export class SphinxScraper {
             content = nextHeader !== -1 ? body.substring(0, nextHeader) : body.substring(0, 2000);
         }
 
-        const md = this.htmlToMarkdown(content, pageUrl);
+        const md = this.normalizeExtractedMarkdown(this.htmlToMarkdown(content, pageUrl));
         // Trim to a reasonable hover length
         if (md.length > 1500) {
             const cut = md.lastIndexOf('\n\n', 1500);
             return (cut > 800 ? md.substring(0, cut) : md.substring(0, 1500)) + '\n\n…';
         }
         return md || null;
+    }
+
+    private extractDefinitionListEntry(html: string): string | null {
+        let offset = 0;
+        const signatureBlocks: string[] = [];
+
+        while (offset < html.length) {
+            offset = this.skipWhitespace(html, offset);
+            if (!html.substring(offset).toLowerCase().startsWith('<dt')) {
+                break;
+            }
+
+            const dtEnd = this.findBalancedClose(html, offset, 'dt');
+            if (dtEnd === -1) {
+                break;
+            }
+
+            const closeEnd = dtEnd + '</dt>'.length;
+            signatureBlocks.push(html.substring(offset, closeEnd));
+            offset = closeEnd;
+        }
+
+        if (signatureBlocks.length === 0) {
+            return null;
+        }
+
+        const ddStart = this.skipWhitespace(html, offset);
+        if (!html.substring(ddStart).toLowerCase().startsWith('<dd')) {
+            return signatureBlocks.join('');
+        }
+
+        const ddOpenEnd = html.indexOf('>', ddStart);
+        if (ddOpenEnd === -1) {
+            return signatureBlocks.join('');
+        }
+
+        const ddEnd = this.findBalancedClose(html, ddStart, 'dd');
+        const ddBody = ddEnd !== -1
+            ? html.substring(ddOpenEnd + 1, ddEnd)
+            : html.substring(ddOpenEnd + 1, ddOpenEnd + 4001);
+
+        return `${signatureBlocks.join('')}\n${ddBody}`;
+    }
+
+    private skipWhitespace(text: string, index: number): number {
+        let cursor = index;
+        while (cursor < text.length && /\s/.test(text[cursor])) {
+            cursor++;
+        }
+        return cursor;
+    }
+
+    private normalizeExtractedMarkdown(markdown: string): string {
+        if (!markdown) return markdown;
+
+        let cleaned = markdown.trim();
+        cleaned = cleaned.replace(/^`{1,3}\s*[A-Za-z_][\w.]*\s*`{0,3}\s*\n\n(?=```)/, '');
+        cleaned = cleaned.replace(/^``\s+[A-Za-z_][\w.]*\s*\n\n(?=```)/, '');
+        cleaned = cleaned.replace(/^`{1,3}\s*[A-Za-z_][\w.]*\s*`{0,3}\s*$/m, match => match.trim().length <= 32 ? '' : match);
+        cleaned = cleaned.replace(/^\s*\n+/, '');
+        return this.stripOrphanFenceLines(cleaned.trim());
+    }
+
+    private stripOrphanFenceLines(markdown: string): string {
+        const lines = markdown.split('\n');
+        const fenceCount = lines.filter(line => /^```/.test(line.trim())).length;
+        if (fenceCount === 0 || fenceCount % 2 === 0) {
+            return markdown;
+        }
+
+        const cleaned: string[] = [];
+        let inFence = false;
+
+        for (let index = 0; index < lines.length; index++) {
+            const line = lines[index];
+            const trimmed = line.trim();
+            if (!/^```/.test(trimmed)) {
+                cleaned.push(line);
+                continue;
+            }
+
+            if (inFence) {
+                cleaned.push(line);
+                inFence = false;
+                continue;
+            }
+
+            if (/^```\s*$/.test(trimmed)) {
+                const nextMeaningful = this.nextMeaningfulLine(lines, index + 1);
+                if (!nextMeaningful || !this.looksLikeFenceContent(nextMeaningful)) {
+                    continue;
+                }
+            }
+
+            cleaned.push(line);
+            inFence = true;
+        }
+
+        return cleaned.join('\n');
+    }
+
+    private nextMeaningfulLine(lines: string[], startIndex: number): string | undefined {
+        for (let index = startIndex; index < lines.length; index++) {
+            const trimmed = lines[index].trim();
+            if (trimmed) {
+                return trimmed;
+            }
+        }
+        return undefined;
+    }
+
+    private looksLikeFenceContent(line: string): boolean {
+        if (!line) return false;
+        if (line.startsWith('```')) return true;
+        if (this.isSignatureLikeParagraph(line)) return true;
+        if (this.isGrammarLikeParagraph(line)) return true;
+        if (line.includes('::=')) return true;
+        if (/^[A-Za-z_][\w]*\s*:\s*["'[(]/.test(line)) return true;
+        if (/^(?:>>>|\.\.\.|class\s|def\s|async\s+def\s|for\s|if\s|elif\s|while\s|with\s|try:|except\b|finally:|return\s|raise\s|yield\s|import\s|from\s)/.test(line)) {
+            return true;
+        }
+        if (/^[A-Za-z_]\w*(?:\.\w+)*\s*=\s*[^=]/.test(line)) return true;
+        return false;
+    }
+
+    private isGrammarLikeParagraph(text: string): boolean {
+        const normalized = text.replace(/[*`]/g, '').trim();
+        if (!normalized) return false;
+
+        return normalized.includes('::=')
+            || /^[A-Za-z_][\w]*(?:_[A-Za-z_][\w]*)?\s*:\s*["'[(]/.test(normalized);
+    }
+
+    private normalizeGrammarParagraph(text: string): string {
+        return text.replace(/[*`]/g, '').trim();
     }
 
     /**
@@ -343,6 +854,13 @@ export class SphinxScraper {
             return text ? `\n**${text}**\n` : '';
         });
 
+        // Strip Sphinx signature-specific emphasis BEFORE general <em> processing.
+        // <em class="property"> wraps keywords (class, def, async), and <em class="sig-param">
+        // wraps parameters. Converting these to *..* then bold-wrapping the <dt> produces
+        // "***class *Name(*arg*)**" — strip to plain text instead.
+        md = md.replace(/<em[^>]+class="[^"]*(?:property|sig-param)[^"]*"[^>]*>([\s\S]*?)<\/em>/gim,
+            (_, inner) => inner.replace(/<[^>]+>/g, ''));
+
         // Inline formatting BEFORE stripping tags
         md = md.replace(/<strong[^>]*>([\s\S]*?)<\/strong>/gim, '**$1**');
         md = md.replace(/<b[^>]*>([\s\S]*?)<\/b>/gim, '**$1**');
@@ -389,7 +907,12 @@ export class SphinxScraper {
         });
 
         // Definition lists — keep dt content as bold labels (parameter names etc.)
-        // Strip the top-level Sphinx field-list dt text (like "Parameters:", "Returns:") as bold section headers.
+        // Sphinx sig-object <dt> blocks are Python signatures — don't bold-wrap them,
+        // as their content is already plain text after the property/sig-param em stripping above.
+        md = md.replace(/<dt[^>]*class="[^"]*\bsig\b[^"]*"[^>]*>([\s\S]*?)<\/dt>/gim, (_, inner) => {
+            const text = inner.replace(/<[^>]+>/g, '').trim();
+            return text ? `\n${text}\n` : '';
+        });
         md = md.replace(/<dt[^>]*>([\s\S]*?)<\/dt>/gim, (_, inner) => {
             const text = inner.replace(/<[^>]+>/g, '').trim();
             if (!text || text === ':') return '';

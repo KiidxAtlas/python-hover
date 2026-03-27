@@ -98,6 +98,17 @@ export function cleanRstArtifacts(text: string): string {
     text = text.replace(/\|([^|\n]+)\|_?/g, '$1');
     text = text.replace(/__[ \t]*$/gm, '');
     text = text.replace(/\n{3,}/g, '\n\n');
+    // Normalize Sphinx class/function signature markdown artifacts from Python docs HTML scraping.
+    // <dt class="sig"> wraps <em class="property">class</em> and <em class="sig-param">arg</em>
+    // inside <strong>, producing "***class *Name(*arg*)**" — strip to plain "class Name(arg)".
+    text = text.replace(
+        /\*{1,3}(async def|class|def)\s+\*+([A-Za-z_][A-Za-z0-9_.]*)\s*(\([^)]*\))\s*\*{0,3}/g,
+        (_, kw, name, params) => {
+            const cleanParams = params
+                .replace(/\*([^*,()]+)\*/g, '$1')  // *arg* → arg
+                .replace(/\*{2,}/g, '*');           // *** → * (positional-only separator)
+            return `${kw} ${name}${cleanParams}`;
+        });
     return text.trim();
 }
 
@@ -124,8 +135,18 @@ export function cleanContentAnnotations(text: string): string {
  */
 export function cleanSignature(sig: string): string {
     sig = stripAnnotatedWrappers(sig);
+    sig = sig.replace(/\s*\[\[source\]\]\([^\s)]+\)/gi, '');
     sig = sig.replace(/<\w[\w.]*\s+object\s+at\s+0x[0-9a-f]+>/gi, '...');
     sig = sig.replace(/<_py_warnings\.deprecated\s+object\s+at\s+0x[0-9a-f]+>/gi, '');
+    // Normalize Sphinx signature emphasis: "***class *str(*arg*)**" → "class str(arg)"
+    sig = sig.replace(
+        /\*{1,3}(async def|class|def)\s+\*+([A-Za-z_][A-Za-z0-9_.]*)\s*(\([^)]*\))\s*\*{0,3}/g,
+        (_, kw, name, params) => {
+            const cleanParams = params
+                .replace(/\*([^*,()]+)\*/g, '$1')
+                .replace(/\*{2,}/g, '*');
+            return `${kw} ${name}${cleanParams}`;
+        });
     sig = sig.replace(/,\s*,/g, ',');
     sig = sig.replace(/\(\s*,/g, '(');
     sig = sig.replace(/,\s*\)/g, ')');

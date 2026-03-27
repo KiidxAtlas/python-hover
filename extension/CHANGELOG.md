@@ -6,6 +6,105 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.7.0] - 2026-03-26
+
+This is the first major public-stable release. Everything below 0.7.0 was active internal development — this version brings all of it to a stable, polished state.
+
+---
+
+### ✨ Hover Quality
+
+**Real documentation, not PyPI summaries**
+Python Hover fetches from actual Sphinx documentation — the same source as the official docs site — instead of showing one-liner PyPI package descriptions. You get full parameter tables, type information, and prose descriptions.
+
+**Complete keyword and operator coverage**
+All 37+ Python keywords and operators now link to their exact section anchor on docs.python.org. `elif` goes to the `if` statement section, `not` goes to boolean operations, `yield` goes to the yield statement — not just the page root.
+
+**Typing module**
+Every typing construct (`Optional`, `Union`, `Literal`, `TypeVar`, `Protocol`, `overload`, `Final`, `TypedDict`, `TypeAlias`, `ParamSpec`, `Concatenate`, `Never`, `Annotated`, `Generic`, and many more) resolves to the correct `library/typing.html#<anchor>` entry.
+
+**Built-in constants and dunder methods**
+`None`, `True`, `False`, `Ellipsis`, `__debug__`, and `__name__` link to `library/constants.html`. Dunder methods (`__init__`, `__str__`, `__repr__`, `__call__`, `__enter__`, `__exit__`, and all others) now link to the correct `reference/datamodel.html` entry instead of the wrong `stdtypes` page.
+
+---
+
+### 🔍 Smart Resolution Pipeline
+
+Six layers resolve every hover:
+
+1. **Static MAP** — instant, offline. Keywords, operators, constants, typing constructs.
+2. **LSP (Pylance)** — qualified name, kind, signature, source file path.
+3. **AST identification** — literal type detection from source code even in unsaved files.
+4. **Python runtime** — subprocess introspection for docstring, module, isStdlib.
+5. **Sphinx inventory** — `objects.inv` lookup for exact versioned doc URL.
+6. **DevDocs fallback** — scoped `#q=docset term` search when Sphinx isn't available.
+
+**Cursor-aware dotted paths:** hovering `os` in `os.path.join` shows `os` docs; hovering `join` shows `os.path.join` docs.
+
+**Import line hover:** hovering `import numpy` or `from pandas import DataFrame` shows a module overview card — description, top exports, symbol count, and a Browse link.
+
+**Alias resolution:** `import pandas as pd` → hover `pd.DataFrame` → resolves to `pandas.DataFrame` automatically.
+
+**Automatic Python version detection:** inventory URLs point to the correct Python version docs (3.10, 3.11, 3.12, etc.).
+
+---
+
+### 📦 Third-Party Libraries
+
+Works out of the box with NumPy, Pandas, Matplotlib, PyTorch, scikit-learn, Django, Flask, FastAPI, Requests, HTTPX, SQLAlchemy, Pydantic, aiohttp, and more. Auto-discovers any library that publishes Sphinx docs via PyPI. Custom/internal libraries supported via `python-hover.customLibraries` setting.
+
+---
+
+### ⚡ Performance
+
+- **Parallel LSP + definition provider:** resolves both concurrently (saves ~2 s per first hover).
+- **Parallel URL probing:** all 8 candidate doc URLs probed concurrently with `Promise.any` (down from sequential 40 s worst-case to ~5 s).
+- **Per-position hover cache:** same document version + position never calls the Python subprocess twice.
+- **Concurrent hover deduplication:** fast cursor movement never queues duplicate in-flight requests.
+- **Inventory stampede fix:** concurrent callers loading the same inventory share one in-flight fetch.
+- **Import fast-path:** import-line hovers skip the full symbol pipeline entirely.
+- **Keyword/operator speed:** < 1 ms from static map, fully offline.
+- **Session and disk caching:** Sphinx inventories cached 7 days; hover content cached per session.
+
+---
+
+### 🐛 Bug Fixes
+
+- **`"""` docstring literals no longer show `str` docs** — hovering the triple-quote of a docstring now correctly suppresses the hover instead of showing Python's `str` type documentation.
+- **`__init__` hover shows class docstring + data model link** — hovering `def __init__` now shows the enclosing class docstring and a link to `reference/datamodel.html#object.__init__`. Previously fell through to a sparse corpus entry or showed nothing.
+- **Dunder methods link to the data model reference** — dunder method doc URLs now correctly point to `reference/datamodel.html` instead of `stdtypes.html`.
+- **`@dataclass` hover shows library docs** — `typeshed-fallback/` paths were not classified as library paths, causing `@dataclass` to be treated as a local symbol with no content.
+- **Class method docstrings resolved correctly** — AST extraction was passing only the leaf name (`greet`) instead of the qualified path (`Person.greet`), causing it to miss methods inside classes.
+- **`class Person:` hover no longer redirects to Person docs** — hovering `class`, `def`, `for`, `while`, and 20+ other structural keywords now shows keyword documentation, not the following symbol's docs.
+- **`typing.List` / `typing.Union` show correct content** — Python 3.14 changed typing internals; the fix infers `isStdlib` from the LSP file path instead of the runtime, preventing fallthrough to the PyPI `typing` backport description.
+- **`typing.Union` no longer shows `(*args, **kwargs)` signature** — Pylance's `_GenericAlias.__call__` signature is suppressed for all `typing` module symbols.
+- **`os.path.join` cursor-aware** — hovering each segment of a dotted chain shows docs for that segment only.
+- **DevDocs cross-language results eliminated** — DevDocs link is now suppressed when a direct Sphinx URL is already available.
+- **Local variable names no longer query PyPI** — hovering `agg` in `agg = df.agg(...)` no longer searches PyPI for unrelated packages.
+- **`__init__` title no longer rendered as `init`** — double underscores in hover headings are now escaped to prevent Markdown consuming them.
+- **Extension icon reduced from 1.9 MB to 27 KB** — was 1024×1024; resized to the 128×128 size VS Code actually renders.
+- **Python helper correctly included in packaged extension** — was missing in 0.6.5, causing all hover lookups to fail.
+
+---
+
+### 🎨 UI
+
+- Clean visual hierarchy: Signature, Description, Parameters, Examples — each in a distinct section.
+- New status bar with quick-pick menu for all actions.
+- Buy Me a Coffee donate button in the status bar.
+- Debug panel for inspecting hover payloads and markdown output.
+- Configurable max content length with "Read more…" truncation.
+
+---
+
+### 🗜️ Package
+
+- Removed unused `safe_import.py` and stale `.vsix` build artifact.
+- Removed internal dev docs and empty directories from the repository.
+- `__pycache__` excluded from packaged extension.
+
+---
+
 ## [0.6.15] - 2026-03-22
 
 ### 🐛 Bug Fixes

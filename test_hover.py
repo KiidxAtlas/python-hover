@@ -1,21 +1,22 @@
 """PyHover test file — hover over any of the symbols below to see the improved UI."""
 
 import asyncio
+from dataclasses import dataclass
 import os
 import os.path
 from pathlib import Path
 from typing import List, Optional, Union
 
+import click
 import fastapi
 import numpy as np
 import pandas as pd
-import click
-
 
 # ── Builtins ──────────────────────────────────────────────────────────────────
 x = [1, 2, 3]  # hover over [  →  list
 y = {"a": 1}  # hover over {  →  dict
 z = "hello"  # hover over "  →  str
+template = f"value={z}"  # hover over the leading f / opening quote  →  f-string docs
 n = None  # hover over None
 e = ...  # hover over ...  →  Ellipsis
 
@@ -66,7 +67,6 @@ with open(__file__, "r", encoding="utf-8") as handle:  # hover over with / as / 
 async def fetch():  # hover over async
     await asyncio.sleep(0)  # hover over await
 
-
 def gen():
     yield 42  # hover over yield
 
@@ -86,11 +86,22 @@ def greet(name: Optional[str] = None) -> str:  # hover over Optional
     return f"Hello {name}"
 
 
+debug_label = f"{x=} {joined_text}"  # hover over the f-string prefix / opening quote
+
+
 def process(items: List[Union[int, str]]) -> None:  # hover over Union
     pass
 
 
 # ── Local code ────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class EmployeeCard:
+    name: str
+    age: int
+
+
 class Person:
     """A simple person class."""
 
@@ -102,7 +113,12 @@ class Person:
         """Return a greeting."""
         return f"Hi, I'm {self.name}"
 
+    def __str__(self) -> str:  # hover over __str__
+        return f"Person(name={self.name}, age={self.age})"
+
 
 p = Person("Alice", 30)
 msg = p.greet()  # hover over greet
 person_name = p.name.upper()  # hover over upper
+person_badge = f"{p.name=} ({p.age})"  # hover over the f-string prefix / opening quote
+card = EmployeeCard("Alice", 30)  # hover over dataclass / EmployeeCard

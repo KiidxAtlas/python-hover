@@ -1,6 +1,6 @@
 import * as https from 'https';
 import { Logger } from '../../../extension/src/logger';
-import { DocKey, HoverDoc } from '../../../shared/types';
+import { DocKey, HoverDoc, IndexedSymbolSummary } from '../../../shared/types';
 import { DiskCache } from '../cache/diskCache';
 import { PyPiClient } from '../pypi/pypiClient';
 import { InventoryParser } from './inventoryParser';
@@ -85,7 +85,23 @@ const WARMUP_PACKAGES = [
     'typing', 'asyncio', 'builtins',
 ];
 
+const DOCS_REQUEST_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (compatible; PyHover/0.6; +https://github.com/KiidxAtlas/python-hover)',
+    'Accept': '*/*',
+};
+
 export class InventoryFetcher {
+    private static readonly STDLIB_INVENTORY_CACHE = '__python_stdlib__';
+    private static readonly CORPUS_META_PAGE_PATTERNS = [
+        /\/py-modindex\/?$/i,
+        /\/genindex\/?$/i,
+        /\/search\/?$/i,
+        /\/search\.html$/i,
+        /\/modindex\/?$/i,
+        /\/objects\.inv$/i,
+        /\/welcome\/?$/i,
+    ];
+
     private parser: InventoryParser;
     private pypiClient: PyPiClient;
     private cache: Map<string, Map<string, HoverDoc>>; // Map<Package, Map<Symbol, Doc>>
@@ -157,21 +173,50 @@ export class InventoryFetcher {
         }
     }
 
+    async ensurePackageLoaded(packageName: string, version?: string, isStdlib?: boolean): Promise<void> {
+        await this.ensureInventoryLoaded(packageName, version, isStdlib);
+    }
+
+    async hydrateCachedInventories(): Promise<string[]> {
+        const cachedPackages = this.diskCache.listCachedInventoryPackages();
+        if (cachedPackages.length === 0) {
+            return this.getIndexedPackages();
+        }
+
+        await Promise.all(
+            cachedPackages.map(packageName =>
+                this.ensurePackageLoaded(packageName, undefined, packageName === 'builtins').catch(() => undefined)
+            )
+        );
+
+        return this.getIndexedPackages();
+    }
+
     /**
      * Single entry for kicking off loads — shares the same promise as findInInventory so
      * warmup + hovers never download the same objects.inv twice in parallel.
      */
     private ensureInventoryLoaded(packageName: string, version?: string, isStdlib?: boolean): Promise<void> {
-        if (this.cache.has(packageName)) {
+        const inventoryCacheName = this.getInventoryCacheName(packageName, isStdlib);
+        if (this.cache.has(packageName) || this.cache.has(inventoryCacheName)) {
+            if (!this.cache.has(packageName) && this.cache.has(inventoryCacheName)) {
+                this.cache.set(packageName, this.cache.get(inventoryCacheName)!);
+            }
             return Promise.resolve();
         }
-        let p = this.loadingPromises.get(packageName);
+        let p = this.loadingPromises.get(inventoryCacheName);
         if (!p) {
             p = this.loadInventory(packageName, version, isStdlib);
-            this.loadingPromises.set(packageName, p);
-            p.finally(() => this.loadingPromises.delete(packageName));
+            this.loadingPromises.set(inventoryCacheName, p);
+            p.finally(() => this.loadingPromises.delete(inventoryCacheName));
         }
         return p;
+    }
+
+    private getInventoryCacheName(packageName: string, isStdlib?: boolean): string {
+        return (isStdlib || packageName === 'builtins' || packageName === 'python')
+            ? InventoryFetcher.STDLIB_INVENTORY_CACHE
+            : packageName;
     }
 
     private async resolveBaseUrl(packageName: string, version?: string, isStdlib?: boolean): Promise<string> {
@@ -242,7 +287,7 @@ export class InventoryFetcher {
         const httpsUrl = this.normalizeToHttps(url);
 
         return new Promise((resolve) => {
-            const req = https.request(httpsUrl, { method: 'HEAD', timeout: 5000 }, (res) => {
+            const req = https.request(httpsUrl, { method: 'HEAD', timeout: 5000, headers: DOCS_REQUEST_HEADERS }, (res) => {
                 // Accept 200 OK or 3xx Redirects (which fetchBuffer handles)
                 if (res.statusCode && (res.statusCode === 200 || (res.statusCode >= 300 && res.statusCode < 400))) {
                     resolve(true);
@@ -350,7 +395,8 @@ export class InventoryFetcher {
     }
 
     private async loadInventory(packageName: string, version?: string, isStdlib?: boolean): Promise<void> {
-        const cacheKey = `inventory:${packageName}:${version || 'latest'}`;
+        const inventoryCacheName = this.getInventoryCacheName(packageName, isStdlib);
+        const cacheKey = `inventory:${inventoryCacheName}:${version || 'latest'}`;
 
         // 1. Try Disk Cache
         const cached = this.diskCache.get(cacheKey);
@@ -358,17 +404,23 @@ export class InventoryFetcher {
             try {
                 const data = JSON.parse(cached);
                 const inventory = new Map<string, HoverDoc>(Object.entries(data));
-                this.cache.set(packageName, inventory);
+                this.cache.set(inventoryCacheName, inventory);
+                if (packageName !== inventoryCacheName) {
+                    this.cache.set(packageName, inventory);
+                }
 
                 // Restore the base URL so module-overview hovers can build a Docs link.
                 // When loading from disk cache we return early and never call resolveBaseUrl,
                 // so packageBaseUrls would stay empty without this.
-                if (!this.packageBaseUrls.has(packageName)) {
+                if (!this.packageBaseUrls.has(packageName) && !this.packageBaseUrls.has(inventoryCacheName)) {
                     const knownUrl = this.useKnownDocsUrls ? KNOWN_DOCS_URLS[packageName.toLowerCase()] : undefined;
                     if (knownUrl) {
+                        this.packageBaseUrls.set(inventoryCacheName, knownUrl);
                         this.packageBaseUrls.set(packageName, knownUrl);
                     } else if (isStdlib || packageName === 'builtins' || packageName === 'python') {
-                        this.packageBaseUrls.set(packageName, `https://docs.python.org/${this.pythonVersion}`);
+                        const stdlibUrl = `https://docs.python.org/${this.pythonVersion}`;
+                        this.packageBaseUrls.set(inventoryCacheName, stdlibUrl);
+                        this.packageBaseUrls.set(packageName, stdlibUrl);
                     }
                 }
 
@@ -379,16 +431,24 @@ export class InventoryFetcher {
             }
         }
 
-        const negKey = `inv-fail:${packageName}`;
+        const negKey = `inv-fail:${inventoryCacheName}`;
         if (this.diskCache.get(negKey)) {
-            this.cache.set(packageName, new Map());
+            const empty = new Map<string, HoverDoc>();
+            this.cache.set(inventoryCacheName, empty);
+            if (packageName !== inventoryCacheName) {
+                this.cache.set(packageName, empty);
+            }
             return;
         }
 
         // 2. Fetch from Network
         if (!this.allowNetwork) {
             Logger.log(`Network disabled, skipping inventory fetch for ${packageName}`);
-            this.cache.set(packageName, new Map());
+            const empty = new Map<string, HoverDoc>();
+            this.cache.set(inventoryCacheName, empty);
+            if (packageName !== inventoryCacheName) {
+                this.cache.set(packageName, empty);
+            }
             return;
         }
 
@@ -398,7 +458,12 @@ export class InventoryFetcher {
         try {
             const buffer = await this.fetchBuffer(inventoryUrl);
             const inventory = this.parser.parse(buffer, baseUrl);
-            this.cache.set(packageName, inventory);
+            this.cache.set(inventoryCacheName, inventory);
+            if (packageName !== inventoryCacheName) {
+                this.cache.set(packageName, inventory);
+            }
+            this.packageBaseUrls.set(inventoryCacheName, baseUrl);
+            this.packageBaseUrls.set(packageName, baseUrl);
             Logger.log(`Loaded inventory for ${packageName}: ${inventory.size} items`);
 
             // 3. Save to Disk Cache
@@ -419,7 +484,11 @@ export class InventoryFetcher {
                     Logger.log(`Retrying stdlib inventory with canonical URL: ${fallbackUrl}`);
                     const buffer = await this.fetchBuffer(fallbackUrl);
                     const inventory = this.parser.parse(buffer, fallbackBase);
-                    this.cache.set(packageName, inventory);
+                    this.cache.set(inventoryCacheName, inventory);
+                    if (packageName !== inventoryCacheName) {
+                        this.cache.set(packageName, inventory);
+                    }
+                    this.packageBaseUrls.set(inventoryCacheName, fallbackBase);
                     this.packageBaseUrls.set(packageName, fallbackBase);
                     Logger.log(`Loaded stdlib inventory from canonical URL: ${inventory.size} items`);
                     const obj = Object.fromEntries(inventory);
@@ -430,7 +499,11 @@ export class InventoryFetcher {
                 }
             }
 
-            this.cache.set(packageName, new Map());
+            const empty = new Map<string, HoverDoc>();
+            this.cache.set(inventoryCacheName, empty);
+            if (packageName !== inventoryCacheName) {
+                this.cache.set(packageName, empty);
+            }
             this.diskCache.set(negKey, '1');
         }
     }
@@ -482,14 +555,18 @@ export class InventoryFetcher {
         return this.cache.get(packageName)?.size ?? 0;
     }
 
-    searchSymbols(query: string): Array<{ name: string; url: string; kind: string; package: string }> {
+    searchSymbols(query: string): IndexedSymbolSummary[] {
         const q = query.toLowerCase().trim();
         if (!q) return [];
-        const results: Array<{ name: string; url: string; kind: string; package: string }> = [];
+        const results: IndexedSymbolSummary[] = [];
+        const seen = new Set<string>();
         for (const [pkg, inventory] of this.cache) {
             for (const [name, doc] of inventory) {
                 if (name.toLowerCase().includes(q)) {
-                    results.push({ name, url: doc.url || '', kind: doc.kind || 'symbol', package: pkg });
+                    const key = `${name}|${doc.url || ''}|${doc.kind || 'symbol'}`;
+                    if (seen.has(key)) continue;
+                    seen.add(key);
+                    results.push(this.toIndexedSymbolSummary(name, doc, pkg));
                 }
             }
         }
@@ -504,6 +581,69 @@ export class InventoryFetcher {
                 return a.name.localeCompare(b.name);
             })
             .slice(0, 200);
+    }
+
+    getModuleSymbols(moduleName: string, maxSymbols = 5000): IndexedSymbolSummary[] {
+        const normalized = moduleName.trim();
+        if (!normalized) return [];
+
+        const results: IndexedSymbolSummary[] = [];
+        const seen = new Set<string>();
+        for (const [pkg, inventory] of this.cache) {
+            for (const [name, doc] of inventory) {
+                if (name === normalized || name.startsWith(`${normalized}.`) || pkg === normalized) {
+                    const key = `${name}|${doc.url || ''}|${doc.kind || 'symbol'}`;
+                    if (seen.has(key)) continue;
+                    seen.add(key);
+                    results.push(this.toIndexedSymbolSummary(name, doc, pkg));
+                }
+            }
+        }
+
+        return results
+            .sort((a, b) => a.name.localeCompare(b.name))
+            .slice(0, maxSymbols);
+    }
+
+    getIndexedPackages(): string[] {
+        return [...this.cache.keys()].sort((a, b) => a.localeCompare(b));
+    }
+
+    private toIndexedSymbolSummary(name: string, doc: HoverDoc, pkg: string): IndexedSymbolSummary {
+        return {
+            name,
+            url: doc.url || '',
+            kind: doc.kind || 'symbol',
+            package: pkg,
+            title: doc.title || name,
+            module: doc.module,
+            signature: doc.signature,
+            summary: this.extractPreviewText(doc),
+            sourceUrl: doc.sourceUrl,
+        };
+    }
+
+    private extractPreviewText(doc: HoverDoc): string | undefined {
+        const candidate = doc.summary
+            || doc.structuredContent?.summary
+            || doc.structuredContent?.description
+            || doc.content;
+        const cleaned = candidate
+            ?.replace(/```[\s\S]*?```/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+
+        if (!cleaned) return undefined;
+        if (
+            cleaned.startsWith('Documentation for')
+            || cleaned.startsWith('Documentation from')
+            || cleaned === 'No documentation found.'
+            || cleaned === 'Documentation lookup failed.'
+        ) {
+            return undefined;
+        }
+
+        return cleaned;
     }
 
     getIndexedSymbolCount(): number {
@@ -526,11 +666,37 @@ export class InventoryFetcher {
         for (const doc of inventory.values()) {
             if (!doc.url) continue;
             const pageUrl = doc.url.split('#')[0];
+            if (!pageUrl || this.shouldSkipCorpusPageUrl(pageUrl)) continue;
             if (pageUrl) pages.add(pageUrl);
             if (pages.size >= maxPages) break;
         }
 
         return [...pages];
+    }
+
+    getPackageSymbolTargets(packageName: string, maxTargets = 20_000): Array<{ corpusPackage: string; url: string }> {
+        const inventory = this.cache.get(packageName);
+        if (!inventory) return [];
+
+        const targets: Array<{ corpusPackage: string; url: string }> = [];
+        const seen = new Set<string>();
+
+        for (const [name, doc] of inventory) {
+            if (!doc.url || this.shouldSkipCorpusPageUrl(doc.url.split('#')[0])) continue;
+
+            const corpusPackage = name.includes('.') ? name.split('.')[0] : packageName;
+            const targetKey = `${corpusPackage}:${doc.url}`;
+            if (seen.has(targetKey)) continue;
+            seen.add(targetKey);
+            targets.push({ corpusPackage, url: doc.url });
+            if (targets.length >= maxTargets) break;
+        }
+
+        return targets;
+    }
+
+    private shouldSkipCorpusPageUrl(url: string): boolean {
+        return InventoryFetcher.CORPUS_META_PAGE_PATTERNS.some(pattern => pattern.test(url));
     }
 
     private fetchBuffer(url: string, redirectCount = 0): Promise<Buffer> {
@@ -542,7 +708,7 @@ export class InventoryFetcher {
         const httpsUrl = this.normalizeToHttps(url);
 
         return new Promise((resolve, reject) => {
-            const req = https.get(httpsUrl, { timeout: 5000 }, (res) => {
+            const req = https.get(httpsUrl, { timeout: 5000, headers: DOCS_REQUEST_HEADERS }, (res) => {
                 if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
                     // Normalize redirect URL to HTTPS as well
                     const newUrl = this.normalizeToHttps(new URL(res.headers.location, httpsUrl).toString());

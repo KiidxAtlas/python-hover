@@ -43,6 +43,11 @@ const STDLIB_TOP_LEVEL_MODULES = new Set([
     'xml', 'xmlrpc', 'zipapp', 'zipfile', 'zipimport', 'zlib', 'zoneinfo',
 ]);
 
+export function isStdlibTopLevelModule(name: string | undefined): boolean {
+    if (!name) return false;
+    return STDLIB_TOP_LEVEL_MODULES.has(name.split('.')[0]);
+}
+
 export interface SymbolClassification {
     isDotted: boolean;
     isBuiltinMethod: boolean;
@@ -110,7 +115,7 @@ export function extractImportedRoots(text: string): string[] {
 
         const root = trimmed.split('.')[0];
         if (!root || root.startsWith('_')) return;
-        if (STDLIB_TOP_LEVEL_MODULES.has(root)) return;
+        if (isStdlibTopLevelModule(root)) return;
         roots.add(root);
     };
 
@@ -142,6 +147,7 @@ export function isLibraryPath(p: string): boolean {
         || /\/libs\//.test(normalizedPath)
         || /[/\\]lib[/\\]/i.test(p)
         || normalizedPath.includes('/typeshed/')
+        || normalizedPath.includes('/typeshed-fallback/')
         || normalizedPath.includes('/stubs/')
     );
 }

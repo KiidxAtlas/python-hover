@@ -2,9 +2,14 @@ import * as vscode from 'vscode';
 
 export class Logger {
     private static _outputChannel: vscode.OutputChannel;
+    private static _debugEnabled = false;
 
     public static initialize(name: string) {
         this._outputChannel = vscode.window.createOutputChannel(name);
+    }
+
+    public static setDebugEnabled(enabled: boolean) {
+        this._debugEnabled = enabled;
     }
 
     public static log(message: string, data?: any) {
@@ -23,6 +28,13 @@ export class Logger {
         }
 
         this._outputChannel.appendLine(logMessage);
+    }
+
+    public static debug(message: string, data?: any) {
+        if (!this._debugEnabled) {
+            return;
+        }
+        this.log(`[debug] ${message}`, data);
     }
 
     public static error(message: string, error?: any) {

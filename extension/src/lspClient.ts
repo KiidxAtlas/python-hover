@@ -47,6 +47,12 @@ export class LspClient {
         // Definition path gives us the exact module prefix.
         await this.applyDefinitionInfo(result, [definitions]);
 
+        // Some inherited/dynamic methods have weak hover data at the call site but
+        // good signature metadata at the actual definition location.
+        if (!result.signature || !result.docstring) {
+            await this.hydrateFromDefinitionHover(result, [definitions]);
+        }
+
         return result;
     }
 
@@ -72,6 +78,9 @@ export class LspClient {
         if (!segmentRange) return null;
 
         const line = document.lineAt(position.line).text;
+        if (this.isDanglingAttributeAccess(line, segmentRange.start.character)) {
+            return null;
+        }
         const segments = [document.getText(segmentRange)];
 
         // Scan left
@@ -229,6 +238,34 @@ export class LspClient {
         if (module) result.module = module;
     }
 
+    private async hydrateFromDefinitionHover(
+        result: LspSymbol,
+        definitions: (vscode.Location[] | vscode.LocationLink[] | undefined)[],
+    ): Promise<void> {
+        const loc = this.firstLocation(definitions);
+        if (!loc) return;
+
+        const hovers = await this.lspQuery<vscode.Hover[]>(
+            'vscode.executeHoverProvider',
+            loc.uri,
+            loc.range.start,
+        );
+        if (!hovers || hovers.length === 0) return;
+
+        const hydrated: LspSymbol = { name: result.name };
+        this.applyHoverInfo(hydrated, [hovers], []);
+
+        if (!result.signature && hydrated.signature) {
+            result.signature = hydrated.signature;
+        }
+        if (!result.docstring && hydrated.docstring) {
+            result.docstring = hydrated.docstring;
+        }
+        if (!result.kind && hydrated.kind) {
+            result.kind = hydrated.kind;
+        }
+    }
+
     // ─── LSP helpers ─────────────────────────────────────────────────────────
 
     private lspQuery<T>(command: string, ...args: unknown[]): Promise<T | undefined> {
@@ -317,5 +354,21 @@ export class LspClient {
             else if (line[i] === open) { if (--depth === 0) return i - 1; }
         }
         return -1;
+    }
+
+    /**
+     * Reject invalid syntax like `.upper()` where the hovered identifier is preceded
+     * by a dot but there is no receiver expression on the left-hand side.
+     */
+    private isDanglingAttributeAccess(line: string, segmentStart: number): boolean {
+        let cursor = segmentStart - 1;
+        while (cursor >= 0 && line[cursor] === ' ') cursor--;
+        if (cursor < 0 || line[cursor] !== '.') return false;
+
+        cursor--;
+        while (cursor >= 0 && line[cursor] === ' ') cursor--;
+        if (cursor < 0) return true;
+
+        return !/[A-Za-z0-9_\)\]\}"']/.test(line[cursor]);
     }
 }
