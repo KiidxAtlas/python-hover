@@ -142,6 +142,23 @@ export class Config {
         return this.config.get('ui.showBadges', true);
     }
 
+    get showParameters(): boolean {
+        return this.config.get('ui.showParameters', true);
+    }
+
+    get maxParameters(): number {
+        const raw = this.config.get('ui.maxParameters', 6);
+        return Math.min(Math.max(raw, 1), 20);
+    }
+
+    get showSeeAlso(): boolean {
+        return this.config.get('ui.showSeeAlso', true);
+    }
+
+    get showUpdateWarning(): boolean {
+        return this.config.get('ui.showUpdateWarning', true);
+    }
+
     get diagnosticsEnabled(): boolean {
         return this.config.get('diagnostics.enabled', true);
     }

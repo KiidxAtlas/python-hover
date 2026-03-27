@@ -18,14 +18,15 @@ import { HoverRenderer } from './ui/hoverRenderer';
  * even if the cursor is adjacent to a class/function definition.
  * E.g. hovering `class` in `class Person:` → shows `class` statement docs, not Person's docs.
  *
- * Excluded: `import`, `from`, `as` — handled by the import-hover fast-path.
+ * `import`, `from`, `as` show keyword docs when the cursor is on the keyword token itself.
+ * When the cursor is on the module name in an import line, `isImportModuleHover` takes over.
  * Excluded: `True`, `False`, `None` — handled as constants by the static resolver.
  */
 const PYTHON_STRUCTURAL_KEYWORDS = new Set([
-    'and', 'assert', 'async', 'await',
+    'and', 'as', 'assert', 'async', 'await',
     'break', 'case', 'class', 'continue', 'def', 'del',
-    'elif', 'else', 'except', 'finally', 'for',
-    'global', 'if', 'in', 'is', 'lambda',
+    'elif', 'else', 'except', 'finally', 'for', 'from',
+    'global', 'if', 'import', 'in', 'is', 'lambda',
     'match', 'nonlocal', 'not', 'or', 'pass', 'raise',
     'return', 'try', 'while', 'with', 'yield',
 ]);
@@ -571,6 +572,13 @@ export class HoverProvider implements vscode.HoverProvider {
                 }
             }
 
+            // Docstring string literals — suppress hover entirely so hovering """..."""
+            // doesn't show string (str) documentation.
+            if (identifiedType === 'docstring_literal') {
+                this.cacheNegativeHover(posKey);
+                return null;
+            }
+
             if (identifiedType) {
                 this.logHoverEvent(`ast:${posKey}:${identifiedType}`, `AST identified hover target for ${segmentText || '<unknown>'}`, { identifiedType }, true);
                 const TYPE_CANON: Record<string, string> = {};
@@ -752,16 +760,17 @@ export class HoverProvider implements vscode.HoverProvider {
                 // Dunder methods: fall back to object.<method> docs
                 let dundarUrl: string | undefined;
                 let dundarDevdocsUrl: string | undefined;
+                let dundarFallbackDoc: HoverDoc | null = null;
                 const methodName = lspSymbol.name.split('.').pop() ?? '';
                 if (!content && methodName.startsWith('__') && methodName.endsWith('__')) {
                     const fallbackKey = DocKeyBuilder.fromSymbol({
                         name: methodName, module: 'builtins', path: 'builtins',
                         kind: 'method', qualname: `object.${methodName}`, isStdlib: true,
                     });
-                    const fallbackDocs = await this.docResolver.resolve(fallbackKey).catch(() => null);
-                    if (fallbackDocs?.content) content = fallbackDocs.content;
-                    if (fallbackDocs?.url) dundarUrl = fallbackDocs.url;
-                    if (fallbackDocs?.devdocsUrl) dundarDevdocsUrl = fallbackDocs.devdocsUrl;
+                    dundarFallbackDoc = await this.docResolver.resolve(fallbackKey).catch(() => null);
+                    if (dundarFallbackDoc?.content) content = dundarFallbackDoc.content;
+                    if (dundarFallbackDoc?.url) dundarUrl = dundarFallbackDoc.url;
+                    if (dundarFallbackDoc?.devdocsUrl) dundarDevdocsUrl = dundarFallbackDoc.devdocsUrl;
                 }
 
                 // __init__ with no docstring: show the class docstring as context.
@@ -780,28 +789,31 @@ export class HoverProvider implements vscode.HoverProvider {
                             .catch(() => null);
                         if (classInfo?.docstring) {
                             content = classInfo.docstring;
-                            // Content now comes from the user's class — clear the dunder stdlib URL
-                            // so the toolbar doesn't show a misleading "Docs" link for user code.
-                            dundarUrl = undefined;
-                            dundarDevdocsUrl = undefined;
                         }
                         if (classInfo?.signature && !signature) signature = classInfo.signature;
                     }
                 }
 
+                // When content came from Python dunder docs (not the user's own
+                // docstring), use the fallback doc's source (Corpus/Static) so the
+                // hover doesn't show the misleading "Local" chip.
+                const dundarContentActive = !lspSymbol.docstring && !!dundarFallbackDoc?.content && content === dundarFallbackDoc.content;
                 const localDoc: HoverDoc = {
                     title: lspSymbol.name,
                     content,
                     summary: content || undefined,
                     signature,
                     kind: lspSymbol.kind,
-                    source: ResolutionSource.Local,
-                    confidence: 1.0,
+                    source: dundarContentActive
+                        ? (dundarFallbackDoc!.source ?? ResolutionSource.Static)
+                        : ResolutionSource.Local,
+                    confidence: dundarContentActive ? dundarFallbackDoc!.confidence : 1.0,
                     overloads: lspSymbol.overloads,
                     protocolHints: lspSymbol.protocolHints,
-                    sourceUrl: lspSymbol.path,
+                    sourceUrl: dundarContentActive ? undefined : lspSymbol.path,
                     url: dundarUrl,
                     devdocsUrl: dundarDevdocsUrl,
+                    module: dundarContentActive ? (dundarFallbackDoc!.module ?? 'builtins') : undefined,
                 };
 
                 // If we still have nothing meaningful, let the library resolver try.

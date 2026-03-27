@@ -8,9 +8,21 @@ vsc-extension-quickstart.md
 **/*.map
 **/*.ts
 !out/**/*
-!python-helper/**/*
+!python-helper/helper.py
+!python-helper/identifier.py
+!python-helper/resolver.py
+!python-helper/requirements.txt
 # Re-exclude after !out/**/* negation
 out/**/*.map
 out/**/*.ts
+# Exclude dev/cache artefacts
+python-helper/__pycache__
+python-helper/__pycache__/**
+python-helper/**/__pycache__/**
+python-helper/**/*.py[cod]
+**/__pycache__/**
+**/*.pyc
+scripts/**
+python-hover-*.vsix
 # Exclude demo GIF — README links via GitHub raw URL, not local path
 media/media.gif

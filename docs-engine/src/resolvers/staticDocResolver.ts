@@ -110,6 +110,12 @@ export class StaticDocResolver {
         }
 
         if (qualname.includes('.')) {
+            // Dunder (magic) methods on `object` are documented on the data model
+            // reference page, not stdtypes.html.  Route them correctly so the corpus
+            // scraper fetches the right anchor on first hover.
+            if (/^object\.__\w+__$/.test(qualname)) {
+                return `https://docs.python.org/${this.pythonVersion}/reference/datamodel.html#${qualname}`;
+            }
             return `https://docs.python.org/${this.pythonVersion}/library/stdtypes.html#${qualname}`;
         }
 

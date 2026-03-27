@@ -493,9 +493,14 @@ export class HoverDocBuilder {
             }
 
             if (currentField !== 'parameters') continue;
-            const parameter = this.parseStructuredParameter(section.content);
-            if (parameter) {
-                parameters.push(parameter);
+            if (section.kind === 'list' && section.items && section.items.length > 0) {
+                for (const item of section.items) {
+                    const parameter = this.parseStructuredParameter(item);
+                    if (parameter) parameters.push(parameter);
+                }
+            } else {
+                const parameter = this.parseStructuredParameter(section.content);
+                if (parameter) parameters.push(parameter);
             }
         }
 
@@ -605,7 +610,29 @@ export class HoverDocBuilder {
             };
         }
 
-        const typed = /^([^:]+?)\s*:\s*(.+)$/.exec(inner);
+        // Strip link URLs ([text](url) → text) and leading bullets before structural parsing
+        // to avoid splitting on '://' inside markdown links when using the name:type regex.
+        const stripped = inner
+            .replace(/^[-•]\s*/, '')
+            .replace(/\[([^\]]*)\]\(https?:[^)]*\)/g, '$1');
+
+        // Sphinx-style: **name** (type) – optional description
+        const sphinxMatch = /^\*\*([^*]+)\*\*\s*\((.+?)\)\s*(?:[-–—].*)?$/.exec(stripped);
+        if (sphinxMatch) {
+            return {
+                label: sphinxMatch[1].trim(),
+                type: sphinxMatch[2].replace(/[*_]/g, '').trim() || undefined,
+            };
+        }
+
+        // Sphinx-style: **name** with no type
+        const boldOnly = /^\*\*([^*]+)\*\*\s*(?:[-–—].*)?$/.exec(stripped);
+        if (boldOnly) {
+            return { label: boldOnly[1].trim() };
+        }
+
+        // Docstring-style: name : type (use stripped to avoid splitting on '://')
+        const typed = /^([^:]+?)\s*:\s*(.+)$/.exec(stripped);
         if (typed) {
             return {
                 label: typed[1].replace(/^\*+|\*+$/g, '').trim(),

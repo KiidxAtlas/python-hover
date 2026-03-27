@@ -1,6 +1,7 @@
 """PyHover test file — hover over any of the symbols below to see the improved UI."""
 
 import asyncio
+from dataclasses import dataclass
 import os
 import os.path
 from pathlib import Path
@@ -66,7 +67,6 @@ with open(__file__, "r", encoding="utf-8") as handle:  # hover over with / as / 
 async def fetch():  # hover over async
     await asyncio.sleep(0)  # hover over await
 
-
 def gen():
     yield 42  # hover over yield
 
@@ -94,6 +94,14 @@ def process(items: List[Union[int, str]]) -> None:  # hover over Union
 
 
 # ── Local code ────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class EmployeeCard:
+    name: str
+    age: int
+
+
 class Person:
     """A simple person class."""
 
@@ -105,13 +113,12 @@ class Person:
         """Return a greeting."""
         return f"Hi, I'm {self.name}"
 
+    def __str__(self) -> str:  # hover over __str__
+        return f"Person(name={self.name}, age={self.age})"
+
 
 p = Person("Alice", 30)
 msg = p.greet()  # hover over greet
 person_name = p.name.upper()  # hover over upper
 person_badge = f"{p.name=} ({p.age})"  # hover over the f-string prefix / opening quote
-
-
-@staticmethod
-class Employee(Person):
-    """A simple employee class."""
+card = EmployeeCard("Alice", 30)  # hover over dataclass / EmployeeCard

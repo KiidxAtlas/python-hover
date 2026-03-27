@@ -73,6 +73,9 @@ export interface HoverDoc {
     moduleExports?: string[];     // Key exported names shown in module overview hover
     exportCount?: number;         // Total indexed symbol count for this module
     installedVersion?: string;    // Installed package version (from importlib.metadata)
+    latestVersion?: string;         // Latest version published on PyPI
+    license?: string;               // Package license (e.g. "MIT", "Apache-2.0")
+    requiresPython?: string;        // Minimum Python version (e.g. ">=3.9")
 }
 
 export interface StructuredHoverSection {

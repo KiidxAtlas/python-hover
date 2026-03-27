@@ -37,7 +37,7 @@ export class HoverRenderer {
         this.renderDescription(md, doc);
 
         if (!compact) {
-            if (doc.parameters && doc.parameters.length > 0) {
+            if (doc.parameters && doc.parameters.length > 0 && this.config.showParameters) {
                 this.renderParameters(md, doc);
             }
 
@@ -57,7 +57,7 @@ export class HoverRenderer {
                 this.renderModuleExports(md, doc);
             }
 
-            if (doc.seeAlso && doc.seeAlso.length > 0) {
+            if (doc.seeAlso && doc.seeAlso.length > 0 && this.config.showSeeAlso) {
                 this.renderSeeAlso(md, doc);
             }
         }
@@ -115,6 +115,13 @@ export class HoverRenderer {
             chips.push(`$(versions) v${doc.installedVersion}`);
         }
 
+        if (doc.license && doc.source !== ResolutionSource.Local) {
+            chips.push(`$(law) ${doc.license}`);
+        }
+        if (doc.requiresPython && doc.source !== ResolutionSource.Local) {
+            chips.push(`$(arrow-circle-up) py${doc.requiresPython}`);
+        }
+
         md.appendMarkdown(chips.join(' \u00a0·\u00a0 ') + '\n\n');
     }
     // ─────────────────────────────────────────────────────────────────────────
@@ -142,7 +149,7 @@ export class HoverRenderer {
         }
 
         const devdocsUrl = doc.devdocsUrl;
-        if (doc.source !== ResolutionSource.Local && devdocsUrl) {
+        if (devdocsUrl) {
             const ddLink = this.buildLinkUrl(devdocsUrl, this.config.devdocsBrowser);
             secondary.push(`[$(search-view-icon) DevDocs](<${ddLink}> "Search DevDocs")`);
         }
@@ -216,12 +223,28 @@ export class HoverRenderer {
     // ─────────────────────────────────────────────────────────────────────────
 
     private renderCallouts(md: vscode.MarkdownString, doc: HoverDoc): void {
+        if (doc.badges?.some(b => /^deprecated$/i.test(b.label))) {
+            md.appendMarkdown(`> $(error) **Deprecated** — check the documentation for the recommended alternative\n\n`);
+        }
+        if (doc.latestVersion && doc.installedVersion && this.config.showUpdateWarning && this.isOutdated(doc.installedVersion, doc.latestVersion)) {
+            md.appendMarkdown(`> $(arrow-up) **Update available:** v${doc.installedVersion} → v${doc.latestVersion}\n\n`);
+        }
         if (doc.protocolHints && doc.protocolHints.length > 0) {
             doc.protocolHints.forEach(h => md.appendMarkdown(`> $(lightbulb) *${h}*\n\n`));
         }
         if (doc.notes && doc.notes.length > 0) {
             doc.notes.forEach(n => md.appendMarkdown(`> $(info) ${n}\n\n`));
         }
+    }
+
+    private isOutdated(installed: string, latest: string): boolean {
+        if (installed === latest) return false;
+        const parse = (v: string) => v.replace(/^[^0-9]*/, '').split('.').map(Number);
+        const [iMaj = 0, iMin = 0, iPatch = 0] = parse(installed);
+        const [lMaj = 0, lMin = 0, lPatch = 0] = parse(latest);
+        if (lMaj !== iMaj) return lMaj > iMaj;
+        if (lMin !== iMin) return lMin > iMin;
+        return lPatch > iPatch;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -287,18 +310,30 @@ export class HoverRenderer {
             .map(section => this.renderStructuredSection(section))
             .filter(Boolean);
         if (blocks.length === 0) return false;
-
-        let content = blocks.join('\n\n');
-        this.renderVersionCompatibility(md, content);
-        content = this.balanceCodeFences(content);
-
         const maxLen = this.config.maxContentLength;
-        const wasTruncated = content.length > maxLen;
-        if (wasTruncated) {
-            content = this.balanceCodeFences(this.smartTruncate(content, maxLen));
+        let remaining = maxLen;
+        let wasTruncated = false;
+
+        this.renderVersionCompatibility(md, blocks.join('\n\n'));
+
+        for (let index = 0; index < blocks.length; index++) {
+            const block = this.balanceCodeFences(blocks[index]);
+            const separatorLength = index > 0 ? 2 : 0;
+            const visibleLength = this.visibleMarkdownLength(block) + separatorLength;
+
+            if (visibleLength > remaining) {
+                wasTruncated = true;
+                break;
+            }
+
+            if (index > 0) {
+                md.appendMarkdown('\n\n');
+            }
+            md.appendMarkdown(block);
+            remaining -= visibleLength;
         }
 
-        md.appendMarkdown(`${this.rewriteMarkdownLinks(content)}\n\n`);
+        md.appendMarkdown('\n\n');
 
         if (wasTruncated && doc.url) {
             const moreUrl = this.buildLinkUrl(doc.url, this.config.docsBrowser);
@@ -467,12 +502,14 @@ export class HoverRenderer {
                 continue;
             }
 
-            if (text.length > remaining) {
-                text = this.smartTruncate(text, remaining);
+            const visibleLength = this.visibleMarkdownLength(text);
+
+            if (visibleLength > remaining) {
+                text = this.smartTruncate(this.toVisibleMarkdownText(text), remaining);
                 remaining = 0;
                 wasTruncated = true;
             } else {
-                remaining -= text.length;
+                remaining -= visibleLength;
             }
 
             md.appendMarkdown(`${this.rewriteMarkdownLinks(text)}\n\n`);
@@ -790,7 +827,7 @@ export class HoverRenderer {
 
     private renderParameterTable(md: vscode.MarkdownString, params: HoverDoc['parameters']): void {
         if (!params) return;
-        const maxItems = 6;
+        const maxItems = this.config.maxParameters;
         const rows = params.slice(0, maxItems).map(p => {
             const name = `\`${this.escapeTableCell(p.name)}\`${p.default !== undefined ? ` = \`${this.escapeTableCell(p.default)}\`` : ''}`;
             const type = p.type ? `\`${this.escapeTableCell(this.cleanContentAnnotations(p.type))}\`` : '—';
@@ -811,6 +848,18 @@ export class HoverRenderer {
 
     private escapeTableCell(value: string): string {
         return value.replace(/\|/g, '\\|').replace(/\n+/g, ' ').trim();
+    }
+
+    private buildImportStatement(doc: HoverDoc): string | undefined {
+        if (doc.source === ResolutionSource.Local) return undefined;
+        const rawTitle = doc.title.replace(/^builtins\./, '');
+        if (!rawTitle || /^__\w+__$/.test(rawTitle)) return undefined;
+        if (doc.kind === 'module') {
+            return (!rawTitle || rawTitle === 'builtins') ? undefined : `import ${rawTitle}`;
+        }
+        if (!doc.module || doc.module === 'builtins') return undefined;
+        const shortName = rawTitle.split('.').pop() || rawTitle;
+        return `from ${doc.module} import ${shortName}`;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -960,6 +1009,10 @@ export class HoverRenderer {
         if (doc.url) {
             parts.push(this.buildCommandLink('$(link-external) Copy URL', 'python-hover.copyUrl', commandToken, 'Copy docs URL'));
         }
+        const importStatement = this.buildImportStatement(doc);
+        if (importStatement) {
+            parts.push(this.buildCommandLink('$(symbol-namespace) Copy import', 'python-hover.copyImport', importStatement, `Copy: ${importStatement}`));
+        }
 
         let version = this.config.docsVersion;
         if (version === 'auto') version = this.detectedVersion || '3';
@@ -1101,6 +1154,16 @@ export class HoverRenderer {
             const linked = this.buildLinkUrl(rawUrl, this.config.docsBrowser);
             return `[${label}](<${linked}>)`;
         });
+    }
+
+    private toVisibleMarkdownText(content: string): string {
+        return content
+            .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '$1')
+            .replace(/`([^`]+)`/g, '$1');
+    }
+
+    private visibleMarkdownLength(content: string): number {
+        return this.toVisibleMarkdownText(content).length;
     }
 
     // ─────────────────────────────────────────────────────────────────────────

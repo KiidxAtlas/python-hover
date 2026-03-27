@@ -127,6 +127,11 @@ export class StatusBarManager {
                         description: 'Recent symbols you hovered',
                         command: 'python-hover.showHistory',
                     },
+                    {
+                        label: '$(pin) Pin last hover',
+                        description: 'Re-pin the most recently hovered symbol to the docs panel',
+                        command: 'python-hover.pinLast',
+                    },
                     { label: 'Cache', kind: vscode.QuickPickItemKind.Separator },
                     {
                         label: '$(folder-opened) View cache folder',

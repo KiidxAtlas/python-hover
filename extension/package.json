@@ -2,7 +2,7 @@
     "name": "python-hover",
     "displayName": "🐍 Python Hover - Enhanced Documentation",
     "description": "Instant Python documentation on hover. Covers 300+ constructs, all keywords/operators with correct anchors, NumPy, Pandas, FastAPI, Django, PyTorch, Flask, Pydantic, SQLAlchemy, Requests and more. Scoped DevDocs links, smart context detection, zero config.",
-    "version": "0.6.9",
+    "version": "0.7.0",
     "publisher": "KiidxAtlas",
     "author": {
         "name": "KiidxAtlas",
@@ -66,6 +66,16 @@
     "main": "./out/extension/src/activate.js",
     "contributes": {
         "commands": [
+            {
+                "command": "python-hover.copyImport",
+                "title": "Copy Import Statement",
+                "category": "Python Hover"
+            },
+            {
+                "command": "python-hover.pinLast",
+                "title": "Pin Last Hover",
+                "category": "Python Hover"
+            },
             {
                 "command": "python-hover.showStatusNotification",
                 "title": "PyHover: Show Actions",
@@ -179,6 +189,18 @@
                 "key": "ctrl+k ctrl+h",
                 "mac": "cmd+k cmd+h",
                 "when": "editorLangId == python"
+            },
+            {
+                "command": "python-hover.openStudio",
+                "key": "ctrl+k ctrl+o",
+                "mac": "cmd+k cmd+o",
+                "when": "editorLangId == python"
+            },
+            {
+                "command": "python-hover.copyImport",
+                "key": "ctrl+k ctrl+i",
+                "mac": "cmd+k cmd+i",
+                "when": "editorLangId == python"
             }
         ],
         "configuration": {
@@ -252,13 +274,13 @@
                     "type": "number",
                     "default": 7,
                     "minimum": 1,
-                    "description": "Days to keep Sphinx inventory files in the cache."
+                    "description": "Retention hint for Sphinx inventory downloads. Cached inventory files persist until you clear the PyHover cache."
                 },
                 "python-hover.cacheTTL.snippetHours": {
                     "type": "number",
                     "default": 48,
                     "minimum": 1,
-                    "description": "Hours to keep scraped documentation pages in the corpus cache."
+                    "description": "Retention hint for scraped documentation pages. Cached corpus entries persist until you clear the PyHover cache."
                 },
                 "python-hover.docsBrowser": {
                     "type": "string",
@@ -331,6 +353,28 @@
                     "default": true,
                     "description": "Show the badge row (deprecated, async, property, overloaded) in hover tooltips."
                 },
+                "python-hover.ui.showParameters": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show the parameters table in hover tooltips."
+                },
+                "python-hover.ui.maxParameters": {
+                    "type": "number",
+                    "default": 6,
+                    "minimum": 1,
+                    "maximum": 20,
+                    "description": "Maximum number of parameters shown in the hover parameters table before a 'more in docs' link."
+                },
+                "python-hover.ui.showSeeAlso": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show the 'See also' section at the bottom of hovers."
+                },
+                "python-hover.ui.showUpdateWarning": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show an 'Update available' callout when the installed package is behind the latest PyPI release."
+                },
                 "python-hover.diagnostics.enabled": {
                     "type": "boolean",
                     "default": true,
@@ -366,12 +410,10 @@
         "vscode:prepublish": "npm run compile",
         "compile": "tsc -p ./",
         "audit:hover": "npm run compile && node ./scripts/renderHoverAudit.cjs",
-        "inspect:hover": "npm run compile && node ./out/docs-engine/test/inspectHoverPipeline.js",
         "watch": "tsc -watch -p ./",
-        "pretest": "npm run compile && npm run lint",
         "lint": "eslint src --ext ts",
-        "test": "node ./out/test/runTest.js",
-        "package": "vsce package"
+        "package": "vsce package",
+        "verify": "npm run compile && npm run lint && npm run package"
     },
     "devDependencies": {
         "@types/vscode": "^1.85.0",

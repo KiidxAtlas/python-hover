@@ -113,6 +113,16 @@ def _map_node_to_type(node, parents, context):
         if isinstance(node.value, complex):
             return "complex"
         if isinstance(node.value, str):
+            # Suppress hover for docstring literals (first expression in a class/function/module body)
+            parent = parents.get(node)  # ast.Expr wrapper
+            if isinstance(parent, ast.Expr):
+                grandparent = parents.get(parent)
+                if isinstance(
+                    grandparent,
+                    (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef, ast.Module),
+                ):
+                    if grandparent.body and grandparent.body[0] is parent:
+                        return "docstring_literal"
             return "str"
         if isinstance(node.value, bytes):
             return "bytes"

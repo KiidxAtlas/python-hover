@@ -310,6 +310,7 @@ export class DocResolver {
             devdocsUrl: this.fallback.getDevDocsUrl(key) ?? undefined,
             seeAlso: seeAlso && seeAlso.length > 0 ? seeAlso : undefined,
             module: key.module || key.package,
+            sourceUrl: inventoryDoc.sourceUrl || this.cpythonSourceUrl(key) || this.pypiClient.getCachedRepoUrl(key.package) || undefined,
         };
     }
 
@@ -383,6 +384,22 @@ export class DocResolver {
     }
 
     /**
+     * Return a GitHub code-search URL scoped to CPython/Lib for stdlib symbols.
+     * Skipped for builtins (C code), dunders, and bare module-level names.
+     */
+    private cpythonSourceUrl(key: DocKey): string | undefined {
+        if (!key.isStdlib) return undefined;
+        if (key.package === 'builtins' || key.module === 'builtins') return undefined;
+        const qualname = key.qualname || key.name;
+        const leaf = qualname.split('.').pop() ?? '';
+        if (!leaf || (leaf.startsWith('__') && leaf.endsWith('__'))) return undefined;
+        const rootModule = (key.module || key.package || '').split('.')[0];
+        if (!rootModule) return undefined;
+        const query = `repo:python/cpython path:Lib/${rootModule} "def ${leaf}"`;
+        return `https://github.com/search?q=${encodeURIComponent(query)}&type=code`;
+    }
+
+    /**
      * Build a module overview HoverDoc — used when the user hovers an import line.
      * Loads the package inventory (if not already cached) then returns a card showing
      * the module description and its top exported names.
@@ -407,10 +424,16 @@ export class DocResolver {
 
         // Get PyPI summary for third-party packages
         let summary: string | undefined;
+        let latestVersion: string | undefined;
+        let license: string | undefined;
+        let requiresPython: string | undefined;
         if (this.config?.onlineDiscovery !== false && !isStdlib) {
             try {
                 const pypiDoc = await this.pypiClient.findDocs(docKey).catch(() => null);
                 summary = pypiDoc?.summary;
+                latestVersion = pypiDoc?.latestVersion;
+                license = pypiDoc?.license;
+                requiresPython = pypiDoc?.requiresPython;
             } catch { /* ignore */ }
         }
 
@@ -448,6 +471,9 @@ export class DocResolver {
             module: packageName,
             moduleExports: moduleExports.length > 0 ? moduleExports : undefined,
             exportCount: exportCount > 0 ? exportCount : undefined,
+            latestVersion,
+            license,
+            requiresPython,
         };
     }
 
@@ -540,6 +566,7 @@ export class DocResolver {
                     confidence: 1.0,
                     devdocsUrl: this.fallback.getDevDocsUrl(key) ?? undefined,
                     module: key.module || key.package,
+                    sourceUrl: inventoryDoc.sourceUrl || this.cpythonSourceUrl(key) || this.pypiClient.getCachedRepoUrl(key.package) || undefined,
                 };
             }
 
@@ -618,6 +645,11 @@ export class DocResolver {
 
                 // Return immediately with whatever we have — never block on scraping.
                 // Background prefetch ensures the next hover gets richer content.
+                // Also prefetch PyPI metadata so the source URL is cached for future hovers.
+                if (!key.isStdlib && key.package && !this.pypiClient.getCachedRepoUrl(key.package)
+                    && this.config?.onlineDiscovery !== false) {
+                    void this.pypiClient.getPackageMetadata(key.package).catch(() => { });
+                }
                 return this.buildResolvedInventoryDoc(
                     key,
                     inventoryDoc,

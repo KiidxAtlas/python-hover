@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { DiskCache } from '../../docs-engine/src/cache/diskCache';
-import { IndexedSymbolSummary } from '../../shared/types';
+import { HoverDoc, IndexedSymbolSummary, ResolutionSource } from '../../shared/types';
 import { Config } from './config';
 import { HoverProvider } from './hoverProvider';
 import { openIndexedSymbolSource } from './indexedSymbolActions';
@@ -128,6 +128,33 @@ export function activate(context: vscode.ExtensionContext) {
         );
 
         // ── Commands ─────────────────────────────────────────────────────────
+
+        context.subscriptions.push(
+            vscode.commands.registerCommand('python-hover.copyImport', async (importStatement?: string) => {
+                let text = importStatement;
+                if (!text) {
+                    const doc = hoverProvider.getLastDoc();
+                    if (doc) text = buildImportStatementForDoc(doc);
+                }
+                if (text) {
+                    await vscode.env.clipboard.writeText(text);
+                    vscode.window.showInformationMessage(`Copied: ${text}`);
+                } else {
+                    vscode.window.showInformationMessage('Hover over a Python symbol first to copy its import statement.');
+                }
+            })
+        );
+
+        context.subscriptions.push(
+            vscode.commands.registerCommand('python-hover.pinLast', () => {
+                const doc = hoverProvider.getLastDoc();
+                if (!doc) {
+                    vscode.window.showInformationMessage('No recent hover — hover over a Python symbol first.');
+                    return;
+                }
+                HoverPanel.show(doc);
+            })
+        );
 
         context.subscriptions.push(
             vscode.commands.registerCommand('python-hover.copyUrl', async (urlOrToken?: string) => {
@@ -514,6 +541,18 @@ export function activate(context: vscode.ExtensionContext) {
 
 export function deactivate() {
     Logger.dispose();
+}
+
+function buildImportStatementForDoc(doc: HoverDoc): string | undefined {
+    if (doc.source === ResolutionSource.Local) return undefined;
+    const rawTitle = doc.title.replace(/^builtins\./, '');
+    if (!rawTitle || /^__\w+__$/.test(rawTitle)) return undefined;
+    if (doc.kind === 'module') {
+        return (!rawTitle || rawTitle === 'builtins') ? undefined : `import ${rawTitle}`;
+    }
+    if (!doc.module || doc.module === 'builtins') return undefined;
+    const shortName = rawTitle.split('.').pop() || rawTitle;
+    return `from ${doc.module} import ${shortName}`;
 }
 
 /**

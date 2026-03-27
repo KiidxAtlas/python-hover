@@ -6,6 +6,19 @@ import { DiskCache } from '../cache/diskCache';
  * Pick the best docs/home URL from PyPI `project_urls` + optional home_page.
  * Documentation links are preferred over source repos.
  */
+function pickRepoUrlFromLinks(links: Record<string, string>): string | null {
+    for (const [label, url] of Object.entries(links)) {
+        if (!url?.trim()) continue;
+        const l = label.toLowerCase();
+        if (l === 'source' || l === 'repository' || l === 'code' ||
+            l.includes('source') || l.includes('repository') ||
+            l.includes('github') || l.includes('gitlab')) {
+            return url;
+        }
+    }
+    return null;
+}
+
 function pickBestProjectUrl(links: Record<string, string>, homePage: string | null): string | null {
     const entries = Object.entries(links).filter(([, v]) => typeof v === 'string' && v.trim().length > 0);
     const labelScore = (label: string): number => {
@@ -33,8 +46,8 @@ export class PyPiClient {
         this.diskCache = diskCache ?? null;
     }
 
-    async getPackageMetadata(packageName: string): Promise<{ url: string | null, summary: string | null, links: Record<string, string> }> {
-        const EMPTY: { url: null, summary: null, links: Record<string, string> } = { url: null, summary: null, links: {} };
+    async getPackageMetadata(packageName: string): Promise<{ url: string | null, summary: string | null, links: Record<string, string>, version: string | null, license: string | null, requiresPython: string | null }> {
+        const EMPTY = { url: null, summary: null, links: {} as Record<string, string>, version: null, license: null, requiresPython: null };
 
         if (this.diskCache) {
             const cached = this.diskCache.getCorpusPackageMetadata(packageName);
@@ -44,6 +57,9 @@ export class PyPiClient {
                     url: cached.url ?? null,
                     summary: cached.summary ?? null,
                     links: cached.links ?? {},
+                    version: cached.version ?? null,
+                    license: cached.license ?? null,
+                    requiresPython: cached.requiresPython ?? null,
                 };
             }
         }
@@ -78,7 +94,15 @@ export class PyPiClient {
                 ? info.summary.trim()
                 : null;
 
-            const result = { url: bestUrl, summary, links };
+            const version: string | null = typeof info.version === 'string' && info.version.trim()
+                ? info.version.trim() : null;
+            const rawLicense = typeof info.license === 'string' ? info.license.trim() : '';
+            const license: string | null = rawLicense && rawLicense !== 'UNKNOWN' && rawLicense !== 'NOASSERTION'
+                ? rawLicense : null;
+            const requiresPython: string | null = typeof info.requires_python === 'string' && info.requires_python.trim()
+                ? info.requires_python.trim() : null;
+
+            const result = { url: bestUrl, summary, links, version, license, requiresPython };
 
             if (this.diskCache) {
                 if (!bestUrl && !summary) {
@@ -101,7 +125,7 @@ export class PyPiClient {
     }
 
     async findDocs(key: DocKey): Promise<HoverDoc | null> {
-        const { url, summary, links } = await this.getPackageMetadata(key.package);
+        const { url, summary, links, version, license, requiresPython } = await this.getPackageMetadata(key.package);
         if (url || summary) {
             return {
                 title: key.package,
@@ -109,11 +133,21 @@ export class PyPiClient {
                 content: summary ?? undefined,
                 url: url ?? undefined,
                 links: links,
+                latestVersion: version ?? undefined,
+                license: license ?? undefined,
+                requiresPython: requiresPython ?? undefined,
                 source: ResolutionSource.PyPI,
                 confidence: 0.7
             };
         }
         return null;
+    }
+
+    getCachedRepoUrl(packageName: string | undefined): string | null {
+        if (!this.diskCache || !packageName) return null;
+        const meta = this.diskCache.getCorpusPackageMetadata(packageName);
+        if (!meta?.links) return null;
+        return pickRepoUrlFromLinks(meta.links);
     }
 
     private fetchJson(url: string): Promise<any> {
