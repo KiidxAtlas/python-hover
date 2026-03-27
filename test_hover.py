@@ -1,9 +1,9 @@
 """PyHover test file — hover over any of the symbols below to see the improved UI."""
 
 import asyncio
-from dataclasses import dataclass
 import os
 import os.path
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Union
 
