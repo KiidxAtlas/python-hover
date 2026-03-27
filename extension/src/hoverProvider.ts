@@ -381,6 +381,10 @@ export class HoverProvider implements vscode.HoverProvider {
         token: vscode.CancellationToken,
     ): Promise<vscode.Hover | null> {
         try {
+            if (LspClient.isInternalHoverRequest(document.uri, position)) {
+                return null;
+            }
+
             await this.ready;
 
             // Periodic eviction so caches don't grow unbounded over long sessions.

@@ -12,6 +12,7 @@ import fastapi
 import numpy as np
 import pandas as pd
 
+
 # ── Builtins ──────────────────────────────────────────────────────────────────
 x = [1, 2, 3]  # hover over [  →  list
 y = {"a": 1}  # hover over {  →  dict

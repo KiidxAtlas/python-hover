@@ -24,7 +24,7 @@ export function activate(context: vscode.ExtensionContext) {
         const statusBarManager = new StatusBarManager(context);
 
         const globalStoragePath = context.globalStorageUri.fsPath;
-        const diskCache = new DiskCache(
+        const createDiskCache = () => new DiskCache(
             globalStoragePath,
             () => statusBarManager.update(),
             {
@@ -33,6 +33,7 @@ export function activate(context: vscode.ExtensionContext) {
             },
             config.interpreterCacheFingerprint,
         );
+        let diskCache = createDiskCache();
 
         const diagnosticCollection = vscode.languages.createDiagnosticCollection('python-hover');
         context.subscriptions.push(diagnosticCollection);
@@ -47,6 +48,15 @@ export function activate(context: vscode.ExtensionContext) {
             hoverProvider = new HoverProvider(lspClient, config, diskCache);
             hoverProvider.setDiagnosticCollection(diagnosticCollection);
             hoverRegistration = vscode.languages.registerHoverProvider({ language: 'python' }, hoverProvider);
+        };
+        const rebuildHoverRuntime = (reason: string, recreateDiskCache: boolean) => {
+            if (recreateDiskCache) {
+                diskCache = createDiskCache();
+            }
+
+            Logger.log(reason);
+            registerHoverProvider();
+            statusBarManager.update();
         };
 
         // Clear per-file diagnostics when document closes
@@ -76,11 +86,13 @@ export function activate(context: vscode.ExtensionContext) {
             hoverProvider.warmupDocumentImports(document);
         };
 
-        warmupImportsForDocument(vscode.window.activeTextEditor?.document);
-
-        if (config.onlineDiscovery && config.preloadPackages.length > 0) {
+        const warmupConfiguredPackages = () => {
+            if (!config.onlineDiscovery || config.preloadPackages.length === 0) return;
             hoverProvider.warmupPackages(config.preloadPackages);
-        }
+        };
+
+        warmupImportsForDocument(vscode.window.activeTextEditor?.document);
+        warmupConfiguredPackages();
 
         context.subscriptions.push(
             vscode.window.onDidChangeActiveTextEditor(editor => {
@@ -106,23 +118,31 @@ export function activate(context: vscode.ExtensionContext) {
                 const affectsInterpreter =
                     event.affectsConfiguration('python.defaultInterpreterPath')
                     || event.affectsConfiguration('python.pythonPath');
-                // runtimeHelper is captured in PythonHelper at construction — must recreate.
-                // enable toggles provider registration — must recreate.
-                // All other python-hover settings are read dynamically from the shared
-                // Config object on every hover, so no recreation needed.
+                const affectsDiskCache =
+                    affectsInterpreter
+                    || event.affectsConfiguration('python-hover.cacheTTL');
                 const affectsProviderCore =
                     event.affectsConfiguration('python-hover.runtimeHelper')
-                    || event.affectsConfiguration('python-hover.enable');
+                    || event.affectsConfiguration('python-hover.enable')
+                    || event.affectsConfiguration('python-hover.onlineDiscovery')
+                    || event.affectsConfiguration('python-hover.buildFullCorpus')
+                    || event.affectsConfiguration('python-hover.docScraping')
+                    || event.affectsConfiguration('python-hover.useKnownDocsUrls')
+                    || event.affectsConfiguration('python-hover.requestTimeout')
+                    || event.affectsConfiguration('python-hover.customLibraries');
 
                 Logger.setDebugEnabled(config.enableDebugLogging);
 
-                if (affectsInterpreter || affectsProviderCore) {
-                    Logger.log('Configuration changed. Recreating hover provider.');
-                    registerHoverProvider();
+                if (affectsDiskCache || affectsProviderCore) {
+                    rebuildHoverRuntime(
+                        'Configuration changed. Recreating hover provider.',
+                        affectsDiskCache,
+                    );
                 }
 
                 if (event.affectsConfiguration('python-hover')) {
                     warmupImportsForDocument(vscode.window.activeTextEditor?.document);
+                    warmupConfiguredPackages();
                 }
             })
         );
