@@ -35,7 +35,9 @@ export class HoverRenderer {
         md.supportThemeIcons = true;
 
         this.renderHeader(md, doc);
-        this.renderToolbar(md, doc);
+        if (this.config.showToolbar) {
+            this.renderToolbar(md, doc);
+        }
 
         const compact = this.config.compactMode;
 
@@ -43,7 +45,9 @@ export class HoverRenderer {
             this.renderSignature(md, doc);
         }
 
-        this.renderCallouts(md, doc);
+        if (this.config.showCallouts) {
+            this.renderCallouts(md, doc);
+        }
         this.renderDescription(md, doc);
 
         if (!compact) {
@@ -55,7 +59,7 @@ export class HoverRenderer {
                 this.renderReturns(md, doc);
             }
 
-            if (doc.raises && doc.raises.length > 0) {
+            if (doc.raises && doc.raises.length > 0 && this.config.showRaises) {
                 this.renderRaises(md, doc);
             }
 
@@ -63,7 +67,7 @@ export class HoverRenderer {
                 this.renderExamples(md, doc);
             }
 
-            if (doc.moduleExports && doc.moduleExports.length > 0) {
+            if (doc.moduleExports && doc.moduleExports.length > 0 && this.config.showModuleExports) {
                 this.renderModuleExports(md, doc);
             }
 
@@ -72,7 +76,9 @@ export class HoverRenderer {
             }
         }
 
-        this.renderFooter(md, doc);
+        if (this.config.showFooter) {
+            this.renderFooter(md, doc);
+        }
         return new vscode.Hover(md);
     }
 
@@ -85,6 +91,10 @@ export class HoverRenderer {
         const rawTitle = doc.title.replace(/^builtins\./, '');
 
         md.appendMarkdown(`### $(${icon}) \`${rawTitle}\`\n\n`);
+
+        if (!this.config.showMetadataChips) {
+            return;
+        }
 
         const chips: string[] = [];
         const kindLabel = this.formatKindLabel(doc.kind);
@@ -897,14 +907,14 @@ export class HoverRenderer {
 
     private renderExamples(md: vscode.MarkdownString, doc: HoverDoc): void {
         md.appendMarkdown(`---\n\n`);
-        md.appendMarkdown(`**$(play) Example**\n\n`);
+        md.appendMarkdown(`**$(play) Example${this.config.maxExamples > 1 ? 's' : ''}**\n\n`);
 
         const structuredExamples = doc.structuredContent?.sections?.filter(
             section => section.role === 'example',
         ) ?? [];
+        const maxShow = this.config.maxExamples;
 
         if (structuredExamples.length > 0) {
-            const maxShow = 2;
             structuredExamples.slice(0, maxShow).forEach((section, index) => {
                 this.renderStructuredExampleSection(md, section, index);
             });
@@ -916,17 +926,24 @@ export class HoverRenderer {
             return;
         }
 
-        const example = doc.examples![0];
-        const lines = example.split('\n');
-        const maxLines = this.config.maxSnippetLines;
-        if (lines.length > maxLines) {
-            md.appendCodeblock(lines.slice(0, maxLines).join('\n'), 'python');
-            md.appendMarkdown(`*+${lines.length - maxLines} more lines in docs*\n\n`);
-        } else {
-            md.appendCodeblock(example, 'python');
-        }
-        if (doc.examples!.length > 1) {
-            md.appendMarkdown(`*+${doc.examples!.length - 1} more example${doc.examples!.length > 2 ? 's' : ''} in docs*\n\n`);
+        doc.examples!.slice(0, maxShow).forEach((example, index) => {
+            if (index > 0) {
+                md.appendMarkdown(`*Additional example*\n\n`);
+            }
+
+            const lines = example.split('\n');
+            const maxLines = this.config.maxSnippetLines;
+            if (lines.length > maxLines) {
+                md.appendCodeblock(lines.slice(0, maxLines).join('\n'), 'python');
+                md.appendMarkdown(`*+${lines.length - maxLines} more lines in docs*\n\n`);
+            } else {
+                md.appendCodeblock(example, 'python');
+            }
+        });
+
+        if (doc.examples!.length > maxShow) {
+            const extra = doc.examples!.length - maxShow;
+            md.appendMarkdown(`*+${extra} more example${extra > 1 ? 's' : ''} in docs*\n\n`);
         }
     }
 
@@ -973,9 +990,14 @@ export class HoverRenderer {
         md.appendMarkdown(`---\n\n**$(symbol-field) Key exports**\n\n`);
 
         // Render exports as a clean wrapped list of code chips
-        const maxShow = 20;
+        const maxShow = this.config.maxModuleExports;
         const shown = exports.slice(0, maxShow);
         md.appendMarkdown(shown.map(n => `\`${n}\``).join(' \u00a0 ') + '\n\n');
+
+        if (exports.length > maxShow) {
+            const extra = exports.length - maxShow;
+            md.appendMarkdown(`*+${extra} more export${extra > 1 ? 's' : ''} hidden*\n\n`);
+        }
 
         if (doc.exportCount && doc.exportCount > exports.length) {
             const args = this.encodeCommandArgs(doc.module || doc.title);
@@ -1000,7 +1022,14 @@ export class HoverRenderer {
             }
             return trimmed;
         });
-        md.appendMarkdown(`$(link-external) **See also:** ${this.rewriteMarkdownLinks(items.join(' \u00a0·\u00a0 '))}\n\n`);
+        const maxItems = this.config.maxSeeAlsoItems;
+        const shown = items.slice(0, maxItems);
+        md.appendMarkdown(`$(link-external) **See also:** ${this.rewriteMarkdownLinks(shown.join(' \u00a0·\u00a0 '))}\n\n`);
+
+        if (items.length > maxItems) {
+            const extra = items.length - maxItems;
+            md.appendMarkdown(`*+${extra} more related item${extra > 1 ? 's' : ''} in docs*\n\n`);
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────

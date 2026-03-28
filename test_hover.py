@@ -12,7 +12,6 @@ import fastapi
 import numpy as np
 import pandas as pd
 
-
 # ── Builtins ──────────────────────────────────────────────────────────────────
 x = [1, 2, 3]  # hover over [  →  list
 y = {"a": 1}  # hover over {  →  dict
@@ -67,6 +66,7 @@ with open(__file__, "r", encoding="utf-8") as handle:  # hover over with / as / 
 
 async def fetch():  # hover over async
     await asyncio.sleep(0)  # hover over await
+
 
 def gen():
     yield 42  # hover over yield

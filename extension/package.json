@@ -353,6 +353,21 @@
                     "default": true,
                     "description": "Show the badge row (deprecated, async, property, overloaded) in hover tooltips."
                 },
+                "python-hover.ui.showMetadataChips": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show the metadata chips row under the hover title (kind, source, module, version, badges)."
+                },
+                "python-hover.ui.showToolbar": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show the hover action toolbar with pin, docs, source, and browse links."
+                },
+                "python-hover.ui.showCallouts": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show deprecation, update, protocol hint, and note callouts in hovers."
+                },
                 "python-hover.ui.showParameters": {
                     "type": "boolean",
                     "default": true,
@@ -369,6 +384,42 @@
                     "type": "boolean",
                     "default": true,
                     "description": "Show the 'See also' section at the bottom of hovers."
+                },
+                "python-hover.ui.showRaises": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show the 'Raises' section when documentation includes exception information."
+                },
+                "python-hover.ui.showModuleExports": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show module export lists for import/module hovers."
+                },
+                "python-hover.ui.showFooter": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show the footer action row with copy commands, Python version, and source label."
+                },
+                "python-hover.ui.maxExamples": {
+                    "type": "number",
+                    "default": 2,
+                    "minimum": 1,
+                    "maximum": 10,
+                    "description": "Maximum number of examples rendered in a hover before the rest are left in docs."
+                },
+                "python-hover.ui.maxModuleExports": {
+                    "type": "number",
+                    "default": 20,
+                    "minimum": 1,
+                    "maximum": 100,
+                    "description": "Maximum number of exported names shown in module hover summaries."
+                },
+                "python-hover.ui.maxSeeAlsoItems": {
+                    "type": "number",
+                    "default": 8,
+                    "minimum": 1,
+                    "maximum": 30,
+                    "description": "Maximum number of see-also items shown before the rest stay in docs."
                 },
                 "python-hover.ui.showUpdateWarning": {
                     "type": "boolean",

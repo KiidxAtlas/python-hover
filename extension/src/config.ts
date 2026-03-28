@@ -142,6 +142,18 @@ export class Config {
         return this.config.get('ui.showBadges', true);
     }
 
+    get showMetadataChips(): boolean {
+        return this.config.get('ui.showMetadataChips', true);
+    }
+
+    get showToolbar(): boolean {
+        return this.config.get('ui.showToolbar', true);
+    }
+
+    get showCallouts(): boolean {
+        return this.config.get('ui.showCallouts', true);
+    }
+
     get showParameters(): boolean {
         return this.config.get('ui.showParameters', true);
     }
@@ -153,6 +165,33 @@ export class Config {
 
     get showSeeAlso(): boolean {
         return this.config.get('ui.showSeeAlso', true);
+    }
+
+    get showRaises(): boolean {
+        return this.config.get('ui.showRaises', true);
+    }
+
+    get showModuleExports(): boolean {
+        return this.config.get('ui.showModuleExports', true);
+    }
+
+    get showFooter(): boolean {
+        return this.config.get('ui.showFooter', true);
+    }
+
+    get maxExamples(): number {
+        const raw = this.config.get('ui.maxExamples', 2);
+        return Math.min(Math.max(raw, 1), 10);
+    }
+
+    get maxModuleExports(): number {
+        const raw = this.config.get('ui.maxModuleExports', 20);
+        return Math.min(Math.max(raw, 1), 100);
+    }
+
+    get maxSeeAlsoItems(): number {
+        const raw = this.config.get('ui.maxSeeAlsoItems', 8);
+        return Math.min(Math.max(raw, 1), 30);
     }
 
     get showUpdateWarning(): boolean {
