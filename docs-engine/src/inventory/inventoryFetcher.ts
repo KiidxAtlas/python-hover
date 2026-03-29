@@ -1,6 +1,6 @@
 import * as https from 'https';
 import { Logger } from '../../../extension/src/logger';
-import { DocKey, HoverDoc, IndexedSymbolSummary } from '../../../shared/types';
+import { DocKey, HoverDoc, IndexedSymbolSummary, ResolutionSource } from '../../../shared/types';
 import { DiskCache } from '../cache/diskCache';
 import { PyPiClient } from '../pypi/pypiClient';
 import { InventoryParser } from './inventoryParser';
@@ -120,9 +120,11 @@ export class InventoryFetcher {
     private indexedPackagesCache: string[] | undefined;
     private indexedPackageSummariesCache: Array<{ name: string; count: number }> | undefined;
     private indexedSymbolCountCache: number | undefined;
+    private docsProviderCache = new Map<string, 'mkdocs' | 'sphinx'>();
     private diskCache: DiskCache;
     private pythonVersion: string;
     private allowNetwork: boolean;
+    private customInventoryUrls: Map<string, string>;
     /** When false, skip KNOWN_DOCS_URLS — resolve via PyPI + probes + RTD fallback only. */
     private readonly useKnownDocsUrls: boolean;
 
@@ -140,15 +142,16 @@ export class InventoryFetcher {
         this.diskCache = diskCache;
         this.pythonVersion = pythonVersion;
         this.allowNetwork = allowNetwork;
+        this.customInventoryUrls = new Map();
         this.useKnownDocsUrls = useKnownDocsUrls;
 
         // Initialize custom libraries
         for (const lib of customLibraries) {
             if (lib.name && lib.baseUrl) {
                 this.packageBaseUrls.set(lib.name, lib.baseUrl);
-                // We might also want to store the inventory URL if it's different from standard probing
-                // But for now, base URL is a good start.
-                // Ideally we should have a way to force inventory URL.
+                if (typeof lib.inventoryUrl === 'string' && lib.inventoryUrl.trim()) {
+                    this.customInventoryUrls.set(lib.name, lib.inventoryUrl.trim());
+                }
             }
         }
     }
@@ -234,6 +237,68 @@ export class InventoryFetcher {
         return (isStdlib || packageName === 'builtins' || packageName === 'python')
             ? InventoryFetcher.STDLIB_INVENTORY_CACHE
             : packageName;
+    }
+
+    private buildInventoryUrl(packageName: string, baseUrl: string): string {
+        const customInventoryUrl = this.customInventoryUrls.get(packageName);
+        if (customInventoryUrl) {
+            return customInventoryUrl;
+        }
+
+        const normalizedBaseUrl = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
+        return new URL('objects.inv', normalizedBaseUrl).toString();
+    }
+
+    private withTrailingSlash(url: string): string {
+        return url.endsWith('/') ? url : `${url}/`;
+    }
+
+    private async resolveDocsProvider(baseUrl: string): Promise<'mkdocs' | 'sphinx'> {
+        const normalizedBaseUrl = baseUrl.replace(/\/$/, '');
+        const cached = this.docsProviderCache.get(normalizedBaseUrl);
+        if (cached) {
+            return cached;
+        }
+
+        const mkdocsUrl = new URL('search/search_index.json', this.withTrailingSlash(normalizedBaseUrl)).toString();
+        if (await this.checkUrlExists(mkdocsUrl)) {
+            this.docsProviderCache.set(normalizedBaseUrl, 'mkdocs');
+            return 'mkdocs';
+        }
+
+        const sphinxUrl = new URL('searchindex.js', this.withTrailingSlash(normalizedBaseUrl)).toString();
+        if (await this.checkUrlExists(sphinxUrl)) {
+            this.docsProviderCache.set(normalizedBaseUrl, 'sphinx');
+            return 'sphinx';
+        }
+
+        this.docsProviderCache.set(normalizedBaseUrl, 'sphinx');
+        return 'sphinx';
+    }
+
+    private async resolveDocsProviderForPackage(packageName: string, version?: string, isStdlib?: boolean): Promise<'mkdocs' | 'sphinx'> {
+        let baseUrl = this.packageBaseUrls.get(packageName);
+        if (!baseUrl) {
+            const inventoryCacheName = this.getInventoryCacheName(packageName, isStdlib);
+            baseUrl = this.packageBaseUrls.get(inventoryCacheName);
+        }
+        if (!baseUrl) {
+            if (isStdlib || packageName === 'builtins' || packageName === 'python') {
+                baseUrl = `https://docs.python.org/${this.pythonVersion}`;
+            } else if (this.allowNetwork) {
+                try {
+                    baseUrl = await this.resolveBaseUrl(packageName, version, isStdlib);
+                } catch {
+                    baseUrl = undefined;
+                }
+            }
+        }
+
+        if (!baseUrl) {
+            return 'sphinx';
+        }
+
+        return this.resolveDocsProvider(baseUrl).catch(() => 'sphinx');
     }
 
     private async resolveBaseUrl(packageName: string, version?: string, isStdlib?: boolean): Promise<string> {
@@ -445,8 +510,22 @@ export class InventoryFetcher {
         const cached = this.diskCache.get(cacheKey);
         if (cached) {
             try {
-                const data = JSON.parse(cached);
-                const inventory = new Map<string, HoverDoc>(Object.entries(data));
+                const data = JSON.parse(cached) as Record<string, HoverDoc>;
+                const docsProvider = await this.resolveDocsProviderForPackage(packageName, version, isStdlib);
+                const inventory = new Map<string, HoverDoc>(
+                    Object.entries(data).map(([name, doc]) => [
+                        name,
+                        doc?.source === ResolutionSource.Corpus
+                            ? {
+                                ...doc,
+                                metadata: {
+                                    ...(doc.metadata ?? {}),
+                                    docsProvider,
+                                },
+                            }
+                            : doc,
+                    ]),
+                );
                 this.cache.set(inventoryCacheName, inventory);
                 if (packageName !== inventoryCacheName) {
                     this.cache.set(packageName, inventory);
@@ -497,11 +576,12 @@ export class InventoryFetcher {
         }
 
         const baseUrl = await this.resolveBaseUrl(packageName, version, isStdlib);
-        const inventoryUrl = `${baseUrl}/objects.inv`;
+        const inventoryUrl = this.buildInventoryUrl(packageName, baseUrl);
 
         try {
             const buffer = await this.fetchBuffer(inventoryUrl);
-            const inventory = this.parser.parse(buffer, baseUrl);
+            const docsProvider = await this.resolveDocsProvider(baseUrl);
+            const inventory = this.parser.parse(buffer, baseUrl, docsProvider);
             this.cache.set(inventoryCacheName, inventory);
             if (packageName !== inventoryCacheName) {
                 this.cache.set(packageName, inventory);
@@ -528,7 +608,8 @@ export class InventoryFetcher {
                 try {
                     Logger.log(`Retrying stdlib inventory with canonical URL: ${fallbackUrl}`);
                     const buffer = await this.fetchBuffer(fallbackUrl);
-                    const inventory = this.parser.parse(buffer, fallbackBase);
+                    const docsProvider = await this.resolveDocsProvider(fallbackBase).catch((): 'sphinx' => 'sphinx');
+                    const inventory = this.parser.parse(buffer, fallbackBase, docsProvider);
                     this.cache.set(inventoryCacheName, inventory);
                     if (packageName !== inventoryCacheName) {
                         this.cache.set(packageName, inventory);
@@ -564,6 +645,29 @@ export class InventoryFetcher {
 
     getPackageBaseUrl(packageName: string): string | undefined {
         return this.packageBaseUrls.get(packageName);
+    }
+
+    getSuggestedBaseUrl(packageName: string, isStdlib?: boolean): string | undefined {
+        if (isStdlib || packageName === 'builtins' || packageName === 'python') {
+            const stdlibUrl = `https://docs.python.org/${this.pythonVersion}`;
+            this.packageBaseUrls.set(packageName, stdlibUrl);
+            return stdlibUrl;
+        }
+
+        const cached = this.packageBaseUrls.get(packageName);
+        if (cached) {
+            return cached;
+        }
+
+        if (this.useKnownDocsUrls) {
+            const knownUrl = KNOWN_DOCS_URLS[packageName.toLowerCase()];
+            if (knownUrl) {
+                this.packageBaseUrls.set(packageName, knownUrl);
+                return knownUrl;
+            }
+        }
+
+        return undefined;
     }
 
     /**
@@ -636,6 +740,52 @@ export class InventoryFetcher {
         return finalResults;
     }
 
+    findSymbolReference(reference: {
+        label: string;
+        url?: string;
+        currentModule?: string;
+        currentPackage?: string;
+        currentTitle?: string;
+    }): IndexedSymbolSummary | null {
+        const label = reference.label.trim();
+        const url = reference.url?.trim();
+        if (!label && !url) return null;
+
+        const preferredPackage = reference.currentPackage?.trim();
+        const currentModule = reference.currentModule?.trim();
+        const currentOwner = this.extractOwnerName(reference.currentTitle);
+        const candidateInventories = preferredPackage && this.cache.has(preferredPackage)
+            ? [
+                [preferredPackage, this.cache.get(preferredPackage)!] as const,
+                ...[...this.cache.entries()].filter(([pkg]) => pkg !== preferredPackage),
+            ]
+            : [...this.cache.entries()];
+
+        let best: { score: number; summary: IndexedSymbolSummary } | null = null;
+        for (const [pkg, inventory] of candidateInventories) {
+            for (const [name, doc] of inventory) {
+                const score = this.scoreReferenceCandidate({
+                    label,
+                    url,
+                    currentModule,
+                    currentOwner,
+                    preferredPackage,
+                    packageName: pkg,
+                    name,
+                    doc,
+                });
+                if (score <= 0) continue;
+
+                const summary = this.toIndexedSymbolSummary(name, doc, pkg);
+                if (!best || score > best.score || (score === best.score && summary.name.length < best.summary.name.length)) {
+                    best = { score, summary };
+                }
+            }
+        }
+
+        return best?.summary ?? null;
+    }
+
     getModuleSymbols(moduleName: string, maxSymbols = 5000): IndexedSymbolSummary[] {
         const normalized = moduleName.trim();
         if (!normalized) return [];
@@ -706,6 +856,67 @@ export class InventoryFetcher {
             summary: this.extractPreviewText(doc),
             sourceUrl: doc.sourceUrl,
         };
+    }
+
+    private extractOwnerName(title?: string): string | undefined {
+        const normalized = title?.trim().replace(/^builtins\./, '');
+        if (!normalized) return undefined;
+
+        const parts = normalized.split('.').filter(Boolean);
+        if (parts.length < 2) return undefined;
+        return parts[parts.length - 2];
+    }
+
+    private scoreReferenceCandidate(candidate: {
+        label: string;
+        url?: string;
+        currentModule?: string;
+        currentOwner?: string;
+        preferredPackage?: string;
+        packageName: string;
+        name: string;
+        doc: HoverDoc;
+    }): number {
+        const { label, url, currentModule, currentOwner, preferredPackage, packageName, name, doc } = candidate;
+        const normalizedLabel = label.toLowerCase();
+        const normalizedName = name.toLowerCase();
+        const normalizedTitle = (doc.title || '').toLowerCase();
+        const leaf = normalizedName.split('.').pop() || normalizedName;
+        const titleLeaf = normalizedTitle.split('.').pop() || normalizedTitle;
+        let score = 0;
+
+        if (url && doc.url === url) score = Math.max(score, 1000);
+        if (url && doc.url?.split('#')[0] === url.split('#')[0]) score = Math.max(score, 550);
+
+        if (!normalizedLabel) {
+            return score;
+        }
+
+        if (normalizedName === normalizedLabel || normalizedTitle === normalizedLabel) {
+            score = Math.max(score, 900);
+        }
+
+        if (currentModule && normalizedName === `${currentModule.toLowerCase()}.${normalizedLabel}`) {
+            score = Math.max(score, 850);
+        }
+
+        if (currentOwner && normalizedName.endsWith(`.${currentOwner.toLowerCase()}.${normalizedLabel}`)) {
+            score = Math.max(score, 800);
+        }
+
+        if (leaf === normalizedLabel || titleLeaf === normalizedLabel) {
+            score = Math.max(score, preferredPackage && packageName === preferredPackage ? 760 : 680);
+        }
+
+        if (normalizedName.endsWith(`.${normalizedLabel}`) || normalizedTitle.endsWith(`.${normalizedLabel}`)) {
+            score = Math.max(score, preferredPackage && packageName === preferredPackage ? 640 : 520);
+        }
+
+        if (preferredPackage && packageName === preferredPackage) {
+            score += 25;
+        }
+
+        return score;
     }
 
     private extractPreviewText(doc: HoverDoc): string | undefined {

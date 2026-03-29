@@ -69,12 +69,26 @@ export class Config {
         return this.config.get('devdocsBrowser', 'external');
     }
 
-    get customLibraries(): Array<{ name: string; baseUrl: string }> {
+    get customLibraries(): Array<{ name: string; baseUrl: string; inventoryUrl?: string }> {
         const raw = this.config.get<any[]>('customLibraries', []);
-        return raw.filter(entry => {
-            if (!entry || typeof entry.name !== 'string' || typeof entry.baseUrl !== 'string') return false;
-            if (!entry.name.trim() || !entry.baseUrl.trim()) return false;
-            try { new URL(entry.baseUrl); return true; } catch { return false; }
+        return raw.flatMap(entry => {
+            if (!entry || typeof entry.name !== 'string' || typeof entry.baseUrl !== 'string') return [];
+
+            const name = entry.name.trim();
+            const baseUrl = entry.baseUrl.trim();
+            const inventoryUrl = typeof entry.inventoryUrl === 'string' ? entry.inventoryUrl.trim() : undefined;
+            if (!name || !baseUrl) return [];
+
+            try {
+                new URL(baseUrl);
+                if (inventoryUrl) {
+                    new URL(inventoryUrl);
+                }
+            } catch {
+                return [];
+            }
+
+            return [{ name, baseUrl, inventoryUrl }];
         });
     }
 
@@ -88,6 +102,34 @@ export class Config {
 
     get showDebugPinButton(): boolean {
         return this.config.get('ui.showDebugPinButton', false);
+    }
+
+    get showStatusBar(): boolean {
+        return this.config.get('ui.showStatusBar', true);
+    }
+
+    get showEditorContextMenu(): boolean {
+        return this.config.get('ui.contextMenu.enabled', true);
+    }
+
+    get showSearchDocsContextMenu(): boolean {
+        return this.config.get('ui.contextMenu.searchDocs', true);
+    }
+
+    get showBrowseModuleContextMenu(): boolean {
+        return this.config.get('ui.contextMenu.browseModule', true);
+    }
+
+    get showPinHoverContextMenu(): boolean {
+        return this.config.get('ui.contextMenu.pinHover', true);
+    }
+
+    get showDebugPinHoverContextMenu(): boolean {
+        return this.config.get('ui.contextMenu.debugPinHover', true);
+    }
+
+    get showOpenStudioContextMenu(): boolean {
+        return this.config.get('ui.contextMenu.openStudio', true);
     }
 
     get maxContentLength(): number {
@@ -146,6 +188,10 @@ export class Config {
         return this.config.get('ui.showMetadataChips', true);
     }
 
+    get showProvenance(): boolean {
+        return this.config.get('ui.showProvenance', true);
+    }
+
     get showToolbar(): boolean {
         return this.config.get('ui.showToolbar', true);
     }
@@ -175,8 +221,16 @@ export class Config {
         return this.config.get('ui.showModuleExports', true);
     }
 
+    get showModuleStats(): boolean {
+        return this.config.get('ui.showModuleStats', true);
+    }
+
     get showFooter(): boolean {
         return this.config.get('ui.showFooter', true);
+    }
+
+    get showImportHints(): boolean {
+        return this.config.get('ui.showImportHints', true);
     }
 
     get maxExamples(): number {
@@ -196,6 +250,35 @@ export class Config {
 
     get showUpdateWarning(): boolean {
         return this.config.get('ui.showUpdateWarning', true);
+    }
+
+    get moduleBrowserDefaultView(): 'hierarchy' | 'flat' {
+        return this.config.get('ui.moduleBrowser.defaultView', 'flat');
+    }
+
+    get moduleBrowserDefaultSort(): 'name' | 'kind' | 'package' {
+        return this.config.get('ui.moduleBrowser.defaultSort', 'name');
+    }
+
+    get moduleBrowserDefaultDensity(): 'comfortable' | 'compact' {
+        return this.config.get('ui.moduleBrowser.defaultDensity', 'comfortable');
+    }
+
+    get moduleBrowserShowPrivateSymbols(): boolean {
+        return this.config.get('ui.moduleBrowser.showPrivateSymbols', false);
+    }
+
+    get moduleBrowserShowHierarchyHints(): boolean {
+        return this.config.get('ui.moduleBrowser.showHierarchyHints', true);
+    }
+
+    get moduleBrowserAutoLoadPreviews(): boolean {
+        return this.config.get('ui.moduleBrowser.autoLoadPreviews', true);
+    }
+
+    get moduleBrowserPreviewBatchSize(): number {
+        const raw = this.config.get('ui.moduleBrowser.previewBatchSize', 18);
+        return Math.min(Math.max(raw, 4), 50);
     }
 
     get diagnosticsEnabled(): boolean {

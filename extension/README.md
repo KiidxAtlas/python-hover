@@ -171,6 +171,7 @@ Works with zero config. Everything below is optional:
 | `python-hover.onlineDiscovery` | `true` | Fetch Sphinx inventories and docs from the web |
 | `python-hover.docScraping` | `false` | Fetch richer third-party documentation prose, examples, and see-also sections |
 | `python-hover.docsVersion` | `"auto"` | Python docs version (`"auto"`, `"3.11"`, `"3.12"`, ...) |
+| `python-hover.ui.showStatusBar` | `true` | Show the PyHover status bar entry for quick actions and cache size |
 | `python-hover.ui.showSignatures` | `true` | Show function signatures in hover |
 | `python-hover.ui.showParameters` | `true` | Show the parameters table in hover |
 | `python-hover.ui.maxParameters` | `6` | Maximum number of parameters shown before truncating the table |
@@ -197,6 +198,8 @@ Point Python Hover at any internal package with a Sphinx inventory:
   ]
 }
 ```
+
+`inventoryUrl` is optional when the inventory lives at `baseUrl/objects.inv`.
 
 Works with ReadTheDocs, GitHub Pages, self-hosted docs — anywhere that serves a standard `objects.inv` file.
 

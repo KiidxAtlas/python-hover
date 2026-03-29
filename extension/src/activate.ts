@@ -2,14 +2,15 @@ import * as vscode from 'vscode';
 import { DiskCache } from '../../docs-engine/src/cache/diskCache';
 import { HoverDoc, IndexedSymbolSummary, ResolutionSource } from '../../shared/types';
 import { Config } from './config';
+import { updateSettingWithPreferredTarget } from './configTarget';
 import { HoverProvider } from './hoverProvider';
-import { openIndexedSymbolSource } from './indexedSymbolActions';
+import { openHoverDocSource, openIndexedSymbolSource, openSourceTarget } from './indexedSymbolActions';
 import { Logger } from './logger';
 import { LspClient } from './lspClient';
 import { DocsPanel } from './ui/docsPanel';
 import { HoverDebugPanel } from './ui/hoverDebugPanel';
 import { HoverPanel } from './ui/hoverPanel';
-import { ModuleBrowserPanel } from './ui/moduleBrowserPanel';
+import { ModuleBrowserMessage, ModuleBrowserPanel, ModuleBrowserSettings } from './ui/moduleBrowserPanel';
 import { StatusBarManager } from './ui/statusBar';
 import { StudioMessage, StudioPanel, StudioState } from './ui/studioPanel';
 
@@ -34,17 +35,17 @@ export function activate(context: vscode.ExtensionContext) {
             config.interpreterCacheFingerprint,
         );
         let diskCache = createDiskCache();
+        let activeCorpusBuild: vscode.CancellationTokenSource | undefined;
 
         const diagnosticCollection = vscode.languages.createDiagnosticCollection('python-hover');
         context.subscriptions.push(diagnosticCollection);
 
-        let hoverProvider = new HoverProvider(lspClient, config, diskCache);
-        hoverProvider.setDiagnosticCollection(diagnosticCollection);
+        let hoverProvider!: HoverProvider;
 
         let hoverRegistration: vscode.Disposable | undefined;
         const registerHoverProvider = () => {
             hoverRegistration?.dispose();
-            hoverProvider.dispose();
+            hoverProvider?.dispose();
             hoverProvider = new HoverProvider(lspClient, config, diskCache);
             hoverProvider.setDiagnosticCollection(diagnosticCollection);
             hoverRegistration = vscode.languages.registerHoverProvider({ language: 'python' }, hoverProvider);
@@ -58,6 +59,23 @@ export function activate(context: vscode.ExtensionContext) {
             registerHoverProvider();
             statusBarManager.update();
         };
+        const updateContextMenuContexts = () => {
+            void Promise.all([
+                vscode.commands.executeCommand('setContext', 'pyhover.contextMenu.enabled', config.showEditorContextMenu),
+                vscode.commands.executeCommand('setContext', 'pyhover.contextMenu.searchDocs', config.showSearchDocsContextMenu),
+                vscode.commands.executeCommand('setContext', 'pyhover.contextMenu.browseModule', config.showBrowseModuleContextMenu),
+                vscode.commands.executeCommand('setContext', 'pyhover.contextMenu.pinHover', config.showPinHoverContextMenu),
+                vscode.commands.executeCommand('setContext', 'pyhover.contextMenu.debugPinHover', config.showDebugPinHoverContextMenu),
+                vscode.commands.executeCommand('setContext', 'pyhover.contextMenu.openStudio', config.showOpenStudioContextMenu),
+            ]);
+        };
+        const refreshAfterCacheMutation = (reason: string) => {
+            hoverProvider.clearSessionCache();
+            rebuildHoverRuntime(reason, false);
+            warmupImportsForDocument(vscode.window.activeTextEditor?.document);
+            warmupConfiguredPackages();
+            updateStudio();
+        };
 
         // Clear per-file diagnostics when document closes
         context.subscriptions.push(
@@ -68,8 +86,9 @@ export function activate(context: vscode.ExtensionContext) {
 
         // Register hover provider for all Python files
         registerHoverProvider();
+        updateContextMenuContexts();
         context.subscriptions.push({ dispose: () => hoverRegistration?.dispose() });
-        context.subscriptions.push({ dispose: () => hoverProvider.dispose() });
+        context.subscriptions.push({ dispose: () => hoverProvider?.dispose() });
 
         // Warn once if no Python language extension is active (Pylance / python-language-server)
         checkPythonExtension();
@@ -143,6 +162,8 @@ export function activate(context: vscode.ExtensionContext) {
                 if (event.affectsConfiguration('python-hover')) {
                     warmupImportsForDocument(vscode.window.activeTextEditor?.document);
                     warmupConfiguredPackages();
+                    updateContextMenuContexts();
+                    updateStudio();
                 }
             })
         );
@@ -207,7 +228,38 @@ export function activate(context: vscode.ExtensionContext) {
                 diskCache.clear({ preservePythonStdlibCorpus: true });
                 vscode.window.showInformationMessage('PyHover cache cleared. Python stdlib corpus preserved.');
                 Logger.log('Cache cleared via command.');
-                statusBarManager.update();
+                refreshAfterCacheMutation('Cache cleared. Recreating hover provider.');
+            })
+        );
+
+        context.subscriptions.push(
+            vscode.commands.registerCommand('python-hover.clearStdlibCorpus', () => {
+                diskCache.clearPythonStdlibCorpus();
+                vscode.window.showInformationMessage('PyHover stdlib corpus cleared.');
+                Logger.log('Stdlib corpus cleared via command.');
+                refreshAfterCacheMutation('Stdlib corpus cleared. Recreating hover provider.');
+            })
+        );
+
+        context.subscriptions.push(
+            vscode.commands.registerCommand('python-hover.clearAllCache', () => {
+                diskCache.clear({ preservePythonStdlibCorpus: false });
+                vscode.window.showInformationMessage('PyHover cleared all cached docs, inventories, and stdlib corpus data.');
+                Logger.log('Full cache cleared via command.');
+                refreshAfterCacheMutation('Full cache cleared. Recreating hover provider.');
+            })
+        );
+
+        context.subscriptions.push(
+            vscode.commands.registerCommand('python-hover.cancelPythonCorpusBuild', () => {
+                if (!activeCorpusBuild) {
+                    vscode.window.showInformationMessage('No Python stdlib corpus build is currently running.');
+                    return;
+                }
+
+                activeCorpusBuild.cancel();
+                updateStudio();
+                vscode.window.showInformationMessage('Cancelling the Python stdlib corpus build…');
             })
         );
 
@@ -218,30 +270,59 @@ export function activate(context: vscode.ExtensionContext) {
                     return;
                 }
 
-                const result = await vscode.window.withProgress(
-                    {
-                        location: vscode.ProgressLocation.Notification,
-                        title: 'PyHover: Building Python stdlib corpus',
-                        cancellable: false,
-                    },
-                    async progress => {
-                        let lastReported = 0;
-                        return hoverProvider.buildPythonCorpus(({ completed, total, current }) => {
-                            const percent = total > 0 ? Math.floor((completed / total) * 100) : 0;
-                            const increment = Math.max(0, percent - lastReported);
-                            lastReported = percent;
-                            progress.report({
-                                increment,
-                                message: `${completed}/${total} ${current.split('#')[0]}`,
-                            });
-                        });
-                    }
-                );
+                if (activeCorpusBuild) {
+                    vscode.window.showInformationMessage('A Python stdlib corpus build is already running.');
+                    return;
+                }
 
-                vscode.window.showInformationMessage(
-                    `PyHover: built Python corpus for ${result.targets.toLocaleString()} stdlib targets across ${result.corpusPackages.toLocaleString()} buckets.`
-                );
-                statusBarManager.update();
+                const cancellation = new vscode.CancellationTokenSource();
+                activeCorpusBuild = cancellation;
+                updateStudio();
+
+                try {
+                    const result = await vscode.window.withProgress(
+                        {
+                            location: vscode.ProgressLocation.Notification,
+                            title: 'PyHover: Building Python stdlib corpus',
+                            cancellable: true,
+                        },
+                        async (progress, token) => {
+                            const cancellationSubscription = token.onCancellationRequested(() => {
+                                cancellation.cancel();
+                            });
+
+                            try {
+                                let lastReported = 0;
+                                return await hoverProvider.buildPythonCorpus(({ completed, total, current }) => {
+                                    const percent = total > 0 ? Math.floor((completed / total) * 100) : 0;
+                                    const increment = Math.max(0, percent - lastReported);
+                                    lastReported = percent;
+                                    progress.report({
+                                        increment,
+                                        message: `${completed}/${total} ${current.split('#')[0]}`,
+                                    });
+                                }, () => cancellation.token.isCancellationRequested);
+                            } finally {
+                                cancellationSubscription.dispose();
+                            }
+                        }
+                    );
+
+                    if (result.cancelled) {
+                        vscode.window.showWarningMessage(
+                            `PyHover: cancelled stdlib corpus build after ${result.completed.toLocaleString()} of ${result.targets.toLocaleString()} targets.`
+                        );
+                    } else {
+                        vscode.window.showInformationMessage(
+                            `PyHover: built Python corpus for ${result.targets.toLocaleString()} stdlib targets across ${result.corpusPackages.toLocaleString()} buckets.`
+                        );
+                    }
+                } finally {
+                    cancellation.dispose();
+                    activeCorpusBuild = undefined;
+                    updateStudio();
+                    statusBarManager.update();
+                }
             })
         );
 
@@ -273,11 +354,7 @@ export function activate(context: vscode.ExtensionContext) {
                 qp.onDidAccept(() => {
                     const sel = qp.selectedItems[0] as SearchItem;
                     if (sel?.url) {
-                        if (config.docsBrowser === 'integrated') {
-                            void vscode.commands.executeCommand('python-hover.openDocsSide', sel.url);
-                        } else {
-                            void vscode.env.openExternal(vscode.Uri.parse(sel.url));
-                        }
+                        void openConfiguredLink(sel.url, 'docs');
                     }
                     qp.hide();
                 });
@@ -315,27 +392,130 @@ export function activate(context: vscode.ExtensionContext) {
         // Uses our own WebviewPanel so the column is guaranteed — VS Code's built-in
         // simpleBrowser.show ignores viewColumn when its panel is already visible.
         const docsPanel = DocsPanel.getInstance();
-        const moduleBrowserPanel = ModuleBrowserPanel.getInstance();
+        const buildModuleBrowserSettings = (): ModuleBrowserSettings => ({
+            defaultView: config.moduleBrowserDefaultView,
+            defaultSort: config.moduleBrowserDefaultSort,
+            defaultDensity: config.moduleBrowserDefaultDensity,
+            showPrivateSymbols: config.moduleBrowserShowPrivateSymbols,
+            showHierarchyHints: config.moduleBrowserShowHierarchyHints,
+            autoLoadPreviews: config.moduleBrowserAutoLoadPreviews,
+            previewBatchSize: config.moduleBrowserPreviewBatchSize,
+        });
+        const moduleBrowserPanel = ModuleBrowserPanel.getInstance(async (message: ModuleBrowserMessage) => {
+            switch (message.type) {
+                case 'open-doc':
+                    if (message.url) {
+                        await openConfiguredLink(message.url, 'docs');
+                    }
+                    break;
+                case 'pin-symbol':
+                    await vscode.commands.executeCommand('python-hover.pinIndexedSymbol', message.symbol);
+                    break;
+                case 'open-source':
+                    await vscode.commands.executeCommand('python-hover.openIndexedSymbolSource', message.symbol);
+                    break;
+                case 'copy-import': {
+                    const importStatement = buildImportStatementForIndexedSymbol(message.symbol);
+                    if (importStatement) {
+                        await vscode.commands.executeCommand('python-hover.copyImport', importStatement);
+                    } else if (message.symbol?.name) {
+                        vscode.window.showInformationMessage(`No import statement is available for "${message.symbol.name}".`);
+                    }
+                    break;
+                }
+                case 'load-previews': {
+                    const previews = await hoverProvider.getIndexedSymbolPreviews(Array.isArray(message.symbols) ? message.symbols : []);
+                    moduleBrowserPanel.postPreviewData(message.requestId, previews);
+                    break;
+                }
+                case 'run-command':
+                    await vscode.commands.executeCommand(message.command);
+                    break;
+                case 'open-settings':
+                    await vscode.commands.executeCommand('workbench.action.openSettings', message.query || 'python-hover.ui.moduleBrowser');
+                    break;
+                case 'update-setting':
+                    await updateSettingWithPreferredTarget('python-hover', message.key.replace(/^python-hover\./, ''), message.value);
+                    moduleBrowserPanel.refreshSettings(buildModuleBrowserSettings());
+                    break;
+            }
+        });
+        const openConfiguredLink = async (url: string, kind: 'docs' | 'devdocs' = 'docs') => {
+            if (!url) {
+                return;
+            }
+
+            const browser = kind === 'devdocs' ? config.devdocsBrowser : config.docsBrowser;
+            if (browser === 'integrated') {
+                docsPanel.show(url);
+                return;
+            }
+
+            await vscode.env.openExternal(vscode.Uri.parse(url));
+        };
+        const parseDocLinkPayload = (payload: unknown): { url?: string; kind: 'docs' | 'devdocs' } => {
+            if (typeof payload === 'string') {
+                return { url: payload, kind: 'docs' };
+            }
+
+            if (!payload || typeof payload !== 'object') {
+                return { url: undefined, kind: 'docs' };
+            }
+
+            const candidate = payload as { url?: unknown; kind?: unknown };
+            return {
+                url: typeof candidate.url === 'string' ? candidate.url : undefined,
+                kind: candidate.kind === 'devdocs' ? 'devdocs' : 'docs',
+            };
+        };
         const buildStudioState = (): StudioState => {
             const overview = diskCache.getOverview();
             return {
                 version: String(context.extension.packageJSON.version || '?'),
+                indexedSymbols: hoverProvider.getIndexedSymbolCount(),
+                cacheSizeLabel: `${(overview.generalBytes / 1_048_576).toFixed(1)} MB`,
+                corpusSizeLabel: `${(overview.pythonStdlibCorpusBytes / 1_048_576).toFixed(1)} MB`,
+                fullCacheSizeLabel: `${(overview.totalBytes / 1_048_576).toFixed(1)} MB`,
+                pythonStdlibCorpusPackages: overview.pythonStdlibCorpusPackages,
+                pythonStdlibCorpusEntries: overview.pythonStdlibCorpusEntries,
+                hasPythonStdlibCorpus: overview.hasPythonStdlibCorpus,
+                isBuildingPythonStdlibCorpus: Boolean(activeCorpusBuild),
+                lastHoverTitle: hoverProvider.getLastDoc()?.title,
                 onlineDiscovery: config.onlineDiscovery,
                 runtimeHelper: config.runtimeHelperEnabled,
                 astFallback: config.astFallbackEnabled,
                 docScraping: config.docScrapingEnabled,
                 buildFullCorpus: config.buildFullCorpus,
+                warmupImports: config.warmupImports,
+                useKnownDocsUrls: config.useKnownDocsUrls,
                 enableDebugLogging: config.enableDebugLogging,
+                diagnosticsEnabled: config.diagnosticsEnabled,
+                showStatusBar: config.showStatusBar,
+                showDebugPinButton: config.showDebugPinButton,
+                showSignatures: config.showSignatures,
+                showReturnTypes: config.showReturnTypes,
+                compactMode: config.compactMode,
+                showProvenance: config.showProvenance,
+                showToolbar: config.showToolbar,
+                showParameters: config.showParameters,
+                showSeeAlso: config.showSeeAlso,
+                showRaises: config.showRaises,
+                showModuleExports: config.showModuleExports,
+                showModuleStats: config.showModuleStats,
+                showFooter: config.showFooter,
+                showImportHints: config.showImportHints,
                 docsBrowser: config.docsBrowser,
                 devdocsBrowser: config.devdocsBrowser,
-                indexedSymbols: hoverProvider.getIndexedSymbolCount(),
-                cacheSizeLabel: `${(overview.generalBytes / 1_048_576).toFixed(1)} MB`,
-                corpusSizeLabel: `${(overview.pythonStdlibCorpusBytes / 1_048_576).toFixed(1)} MB`,
-                pythonStdlibCorpusPackages: overview.pythonStdlibCorpusPackages,
-                pythonStdlibCorpusEntries: overview.pythonStdlibCorpusEntries,
-                hasPythonStdlibCorpus: overview.hasPythonStdlibCorpus,
-                lastHoverTitle: hoverProvider.getLastDoc()?.title,
-                indexedPackages: hoverProvider.getIndexedPackageSummaries(),
+                requestTimeout: config.requestTimeout,
+                hoverActivationDelay: config.hoverActivationDelay,
+                inventoryCacheDays: config.inventoryCacheDays,
+                snippetCacheHours: config.snippetCacheHours,
+                contextMenuEnabled: config.showEditorContextMenu,
+                contextMenuSearchDocs: config.showSearchDocsContextMenu,
+                contextMenuBrowseModule: config.showBrowseModuleContextMenu,
+                contextMenuPinHover: config.showPinHoverContextMenu,
+                contextMenuDebugPinHover: config.showDebugPinHoverContextMenu,
+                contextMenuOpenStudio: config.showOpenStudioContextMenu,
             };
         };
         const refreshStudio = () => {
@@ -346,9 +526,85 @@ export function activate(context: vscode.ExtensionContext) {
             studioPanel.update(buildStudioState());
             statusBarManager.update();
         };
-        const updateSetting = async (key: string, value: boolean | string) => {
+        const updateSetting = async (key: string, value: boolean | string | number) => {
             const setting = key.replace(/^python-hover\./, '');
-            await vscode.workspace.getConfiguration('python-hover').update(setting, value, vscode.ConfigurationTarget.Global);
+            await updateSettingWithPreferredTarget('python-hover', setting, value);
+        };
+        const applyStudioPreset = async (preset: 'focused' | 'balanced' | 'deepDocs') => {
+            const entries: Array<[string, boolean | string | number]> = (() => {
+                switch (preset) {
+                    case 'focused':
+                        return [
+                            ['ui.compactMode', true],
+                            ['ui.showMetadataChips', true],
+                            ['ui.showProvenance', true],
+                            ['ui.showToolbar', true],
+                            ['ui.showFooter', false],
+                            ['ui.showImportHints', false],
+                            ['ui.showParameters', false],
+                            ['ui.showRaises', false],
+                            ['ui.showSeeAlso', false],
+                            ['ui.showModuleExports', false],
+                            ['showPracticalExamples', false],
+                            ['ui.maxContentLength', 420],
+                            ['ui.maxExamples', 1],
+                            ['ui.maxModuleExports', 8],
+                        ];
+                    case 'deepDocs':
+                        return [
+                            ['ui.compactMode', false],
+                            ['ui.showMetadataChips', true],
+                            ['ui.showProvenance', true],
+                            ['ui.showToolbar', true],
+                            ['ui.showFooter', true],
+                            ['ui.showImportHints', true],
+                            ['ui.showParameters', true],
+                            ['ui.showRaises', true],
+                            ['ui.showSeeAlso', true],
+                            ['ui.showModuleExports', true],
+                            ['ui.showModuleStats', true],
+                            ['ui.showCallouts', true],
+                            ['showPracticalExamples', true],
+                            ['docScraping', true],
+                            ['buildFullCorpus', true],
+                            ['ui.maxContentLength', 1400],
+                            ['maxSnippetLines', 18],
+                            ['ui.maxParameters', 10],
+                            ['ui.maxExamples', 4],
+                            ['ui.maxModuleExports', 32],
+                            ['ui.maxSeeAlsoItems', 14],
+                        ];
+                    case 'balanced':
+                    default:
+                        return [
+                            ['ui.compactMode', false],
+                            ['ui.showMetadataChips', true],
+                            ['ui.showProvenance', true],
+                            ['ui.showToolbar', true],
+                            ['ui.showFooter', true],
+                            ['ui.showImportHints', true],
+                            ['ui.showParameters', true],
+                            ['ui.showRaises', true],
+                            ['ui.showSeeAlso', true],
+                            ['ui.showModuleExports', true],
+                            ['ui.showModuleStats', true],
+                            ['ui.showCallouts', true],
+                            ['showPracticalExamples', true],
+                            ['docScraping', false],
+                            ['buildFullCorpus', false],
+                            ['ui.maxContentLength', 800],
+                            ['maxSnippetLines', 12],
+                            ['ui.maxParameters', 6],
+                            ['ui.maxExamples', 2],
+                            ['ui.maxModuleExports', 20],
+                            ['ui.maxSeeAlsoItems', 8],
+                        ];
+                }
+            })();
+
+            for (const [setting, value] of entries) {
+                await updateSettingWithPreferredTarget('python-hover', setting, value);
+            }
         };
         const studioPanel = StudioPanel.getInstance(async (message: StudioMessage) => {
             switch (message.type) {
@@ -360,6 +616,9 @@ export function activate(context: vscode.ExtensionContext) {
                     break;
                 case 'update-setting':
                     await updateSetting(message.key, message.value);
+                    break;
+                case 'apply-preset':
+                    await applyStudioPreset(message.preset);
                     break;
             }
 
@@ -403,11 +662,7 @@ export function activate(context: vscode.ExtensionContext) {
                     matchOnDescription: true,
                 }) as HistoryItem | undefined;
                 if (picked?.url) {
-                    if (config.docsBrowser === 'integrated') {
-                        void vscode.commands.executeCommand('python-hover.openDocsSide', picked.url);
-                    } else {
-                        void vscode.env.openExternal(vscode.Uri.parse(picked.url));
-                    }
+                    void openConfiguredLink(picked.url, 'docs');
                 }
             })
         );
@@ -425,6 +680,94 @@ export function activate(context: vscode.ExtensionContext) {
             vscode.commands.registerCommand('python-hover.openDocsSide', (url: string) => {
                 if (!url) return;
                 docsPanel.show(url);
+            })
+        );
+
+        context.subscriptions.push(
+            vscode.commands.registerCommand('python-hover.openDocLink', async (payload?: string | { url?: string; kind?: string }) => {
+                const { url, kind } = parseDocLinkPayload(payload);
+                if (!url) return;
+                await openConfiguredLink(url, kind);
+            })
+        );
+
+        context.subscriptions.push(
+            vscode.commands.registerCommand('python-hover.openHoverSource', async (payload?: string | { token?: string; target?: string }) => {
+                const token = typeof payload === 'string'
+                    ? payload
+                    : typeof payload?.token === 'string'
+                        ? payload.token
+                        : undefined;
+                const fallbackTarget = typeof payload === 'object' && payload && typeof payload.target === 'string'
+                    ? payload.target
+                    : undefined;
+
+                const doc = hoverProvider.getDocByCommandToken(token);
+                const opened = doc
+                    ? await openHoverDocSource(doc, url => openConfiguredLink(url, 'docs'))
+                    : fallbackTarget
+                        ? await openSourceTarget(fallbackTarget, url => openConfiguredLink(url, 'docs'))
+                        : false;
+
+                if (!opened) {
+                    vscode.window.showInformationMessage('No source location is available for this hover.');
+                }
+            })
+        );
+
+        context.subscriptions.push(
+            vscode.commands.registerCommand('python-hover.pinDocReference', async (payload?: {
+                label?: string;
+                url?: string;
+                currentModule?: string;
+                currentPackage?: string;
+                currentTitle?: string;
+            }) => {
+                const label = typeof payload?.label === 'string' ? payload.label.trim() : '';
+                const url = typeof payload?.url === 'string' ? payload.url.trim() : undefined;
+
+                const doc = label
+                    ? await hoverProvider.resolvePinnedReference({
+                        label,
+                        url,
+                        currentModule: typeof payload?.currentModule === 'string' ? payload.currentModule : undefined,
+                        currentPackage: typeof payload?.currentPackage === 'string' ? payload.currentPackage : undefined,
+                        currentTitle: typeof payload?.currentTitle === 'string' ? payload.currentTitle : undefined,
+                    })
+                    : null;
+
+                if (doc) {
+                    HoverPanel.push(doc);
+                    return;
+                }
+
+                if (url) {
+                    await openConfiguredLink(url, 'docs');
+                    return;
+                }
+
+                if (label) {
+                    vscode.window.showInformationMessage(`No related documentation is indexed for "${label}" yet.`);
+                }
+            })
+        );
+
+        context.subscriptions.push(
+            vscode.commands.registerCommand('python-hover.pinPanelBack', () => {
+                HoverPanel.goBack();
+            })
+        );
+
+        context.subscriptions.push(
+            vscode.commands.registerCommand('python-hover.pinPanelForward', () => {
+                HoverPanel.goForward();
+            })
+        );
+
+        context.subscriptions.push(
+            vscode.commands.registerCommand('python-hover.pinPanelJump', (index?: number) => {
+                if (typeof index !== 'number') return;
+                HoverPanel.jumpTo(index);
             })
         );
 
@@ -452,7 +795,11 @@ export function activate(context: vscode.ExtensionContext) {
             vscode.commands.registerCommand('python-hover.openIndexedSymbolSource', async (symbol: IndexedSymbolSummary) => {
                 if (!symbol?.name) return;
 
-                const opened = await openIndexedSymbolSource(symbol, hoverProvider, docsPanel);
+                const opened = await openIndexedSymbolSource(
+                    symbol,
+                    hoverProvider,
+                    url => openConfiguredLink(url, 'docs'),
+                );
                 if (!opened) {
                     vscode.window.showInformationMessage(`No source location is available for "${symbol.name}".`);
                 }
@@ -497,7 +844,7 @@ export function activate(context: vscode.ExtensionContext) {
                     await hoverProvider.hydrateCachedInventories();
                     const hydratedModuleSymbols = hoverProvider.getModuleSymbols(targetModule);
                     if (hydratedModuleSymbols.length > 0) {
-                        moduleBrowserPanel.show(targetModule, hydratedModuleSymbols);
+                        moduleBrowserPanel.show(targetModule, hydratedModuleSymbols, buildModuleBrowserSettings());
                         return;
                     }
 
@@ -507,7 +854,7 @@ export function activate(context: vscode.ExtensionContext) {
                     return;
                 }
 
-                moduleBrowserPanel.show(targetModule, moduleSymbols);
+                moduleBrowserPanel.show(targetModule, moduleSymbols, buildModuleBrowserSettings());
             })
         );
 
@@ -570,6 +917,24 @@ function buildImportStatementForDoc(doc: HoverDoc): string | undefined {
     if (!doc.module || doc.module === 'builtins') return undefined;
     const shortName = rawTitle.split('.').pop() || rawTitle;
     return `from ${doc.module} import ${shortName}`;
+}
+
+function buildImportStatementForIndexedSymbol(symbol: IndexedSymbolSummary): string | undefined {
+    const rawTitle = symbol.name;
+    if (!rawTitle || /^__\w+__$/.test(rawTitle)) return undefined;
+    if (symbol.kind === 'module') {
+        return `import ${rawTitle}`;
+    }
+
+    const moduleRef = symbol.module || symbol.name.split('.')[0] || symbol.package;
+    if (!moduleRef || moduleRef === 'builtins') return undefined;
+
+    const segments = rawTitle.split('.').filter(Boolean);
+    let shortName = segments[segments.length - 1] || rawTitle;
+    if (segments.length > 1 && /^(?:method|property|field)$/i.test(symbol.kind || '')) {
+        shortName = segments[0];
+    }
+    return `from ${moduleRef} import ${shortName}`;
 }
 
 /**

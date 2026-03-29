@@ -225,6 +225,78 @@ def get_docstring_from_source(source: str, symbol_name: str) -> dict:
         "is_stdlib": False,
     }
 
+def get_docstring_from_file(
+    file_path: str, candidates: list[str], module_name: str | None = None
+) -> dict:
+    """
+    Extract a symbol signature/docstring from an installed library source or stub file.
+
+    `candidates` should be ordered from most-specific to least-specific, for example:
+      ["pandas.core.frame.DataFrame.agg", "DataFrame.agg"]
+    """
+    try:
+        with open(file_path, "r", encoding="utf-8") as handle:
+            source = handle.read()
+    except Exception as e:
+        return {"error": f"Failed to read source file: {e}"}
+
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as e:
+        return {"error": f"SyntaxError: {e}"}
+
+    normalized_candidates = []
+    for candidate in candidates or []:
+        if not isinstance(candidate, str):
+            continue
+        value = candidate.strip().replace("builtins.", "")
+        if value and value not in normalized_candidates:
+            normalized_candidates.append(value)
+
+    if not normalized_candidates:
+        return {"error": "No source symbol candidates provided"}
+
+    for candidate in normalized_candidates:
+        node = _find_ast_node(tree.body, candidate.split("."))
+        if node is None:
+            continue
+
+        return _describe_ast_node(tree, node, candidate, module_name)
+
+    return {"error": f"Symbol not found in source file: {normalized_candidates[0]}"}
+
+
+def _describe_ast_node(
+    tree: ast.AST,
+    node: ast.AsyncFunctionDef | ast.FunctionDef | ast.ClassDef,
+    qualname: str,
+    module_name: str | None,
+) -> dict:
+    docstring = ast.get_docstring(node)
+    signature = _ast_signature(node)
+
+    if isinstance(node, ast.ClassDef):
+        kind = "class"
+    elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        kind = "method" if "." in qualname else "function"
+    else:
+        kind = None
+
+    if not docstring and qualname.endswith(".__init__"):
+        class_name = qualname.rsplit(".", 1)[0]
+        class_node = _find_ast_node(getattr(tree, "body", []), class_name.split("."))
+        if isinstance(class_node, ast.ClassDef):
+            docstring = ast.get_docstring(class_node)
+
+    return {
+        "docstring": docstring,
+        "signature": signature,
+        "kind": kind,
+        "qualname": qualname,
+        "module": module_name,
+        "is_stdlib": _is_stdlib(module_name),
+    }
+
 
 def _find_ast_node(stmts, parts):
     """Recursively walk the AST to find a function/class matching the dotted path."""

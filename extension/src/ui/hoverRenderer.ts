@@ -24,10 +24,9 @@ export class HoverRenderer {
             enabledCommands: [
                 'python-hover.pinHover',
                 'python-hover.debugPinHover',
-                'python-hover.copySignature',
-                'python-hover.copyUrl',
-                'python-hover.copyImport',
                 'python-hover.browseModule',
+                'python-hover.openDocLink',
+                'python-hover.openHoverSource',
                 'python-hover.openDocsSide',
                 'editor.action.revealDefinition',
             ],
@@ -47,6 +46,9 @@ export class HoverRenderer {
 
         if (this.config.showCallouts) {
             this.renderCallouts(md, doc);
+        }
+        if (doc.kind === 'module') {
+            this.renderModuleOverview(md, doc);
         }
         this.renderDescription(md, doc);
 
@@ -92,6 +94,11 @@ export class HoverRenderer {
 
         md.appendMarkdown(`### $(${icon}) \`${rawTitle}\`\n\n`);
 
+        const provenance = this.config.showProvenance ? this.getProvenanceLine(doc) : null;
+        if (provenance) {
+            md.appendMarkdown(`${provenance}\n\n`);
+        }
+
         if (!this.config.showMetadataChips) {
             return;
         }
@@ -99,25 +106,6 @@ export class HoverRenderer {
         const chips: string[] = [];
         const kindLabel = this.formatKindLabel(doc.kind);
         chips.push(`\`${kindLabel}\``);
-
-        if (doc.source === ResolutionSource.Local) {
-            chips.push(`$(home) local`);
-        } else {
-            const sourceLabel = this.getSourceLabel(doc.source);
-            if (sourceLabel) {
-                chips.push(`$(${this.getSourceIcon(doc.source)}) ${sourceLabel}`);
-            }
-            if (doc.url) {
-                try {
-                    const host = new URL(doc.url).hostname.replace(/^www\./, '');
-                    if (host.includes('docs.python.org')) {
-                        chips.push(`$(book) Python docs`);
-                    } else if (host) {
-                        chips.push(`$(book) ${host}`);
-                    }
-                } catch { /* skip */ }
-            }
-        }
 
         if (doc.module && doc.module !== 'builtins' && doc.kind !== 'module') {
             chips.push(`$(symbol-namespace) ${doc.module}`);
@@ -135,69 +123,65 @@ export class HoverRenderer {
             chips.push(`$(versions) v${doc.installedVersion}`);
         }
 
-        if (doc.license && doc.source !== ResolutionSource.Local) {
-            chips.push(`$(law) ${doc.license}`);
+        if (chips.length > 0) {
+            md.appendMarkdown(chips.join(' \u00a0·\u00a0 ') + '\n\n');
         }
-        if (doc.requiresPython && doc.source !== ResolutionSource.Local) {
-            chips.push(`$(arrow-circle-up) py${doc.requiresPython}`);
-        }
-
-        md.appendMarkdown(chips.join(' \u00a0·\u00a0 ') + '\n\n');
     }
     // ─────────────────────────────────────────────────────────────────────────
     // TOOLBAR  — actions bar, always directly under the header
     // ─────────────────────────────────────────────────────────────────────────
 
     private renderToolbar(md: vscode.MarkdownString, doc: HoverDoc): void {
-        const primary: string[] = [];
-        const secondary: string[] = [];
+        const actions: string[] = [];
         const commandToken = this.getCommandToken(doc);
 
-        primary.push(this.buildCommandLink('$(pin) Pin', 'python-hover.pinHover', commandToken, 'Pin this hover'));
+        actions.push(this.buildCommandLink('$(pin) Pin', 'python-hover.pinHover', commandToken, 'Pin this hover'));
 
         if (this.config.showDebugPinButton) {
-            primary.push(this.buildCommandLink('$(debug-alt-small) Debug', 'python-hover.debugPinHover', commandToken, 'Pin this hover and open a debug view'));
+            actions.push(this.buildCommandLink('$(debug-alt-small) Debug', 'python-hover.debugPinHover', commandToken, 'Pin this hover and open a debug view'));
         }
 
         if (doc.source === ResolutionSource.Local) {
-            primary.push(`[$(go-to-file) Go to def](command:editor.action.revealDefinition "Jump to definition")`);
+            actions.push(`[$(go-to-file) Go to def](command:editor.action.revealDefinition "Jump to definition")`);
         }
 
         if (doc.url) {
-            const docsLink = this.buildLinkUrl(doc.url, this.config.docsBrowser);
-            secondary.push(`[$(book) Docs](<${docsLink}> "Open official documentation")`);
+            const docsLink = this.buildLinkUrl(doc.url, this.config.docsBrowser, 'docs');
+            actions.push(`[$(book) Docs](<${docsLink}> "Open official documentation")`);
         }
 
         const devdocsUrl = doc.devdocsUrl;
-        if (devdocsUrl) {
-            const ddLink = this.buildLinkUrl(devdocsUrl, this.config.devdocsBrowser);
-            secondary.push(`[$(search-view-icon) DevDocs](<${ddLink}> "Search DevDocs")`);
+        if (devdocsUrl && !doc.url) {
+            const ddLink = this.buildLinkUrl(devdocsUrl, this.config.devdocsBrowser, 'devdocs');
+            actions.push(`[$(search-view-icon) DevDocs](<${ddLink}> "Search DevDocs")`);
         }
 
         const sourceUrl = doc.sourceUrl || doc.links?.source;
-        if (sourceUrl) {
-            const sourceLink = this.buildLinkUrl(sourceUrl, this.config.docsBrowser);
-            secondary.push(`[$(source-control) Source](<${sourceLink}> "Open source or reference page")`);
+        if (sourceUrl && sourceUrl !== doc.url) {
+            actions.push(
+                this.buildCommandLink(
+                    '$(source-control) Source',
+                    'python-hover.openHoverSource',
+                    { token: commandToken, target: sourceUrl },
+                    'Open source or reference page',
+                ),
+            );
         }
 
         if (doc.module && doc.module !== 'builtins') {
             const args = this.encodeCommandArgs(doc.module);
             const safeModule = doc.module.replace(/[`[\]()]/g, '');
-            secondary.push(
+            actions.push(
                 `[$(symbol-namespace) Browse \`${safeModule}\`]` +
                 `(<command:python-hover.browseModule?${args}> "Browse all symbols in ${safeModule}")`
             );
         }
 
-        if (primary.length === 0 && secondary.length === 0) {
+        if (actions.length === 0) {
             return;
         }
 
-        let block = primary.join('  ·  ');
-        if (secondary.length > 0) {
-            block += (primary.length > 0 ? '  \n' : '') + secondary.join('  ·  ');
-        }
-        md.appendMarkdown(block + '\n\n---\n\n');
+        md.appendMarkdown(actions.join('  ·  ') + '\n\n');
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -205,7 +189,6 @@ export class HoverRenderer {
     // ─────────────────────────────────────────────────────────────────────────
 
     private renderSignature(md: vscode.MarkdownString, doc: HoverDoc): void {
-        md.appendMarkdown(`**$(code) Signature**\n\n`);
         if (doc.overloads && doc.overloads.length > 1) {
             const maxShow = 3;
             doc.overloads.slice(0, maxShow).forEach(o =>
@@ -214,6 +197,8 @@ export class HoverRenderer {
             if (doc.overloads.length > maxShow) {
                 const extra = doc.overloads.length - maxShow;
                 md.appendMarkdown(`*+${extra} more overload${extra > 1 ? 's' : ''} — see docs*\n\n`);
+            } else {
+                md.appendMarkdown('\n');
             }
         } else {
             let sig = this.normalizeDisplaySignature(doc.signature!);
@@ -226,6 +211,7 @@ export class HoverRenderer {
                 sig = this.truncateSignature(sig, MAX_SIG_LEN);
             }
             md.appendCodeblock(sig, 'python');
+            md.appendMarkdown('\n');
         }
     }
 
@@ -244,27 +230,27 @@ export class HoverRenderer {
 
     private renderCallouts(md: vscode.MarkdownString, doc: HoverDoc): void {
         if (doc.badges?.some(b => /^deprecated$/i.test(b.label))) {
-            md.appendMarkdown(`> $(error) **Deprecated** — check the documentation for the recommended alternative\n\n`);
+            md.appendMarkdown(`$(error) **Deprecated** — check the documentation for the recommended alternative\n\n`);
         }
-        if (doc.latestVersion && doc.installedVersion && this.config.showUpdateWarning && this.isOutdated(doc.installedVersion, doc.latestVersion)) {
-            md.appendMarkdown(`> $(arrow-up) **Update available:** v${doc.installedVersion} → v${doc.latestVersion}\n\n`);
+        if (doc.latestVersion && doc.installedVersion && this.config.showUpdateWarning && this.isMeaningfullyOutdated(doc.installedVersion, doc.latestVersion)) {
+            md.appendMarkdown(`$(arrow-up) **Update available:** v${doc.installedVersion} → v${doc.latestVersion}\n\n`);
         }
         if (doc.protocolHints && doc.protocolHints.length > 0) {
-            doc.protocolHints.forEach(h => md.appendMarkdown(`> $(lightbulb) *${h}*\n\n`));
+            doc.protocolHints.forEach(h => md.appendMarkdown(`$(lightbulb) *${h}*\n\n`));
         }
         if (doc.notes && doc.notes.length > 0) {
-            doc.notes.forEach(n => md.appendMarkdown(`> $(info) ${n}\n\n`));
+            doc.notes.forEach(n => md.appendMarkdown(`$(info) ${n}\n\n`));
         }
     }
 
-    private isOutdated(installed: string, latest: string): boolean {
+    private isMeaningfullyOutdated(installed: string, latest: string): boolean {
         if (installed === latest) return false;
         const parse = (v: string) => v.replace(/^[^0-9]*/, '').split('.').map(Number);
         const [iMaj = 0, iMin = 0, iPatch = 0] = parse(installed);
         const [lMaj = 0, lMin = 0, lPatch = 0] = parse(latest);
         if (lMaj !== iMaj) return lMaj > iMaj;
         if (lMin !== iMin) return lMin > iMin;
-        return lPatch > iPatch;
+        return false;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -314,7 +300,7 @@ export class HoverRenderer {
         md.appendMarkdown(`${this.rewriteMarkdownLinks(content)}\n\n`);
 
         if (wasTruncated && doc.url) {
-            const moreUrl = this.buildLinkUrl(doc.url, this.config.docsBrowser);
+            const moreUrl = this.buildLinkUrl(doc.url, this.config.docsBrowser, 'docs');
             md.appendMarkdown(
                 `[$(book) Continue reading in documentation…](<${moreUrl}> "Open full documentation")\n\n`,
             );
@@ -356,7 +342,7 @@ export class HoverRenderer {
         md.appendMarkdown('\n\n');
 
         if (wasTruncated && doc.url) {
-            const moreUrl = this.buildLinkUrl(doc.url, this.config.docsBrowser);
+            const moreUrl = this.buildLinkUrl(doc.url, this.config.docsBrowser, 'docs');
             md.appendMarkdown(
                 `[$(book) Continue reading in documentation…](<${moreUrl}> "Open full documentation")\n\n`,
             );
@@ -366,7 +352,8 @@ export class HoverRenderer {
     }
 
     private renderStructuredSection(section: StructuredHoverSection): string {
-        const title = section.title ? `**${this.escapeMarkdown(section.title)}**\n\n` : '';
+        const displayTitle = this.getStructuredSectionDisplayTitle(section);
+        const title = displayTitle ? `**${this.escapeMarkdown(displayTitle)}**\n\n` : '';
 
         if (section.kind === 'code') {
             const language = section.language || 'python';
@@ -391,18 +378,22 @@ export class HoverRenderer {
         if (!text) return '';
 
         if (section.role === 'summary') {
-            return this.rewriteMarkdownLinks(`> $(book) ${text.replace(/\n/g, '\n> ')}`);
+            return this.rewriteMarkdownLinks(text);
         }
 
-        return this.rewriteMarkdownLinks(section.kind === 'note'
-            ? `> $(info) ${text.replace(/\n/g, '\n> ')}`
-            : `${title}${text}`);
+        if (section.kind === 'note') {
+            const label = displayTitle ? `**${this.escapeMarkdown(displayTitle)}** — ` : '$(info) **Note** — ';
+            return this.rewriteMarkdownLinks(`${label}${text}`);
+        }
+
+        return this.rewriteMarkdownLinks(`${title}${text}`);
     }
 
     private getVisibleStructuredDescriptionSections(doc: HoverDoc): StructuredHoverSection[] {
         const sourceSections = doc.structuredContent?.sections ?? [];
         const sections: StructuredHoverSection[] = [];
         const grammarSections: StructuredHoverSection[] = [];
+        const seen = new Set<string>();
         let currentField: 'parameters' | 'returns' | 'raises' | undefined;
 
         for (const section of sourceSections) {
@@ -421,6 +412,12 @@ export class HoverRenderer {
             if (currentField === 'returns' && doc.returns) continue;
             if (currentField === 'raises' && doc.raises?.length) continue;
 
+            const dedupeKey = this.getStructuredSectionDedupKey(section);
+            if (seen.has(dedupeKey)) {
+                continue;
+            }
+            seen.add(dedupeKey);
+
             // Grammar / syntax definition blocks (e.g. `yield_stmt: yield_expression`) are
             // deferred to the end so the human-readable explanation comes first.
             if (
@@ -436,6 +433,27 @@ export class HoverRenderer {
         }
 
         return [...sections, ...grammarSections];
+    }
+
+    private getStructuredSectionDisplayTitle(section: StructuredHoverSection): string | undefined {
+        if (!section.title) return undefined;
+        if (section.role === 'summary') return undefined;
+        if (/^(?:overview|summary|description|details?)$/i.test(section.title.trim())) {
+            return undefined;
+        }
+        return section.title;
+    }
+
+    private getStructuredSectionDedupKey(section: StructuredHoverSection): string {
+        const normalizedTitle = (this.getStructuredSectionDisplayTitle(section) ?? '').toLowerCase().trim();
+        const rawContent = section.kind === 'list'
+            ? (section.items ?? []).join(' | ')
+            : section.content;
+        const normalizedContent = this.cleanContentAnnotations(this.cleanRstArtifacts(rawContent))
+            .replace(/\s+/g, ' ')
+            .trim()
+            .toLowerCase();
+        return `${section.kind}:${section.role ?? ''}:${normalizedTitle}:${normalizedContent}`;
     }
 
     private getStructuredFieldKind(title?: string): 'parameters' | 'returns' | 'raises' | undefined {
@@ -466,7 +484,7 @@ export class HoverRenderer {
         if ((userMaj ?? 0) < (reqMaj ?? 0) ||
             ((userMaj ?? 0) === (reqMaj ?? 0) && (userMin ?? 0) < (reqMin ?? 0))) {
             md.appendMarkdown(
-                `> $(warning) **Requires Python ${match[1]}+** — ` +
+                `$(warning) **Requires Python ${match[1]}+** — ` +
                 `your runtime is Python ${this.detectedVersion}\n\n`
             );
         }
@@ -481,12 +499,17 @@ export class HoverRenderer {
         const keywordMaxLen = Math.max(this.config.maxContentLength * 2, 1800);
         let remaining = keywordMaxLen;
         let renderedExample = false;
+        let renderedSyntax = false;
         let wasTruncated = false;
 
         for (const block of parsed.blocks) {
             if (block.kind === 'syntax') {
-                md.appendMarkdown(`**$(code) Syntax**\n\n`);
+                if (!renderedSyntax) {
+                    md.appendMarkdown(`**$(code) Syntax**\n\n`);
+                    renderedSyntax = true;
+                }
                 md.appendCodeblock(block.content, 'python');
+                md.appendMarkdown('\n');
                 continue;
             }
 
@@ -572,7 +595,10 @@ export class HoverRenderer {
             if (/^(?:See also|Related help topics?):?\s*/i.test(trimmed)) {
                 const related = trimmed.replace(/^(?:See also|Related help topics?):?\s*/i, '');
                 if (related) {
-                    seeAlso.push(...related.split(',').map(item => item.trim()).filter(Boolean));
+                    const parts = related.includes(',')
+                        ? related.split(',')
+                        : related.split(/\s+/);
+                    seeAlso.push(...parts.map(item => item.trim()).filter(Boolean));
                 }
                 index += 1;
                 continue;
@@ -580,6 +606,27 @@ export class HoverRenderer {
 
             if (/^Examples?:?\s*$/i.test(trimmed)) {
                 index += 1;
+                continue;
+            }
+
+            if (this.isKeywordSyntaxStart(trimmed)) {
+                const blockLines: string[] = [trimmed];
+                index += 1;
+
+                while (index < lines.length) {
+                    const nextLine = lines[index];
+                    const nextTrimmed = nextLine.trim();
+                    if (!nextTrimmed) {
+                        break;
+                    }
+                    if (!this.isKeywordSyntaxContinuation(nextLine)) {
+                        break;
+                    }
+                    blockLines.push(nextLine.replace(/^\s+/, ''));
+                    index += 1;
+                }
+
+                blocks.push({ kind: 'syntax', content: blockLines.join('\n') });
                 continue;
             }
 
@@ -643,12 +690,24 @@ export class HoverRenderer {
         return /^The\s+["'][^"']+["']\s+(?:statement|expression|clause)$/i.test(line);
     }
 
+    private isKeywordSyntaxStart(line: string): boolean {
+        return line.includes('::=') || /^[a-z][a-z0-9_]*(?:_stmt|_expr|_clause|_list)?\s*:\s+/.test(line);
+    }
+
+    private isKeywordSyntaxContinuation(line: string): boolean {
+        const trimmed = line.trim();
+        if (!trimmed) return false;
+        if (line.search(/\S/) < 1) return false;
+        if (trimmed.includes('::=')) return true;
+        return /^[()[\]{}|"'A-Za-z0-9_:.+*\s,-]+$/.test(trimmed) && !this.looksLikePythonCode(trimmed);
+    }
+
     private isKeywordSyntaxBlock(block: string): boolean {
         const lines = block.split('\n').map(line => line.trim()).filter(Boolean);
         if (lines.length === 0) return false;
         if (lines[0].includes('::=')) return true;
         if (/^[a-z][a-z0-9_]+:\s+["[(]/.test(lines[0])) return true;
-        return lines.every(line => /^[\[\](){|}"'\s\w:.*,+-]+$/.test(line) && !this.looksLikePythonCode(line));
+        return lines.every(line => /^[()[\]{}|"'\s\w:.*,+-]+$/.test(line) && !this.looksLikePythonCode(line));
     }
 
     private formatKeywordParagraph(text: string): string {
@@ -824,7 +883,12 @@ export class HoverRenderer {
             parts.push(peps.join(' \u00a0·\u00a0 '));
         }
         if (normalized) {
-            parts.push(normalized);
+            const tokens = normalized.split(/[,\s]+/).filter(Boolean);
+            if (tokens.length > 0 && tokens.every(token => /^[A-Za-z_][A-Za-z0-9_.]*$/.test(token))) {
+                parts.push(tokens.map(token => `\`${token}\``).join(' \u00a0·\u00a0 '));
+            } else {
+                parts.push(normalized);
+            }
         }
         if (parts.length > 0) {
             md.appendMarkdown(`$(link-external) **See also:** ${this.rewriteMarkdownLinks(parts.join(' — '))}\n\n`);
@@ -866,6 +930,35 @@ export class HoverRenderer {
         }
     }
 
+    private renderModuleOverview(md: vscode.MarkdownString, doc: HoverDoc): void {
+        const importStatement = this.buildImportStatement(doc);
+        const stats: string[] = [];
+
+        if (this.config.showModuleStats) {
+            if (doc.installedVersion) {
+                stats.push(`$(versions) v${doc.installedVersion}`);
+            }
+            if (doc.exportCount) {
+                stats.push(`$(symbol-field) ${doc.exportCount.toLocaleString()} indexed symbols`);
+            }
+            if (doc.license) {
+                stats.push(`$(law) ${doc.license}`);
+            }
+            if (doc.requiresPython) {
+                stats.push(`$(arrow-circle-up) py${doc.requiresPython}`);
+            }
+        }
+
+        if (stats.length > 0) {
+            md.appendMarkdown(stats.join(' \u00a0·\u00a0 ') + '\n\n');
+        }
+
+        if (importStatement) {
+            md.appendCodeblock(importStatement, 'python');
+            md.appendMarkdown('\n');
+        }
+    }
+
     private escapeTableCell(value: string): string {
         return value.replace(/\|/g, '\\|').replace(/\n+/g, ' ').trim();
     }
@@ -878,7 +971,11 @@ export class HoverRenderer {
             return (!rawTitle || rawTitle === 'builtins') ? undefined : `import ${rawTitle}`;
         }
         if (!doc.module || doc.module === 'builtins') return undefined;
-        const shortName = rawTitle.split('.').pop() || rawTitle;
+        const segments = rawTitle.split('.').filter(Boolean);
+        let shortName = segments[segments.length - 1] || rawTitle;
+        if (segments.length > 1 && /^(?:method|property|field)$/i.test(doc.kind ?? '')) {
+            shortName = segments[0];
+        }
         return `from ${doc.module} import ${shortName}`;
     }
 
@@ -983,16 +1080,11 @@ export class HoverRenderer {
     private renderModuleExports(md: vscode.MarkdownString, doc: HoverDoc): void {
         const exports = doc.moduleExports!;
 
-        if (doc.installedVersion) {
-            md.appendMarkdown(`$(versions) **v${doc.installedVersion}** installed\n\n`);
-        }
-
         md.appendMarkdown(`---\n\n**$(symbol-field) Key exports**\n\n`);
 
-        // Render exports as a clean wrapped list of code chips
         const maxShow = this.config.maxModuleExports;
         const shown = exports.slice(0, maxShow);
-        md.appendMarkdown(shown.map(n => `\`${n}\``).join(' \u00a0 ') + '\n\n');
+        md.appendMarkdown(shown.map(name => `\`${name}\``).join(' \u00a0 ') + '\n\n');
 
         if (exports.length > maxShow) {
             const extra = exports.length - maxShow;
@@ -1002,14 +1094,48 @@ export class HoverRenderer {
         if (doc.exportCount && doc.exportCount > exports.length) {
             const args = this.encodeCommandArgs(doc.module || doc.title);
             md.appendMarkdown(
-                `$(info) *${doc.exportCount.toLocaleString()} indexed symbols* \u00a0·\u00a0 ` +
-                `[$(symbol-namespace) Browse all](<command:python-hover.browseModule?${args}> "Browse all symbols")\n\n`
+                `[$(symbol-namespace) Browse all ${doc.exportCount.toLocaleString()} indexed symbols](<command:python-hover.browseModule?${args}> "Browse all symbols")\n\n`
             );
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // SEE ALSO
+    private getProvenanceLine(doc: HoverDoc): string | null {
+        if (doc.source === ResolutionSource.Local) {
+            return '$(home) **Local symbol**';
+        }
+
+        const sourceLabel = this.getSourceLabel(doc);
+        const hostLabel = this.getDocHostLabel(doc);
+        if (!sourceLabel && !hostLabel) {
+            return null;
+        }
+
+        const parts: string[] = [];
+        if (sourceLabel) {
+            parts.push(`$(${this.getSourceIcon(doc)}) **${sourceLabel}**`);
+        }
+        if (hostLabel) {
+            parts.push(`$(book) ${hostLabel}`);
+        }
+        return parts.join(' \u00a0·\u00a0 ');
+    }
+
+    private getDocHostLabel(doc: HoverDoc): string | null {
+        const candidateUrl = doc.url || doc.sourceUrl || doc.links?.source;
+        if (!candidateUrl) {
+            return null;
+        }
+
+        try {
+            const host = new URL(candidateUrl).hostname.replace(/^www\./, '');
+            if (!host) {
+                return null;
+            }
+            return host.includes('docs.python.org') ? 'Python docs' : host;
+        } catch {
+            return null;
+        }
+    }
     // ─────────────────────────────────────────────────────────────────────────
 
     private renderSeeAlso(md: vscode.MarkdownString, doc: HoverDoc): void {
@@ -1037,50 +1163,50 @@ export class HoverRenderer {
     // ─────────────────────────────────────────────────────────────────────────
 
     private renderFooter(md: vscode.MarkdownString, doc: HoverDoc): void {
-        md.appendMarkdown('---\n\n');
-
-        const parts: string[] = [];
-        const commandToken = this.getCommandToken(doc);
-
-        if (doc.signature) {
-            parts.push(this.buildCommandLink('$(clippy) Copy sig', 'python-hover.copySignature', commandToken, 'Copy signature'));
+        if (doc.kind === 'module') {
+            return;
         }
-        if (doc.url) {
-            parts.push(this.buildCommandLink('$(link-external) Copy URL', 'python-hover.copyUrl', commandToken, 'Copy docs URL'));
+
+        if (!this.config.showImportHints) {
+            return;
         }
+
         const importStatement = this.buildImportStatement(doc);
-        if (importStatement) {
-            parts.push(this.buildCommandLink('$(symbol-namespace) Copy import', 'python-hover.copyImport', importStatement, `Copy: ${importStatement}`));
+        if (!importStatement) {
+            return;
         }
 
-        let version = this.config.docsVersion;
-        if (version === 'auto') version = this.detectedVersion || '3';
-        parts.push(`$(tag) *Python ${version}*`);
-
-        // Source indicator
-        if (doc.source && doc.source !== ResolutionSource.Local) {
-            const srcLabel = this.getSourceLabel(doc.source);
-            if (srcLabel) parts.push(`$(cloud) *${srcLabel}*`);
-        }
-
-        md.appendMarkdown(parts.join(' \u00a0·\u00a0 '));
+        md.appendMarkdown('---\n\n');
+        md.appendMarkdown(`$(symbol-namespace) Import: \`${this.escapeMarkdown(importStatement)}\``);
     }
 
-    private getSourceLabel(source: ResolutionSource): string | null {
-        switch (source) {
+    private getSourceLabel(doc: HoverDoc): string | null {
+        const provider = typeof doc.metadata?.docsProvider === 'string'
+            ? doc.metadata.docsProvider.toLowerCase()
+            : undefined;
+
+        switch (doc.source) {
             case ResolutionSource.DevDocs: return 'DevDocs';
-            case ResolutionSource.Runtime: return 'runtime';
-            case ResolutionSource.Static: return 'static';
-            case ResolutionSource.Corpus: return 'corpus';
+            case ResolutionSource.Runtime: return 'Runtime';
+            case ResolutionSource.Static: return 'Static docs';
+            case ResolutionSource.SearchIndex:
+                if (provider === 'mkdocs') return 'MkDocs index';
+                if (provider === 'sphinx') return 'Sphinx index';
+                return 'Site index';
+            case ResolutionSource.Corpus:
+                if (provider === 'mkdocs') return 'MkDocs docs';
+                if (provider === 'sphinx') return 'Sphinx docs';
+                return 'Library docs';
             default: return null;
         }
     }
 
-    private getSourceIcon(source: ResolutionSource): string {
-        switch (source) {
+    private getSourceIcon(doc: HoverDoc): string {
+        switch (doc.source) {
             case ResolutionSource.Corpus: return 'database';
             case ResolutionSource.Static: return 'book';
             case ResolutionSource.Runtime: return 'pulse';
+            case ResolutionSource.SearchIndex: return 'search';
             case ResolutionSource.DevDocs: return 'search-view-icon';
             default: return 'book';
         }
@@ -1143,13 +1269,13 @@ export class HoverRenderer {
      * Build a URL that opens in integrated side panel or external browser
      * based on the specified mode.
      */
-    private buildLinkUrl(url: string, mode: 'integrated' | 'external'): string {
+    private buildLinkUrl(url: string, mode: 'integrated' | 'external', kind: 'docs' | 'devdocs' = 'docs'): string {
         const sanitized = this.sanitizeUrl(url);
         if (!sanitized.startsWith('http')) return sanitized;
         if (mode === 'external') {
             return sanitized; // VS Code will open http links in external browser
         }
-        return `command:python-hover.openDocsSide?${this.encodeCommandArgs(sanitized)}`;
+        return `command:python-hover.openDocLink?${this.encodeCommandArgs({ url: sanitized, kind })}`;
     }
 
     /**
@@ -1157,7 +1283,7 @@ export class HoverRenderer {
      * the persistent side panel (ViewColumn.Beside).
      */
     private buildDocsUrl(url: string): string {
-        return this.buildLinkUrl(url, this.config.docsBrowser);
+        return this.buildLinkUrl(url, this.config.docsBrowser, 'docs');
     }
 
     private sanitizeUrl(url: string): string {
@@ -1171,7 +1297,7 @@ export class HoverRenderer {
     }
 
     private escapeMarkdown(text: string): string {
-        return text.replace(/([\\`*_{}\[\]()#+\-.!|])/g, '\\$1');
+        return text.replace(/([\\`*_{}[\]()#+\-.!|])/g, '\\$1');
     }
 
     private getCommandToken(doc: HoverDoc): string | undefined {
@@ -1189,7 +1315,7 @@ export class HoverRenderer {
 
     private rewriteMarkdownLinks(content: string): string {
         return content.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_match, label: string, rawUrl: string) => {
-            const linked = this.buildLinkUrl(rawUrl, this.config.docsBrowser);
+            const linked = this.buildLinkUrl(rawUrl, this.config.docsBrowser, 'docs');
             return `[${label}](<${linked}>)`;
         });
     }

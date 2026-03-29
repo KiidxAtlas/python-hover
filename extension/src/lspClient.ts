@@ -221,7 +221,7 @@ export class LspClient {
                 // For builtin types (str, list, …) always prefer this since the definition
                 // lookup can fail on large builtins.pyi files.
                 // For all others, only use it when there is no definition (Pylance cold).
-                const qualMatch = /^\(method\)\s+((?:[A-Za-z_]\w*\.)+[A-Za-z_]\w*)\s*[\[(]/.exec(raw);
+                const qualMatch = /^\(method\)\s+((?:[A-Za-z_]\w*\.)+[A-Za-z_]\w*)\s*[[()]/.exec(raw);
                 if (qualMatch) {
                     const qualName = qualMatch[1];
                     const root = qualName.split('.')[0];
@@ -530,6 +530,6 @@ export class LspClient {
         while (cursor >= 0 && line[cursor] === ' ') cursor--;
         if (cursor < 0) return true;
 
-        return !/[A-Za-z0-9_\)\]\}"']/.test(line[cursor]);
+        return !/[A-Za-z0-9_)\]}"']/.test(line[cursor]);
     }
 }

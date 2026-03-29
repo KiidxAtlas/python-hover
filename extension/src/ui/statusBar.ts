@@ -2,10 +2,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { PYHOVER_CACHE_DIR_NAME } from '../../../docs-engine/src/cache/diskCache';
+import { updateSettingWithPreferredTarget } from '../configTarget';
 
 export class StatusBarManager {
     private item: vscode.StatusBarItem;
-    private corpusItem: vscode.StatusBarItem;
     private context: vscode.ExtensionContext;
 
     /** Cached cache-size string so render() never blocks on repeated dir-walks. */
@@ -20,10 +20,7 @@ export class StatusBarManager {
         this.context = context;
         this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
         this.item.command = 'python-hover.showStatusNotification';
-        this.corpusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 101);
-        this.corpusItem.command = 'python-hover.buildPythonCorpus';
         this.context.subscriptions.push(this.item);
-        this.context.subscriptions.push(this.corpusItem);
 
         this.registerCommands();
         this.render();
@@ -47,33 +44,31 @@ export class StatusBarManager {
 
     private render() {
         const cfg = vscode.workspace.getConfiguration('python-hover');
+        const showStatusBar = cfg.get<boolean>('ui.showStatusBar', true);
         const online = cfg.get<boolean>('onlineDiscovery', true);
         const version = this.getVersion();
         const cacheSize = this.getCacheSizeInMB();
+
+        if (!showStatusBar) {
+            this.item.hide();
+            return;
+        }
 
         this.item.text = `${online ? '$(globe)' : '$(circle-slash)'} PyHover ${cacheSize}`;
         const mode = online ? '$(globe) Online' : '$(circle-slash) Offline';
         const tt = new vscode.MarkdownString(
             `**PyHover** v${version}\n\n` +
             `${mode}  ·  $(database) ${cacheSize}\n\n` +
-            `Click for quick actions like search, browse, corpus tools, and Studio.`
+            `Click for quick actions like search, browse, hover history, cache tools, and Studio.`
         );
         tt.supportThemeIcons = true;
         this.item.tooltip = tt;
-        this.corpusItem.text = '$(book) Build Corpus';
-
-        const corpusTooltip = new vscode.MarkdownString(
-            'Build the Python stdlib corpus once for richer built-in and keyword hovers.\n\n' +
-            'Clear Cache keeps the Python corpus intact.'
-        );
-        this.corpusItem.tooltip = corpusTooltip;
 
         this.item.backgroundColor = online
             ? undefined
             : new vscode.ThemeColor('statusBarItem.warningBackground');
 
         this.item.show();
-        this.corpusItem.show();
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -96,14 +91,14 @@ export class StatusBarManager {
                         command: 'python-hover.toggleOnlineDiscovery',
                     },
                     {
-                        label: '$(book) Build Python corpus',
-                        description: 'Fetch richer built-in and keyword docs',
-                        command: 'python-hover.buildPythonCorpus',
+                        label: '$(layout) Open PyHover Studio',
+                        description: 'Central dashboard for settings, cache, and hover tools',
+                        command: 'python-hover.openStudio',
                     },
                     {
-                        label: '$(trash) Clear documentation cache',
-                        description: 'Keeps the Python corpus intact',
-                        command: 'python-hover.clearCache',
+                        label: '$(settings-gear) Open settings',
+                        description: 'Configure PyHover behavior',
+                        command: 'workbench.action.openSettings',
                     },
                     { label: 'Explore', kind: vscode.QuickPickItemKind.Separator },
                     {
@@ -116,12 +111,7 @@ export class StatusBarManager {
                         description: 'Open the module picker from cached indexes',
                         command: 'python-hover.browseModule',
                     },
-                    {
-                        label: '$(layout) Open PyHover Studio',
-                        description: 'Open the full workspace panel only when you need it',
-                        command: 'python-hover.openStudio',
-                    },
-                    { label: 'History', kind: vscode.QuickPickItemKind.Separator },
+                    { label: 'Hover', kind: vscode.QuickPickItemKind.Separator },
                     {
                         label: '$(history) Hover history',
                         description: 'Recent symbols you hovered',
@@ -132,32 +122,26 @@ export class StatusBarManager {
                         description: 'Re-pin the most recently hovered symbol to the docs panel',
                         command: 'python-hover.pinLast',
                     },
-                    { label: 'Cache', kind: vscode.QuickPickItemKind.Separator },
+                    { label: 'Cache And Corpus', kind: vscode.QuickPickItemKind.Separator },
+                    {
+                        label: '$(book) Build Python corpus',
+                        description: 'Fetch richer built-in and keyword docs',
+                        command: 'python-hover.buildPythonCorpus',
+                    },
+                    {
+                        label: '$(trash) Clear documentation cache',
+                        description: 'Keeps the Python corpus intact',
+                        command: 'python-hover.clearCache',
+                    },
                     {
                         label: '$(folder-opened) View cache folder',
                         description: `${cacheSize} — open in file explorer`,
                         command: 'python-hover.openCacheFolder',
                     },
-                    { label: 'Support', kind: vscode.QuickPickItemKind.Separator },
-                    {
-                        label: '$(settings-gear) Open settings',
-                        description: 'Configure PyHover behavior',
-                        command: 'workbench.action.openSettings',
-                    },
                     {
                         label: '$(output) Show logs',
                         description: 'Inspect resolver and cache output',
                         command: 'python-hover.showLogs',
-                    },
-                    {
-                        label: '$(heart) Sponsor PyHover',
-                        description: 'Support development on GitHub Sponsors',
-                        command: 'python-hover.openSponsor',
-                    },
-                    {
-                        label: '$(coffee) Buy Me a Coffee',
-                        description: 'One-time donation via buymeacoffee.com',
-                        command: 'python-hover.openDonate',
                     },
                 ];
 
@@ -176,16 +160,6 @@ export class StatusBarManager {
                     return;
                 }
 
-                if (picked.command === 'python-hover.openSponsor') {
-                    await vscode.env.openExternal(vscode.Uri.parse('https://github.com/sponsors/KiidxAtlas'));
-                    return;
-                }
-
-                if (picked.command === 'python-hover.openDonate') {
-                    await vscode.env.openExternal(vscode.Uri.parse('https://buymeacoffee.com/kiidxatlas'));
-                    return;
-                }
-
                 await vscode.commands.executeCommand(picked.command);
             })
         );
@@ -195,7 +169,7 @@ export class StatusBarManager {
             vscode.commands.registerCommand('python-hover.toggleOnlineDiscovery', async () => {
                 const cfg = vscode.workspace.getConfiguration('python-hover');
                 const cur = cfg.get<boolean>('onlineDiscovery', true);
-                await cfg.update('onlineDiscovery', !cur, vscode.ConfigurationTarget.Global);
+                await updateSettingWithPreferredTarget('python-hover', 'onlineDiscovery', !cur);
                 vscode.window.showInformationMessage(
                     `PyHover: online discovery ${!cur ? 'enabled' : 'disabled'}`
                 );

@@ -6,6 +6,8 @@ export class HoverPanel {
     static currentPanel: HoverPanel | undefined;
 
     private readonly panel: vscode.WebviewPanel;
+  private navigationStack: HoverDoc[] = [];
+  private navigationIndex = 0;
 
     private constructor(doc: HoverDoc) {
         this.panel = vscode.window.createWebviewPanel(
@@ -14,7 +16,7 @@ export class HoverPanel {
             { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true },
           { enableScripts: false, enableCommandUris: true, retainContextWhenHidden: false },
         );
-        this.panel.webview.html = this.renderHtml(doc);
+      this.resetHistory(doc);
         this.panel.onDidDispose(() => {
             HoverPanel.currentPanel = undefined;
         });
@@ -22,17 +24,96 @@ export class HoverPanel {
 
     static show(doc: HoverDoc): void {
         if (HoverPanel.currentPanel) {
-            HoverPanel.currentPanel.update(doc);
-        } else {
-            HoverPanel.currentPanel = new HoverPanel(doc);
-        }
+      HoverPanel.currentPanel.resetHistory(doc);
+    } else {
+      HoverPanel.currentPanel = new HoverPanel(doc);
     }
+  }
+
+  static push(doc: HoverDoc): void {
+    if (HoverPanel.currentPanel) {
+      HoverPanel.currentPanel.pushHistory(doc);
+    } else {
+      HoverPanel.currentPanel = new HoverPanel(doc);
+    }
+  }
+
+  static goBack(): boolean {
+    if (!HoverPanel.currentPanel) return false;
+    return HoverPanel.currentPanel.moveHistory(-1);
+  }
+
+  static goForward(): boolean {
+    if (!HoverPanel.currentPanel) return false;
+    return HoverPanel.currentPanel.moveHistory(1);
+  }
+
+  static jumpTo(index: number): boolean {
+    if (!HoverPanel.currentPanel) return false;
+    return HoverPanel.currentPanel.jumpToHistory(index);
+  }
 
     update(doc: HoverDoc): void {
         this.panel.title = doc.title;
         this.panel.webview.html = this.renderHtml(doc);
         this.panel.reveal(vscode.ViewColumn.Beside, true);
     }
+
+  private resetHistory(doc: HoverDoc): void {
+    this.navigationStack = [doc];
+    this.navigationIndex = 0;
+    this.update(doc);
+  }
+
+  private pushHistory(doc: HoverDoc): void {
+    const current = this.currentDoc();
+    if (current && this.isSameDoc(current, doc)) {
+      this.update(doc);
+      return;
+    }
+
+    this.navigationStack = [
+      ...this.navigationStack.slice(0, this.navigationIndex + 1),
+      doc,
+    ];
+    this.navigationIndex = this.navigationStack.length - 1;
+    this.update(doc);
+  }
+
+  private moveHistory(direction: -1 | 1): boolean {
+    const nextIndex = this.navigationIndex + direction;
+    if (nextIndex < 0 || nextIndex >= this.navigationStack.length) {
+      return false;
+    }
+
+    this.navigationIndex = nextIndex;
+    const doc = this.currentDoc();
+    if (!doc) return false;
+    this.update(doc);
+    return true;
+  }
+
+  private jumpToHistory(index: number): boolean {
+    if (index < 0 || index >= this.navigationStack.length) {
+      return false;
+    }
+
+    this.navigationIndex = index;
+    const doc = this.currentDoc();
+    if (!doc) return false;
+    this.update(doc);
+    return true;
+  }
+
+  private currentDoc(): HoverDoc | undefined {
+    return this.navigationStack[this.navigationIndex];
+  }
+
+  private isSameDoc(left: HoverDoc, right: HoverDoc): boolean {
+    return left.title === right.title
+      && left.url === right.url
+      && left.sourceUrl === right.sourceUrl;
+  }
 
     private escape(s: string): string {
         return s
@@ -60,11 +141,19 @@ export class HoverPanel {
       .replace(/'/g, '%27');
   }
 
-  private buildDocsHref(url: string): string {
+  private buildCommandHref(command: string, args?: unknown): string {
+    if (args === undefined) {
+      return `command:${command}`;
+    }
+
+    return `command:${command}?${this.encodeCommandArgs(args)}`;
+  }
+
+  private buildDocsHref(url: string, kind: 'docs' | 'devdocs' = 'docs'): string {
     const trimmed = url.trim();
     if (!trimmed) return '';
     if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
-      return `command:python-hover.openDocsSide?${this.encodeCommandArgs(trimmed)}`;
+      return `command:python-hover.openDocLink?${this.encodeCommandArgs({ url: trimmed, kind })}`;
     }
     if (trimmed.startsWith('file://') || trimmed.startsWith('/')) {
       return trimmed;
@@ -112,11 +201,20 @@ export class HoverPanel {
   }
 
   private getSourceLabel(doc: HoverDoc): string {
+    const provider = typeof doc.metadata?.docsProvider === 'string'
+      ? doc.metadata.docsProvider.toLowerCase()
+      : undefined;
+
     switch (doc.source) {
+      case 'SearchIndex':
+        if (provider === 'mkdocs') return 'MkDocs index';
+        if (provider === 'sphinx') return 'Sphinx index';
+        return 'Site index';
       case 'Corpus': return 'Corpus';
       case 'Static': return 'Static docs';
       case 'Runtime': return 'Runtime';
       case 'Local': return 'Local';
+      case 'DevDocs': return 'DevDocs';
       case 'LSP': return 'Language server';
       default: return doc.source;
     }
@@ -127,19 +225,142 @@ export class HoverPanel {
       case 'Corpus': return 'accent';
       case 'Static': return 'info';
       case 'Runtime': return 'success';
+      case 'SearchIndex': return 'info';
+      case 'DevDocs': return 'accent';
       case 'Local': return 'neutral';
       default: return 'neutral';
     }
   }
 
-  private renderSeeAlsoItem(item: string): string {
+  private getDocHostLabel(doc: HoverDoc): string | undefined {
+    const candidateUrl = doc.url || doc.sourceUrl || doc.links?.source;
+    if (!candidateUrl || !/^https?:\/\//i.test(candidateUrl)) {
+      return undefined;
+    }
+
+    try {
+      const host = new URL(candidateUrl).hostname.replace(/^www\./, '');
+      if (!host) return undefined;
+      return host.includes('docs.python.org') ? 'Python docs' : host;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private renderProvenance(doc: HoverDoc): string {
+    const parts = [
+      this.renderChip(this.getSourceLabel(doc), this.getSourceTone(doc)),
+    ];
+    const host = this.getDocHostLabel(doc);
+    if (host) {
+      parts.push(this.renderChip(host, 'neutral'));
+    }
+    return `<div class="provenance-row">${parts.join('')}</div>`;
+  }
+
+  private buildImportStatement(doc: HoverDoc): string | undefined {
+    if (doc.source === 'Local') return undefined;
+    const rawTitle = doc.title.replace(/^builtins\./, '');
+    if (!rawTitle || /^__\w+__$/.test(rawTitle)) return undefined;
+    if (doc.kind === 'module') {
+      return rawTitle === 'builtins' ? undefined : `import ${rawTitle}`;
+    }
+    if (!doc.module || doc.module === 'builtins') return undefined;
+    const segments = rawTitle.split('.').filter(Boolean);
+    let shortName = segments[segments.length - 1] || rawTitle;
+    if (segments.length > 1 && /^(?:method|property|field)$/i.test(doc.kind ?? '')) {
+      shortName = segments[0];
+    }
+    return `from ${doc.module} import ${shortName}`;
+  }
+
+  private buildSourceHref(doc: HoverDoc): string | undefined {
+    const sourceTarget = doc.sourceUrl || doc.links?.source;
+    if (!sourceTarget) {
+      return undefined;
+    }
+    return this.buildCommandHref('python-hover.openHoverSource', { target: sourceTarget });
+  }
+
+  private renderHeroActions(doc: HoverDoc, importStatement?: string): string[] {
+    const actions: string[] = [];
+
+    if (doc.url) {
+      actions.push(`<a class="chip chip-link" href="${this.escape(this.buildDocsHref(doc.url, 'docs'))}">Docs</a>`);
+    }
+    if (doc.devdocsUrl && !doc.url) {
+      actions.push(`<a class="chip chip-link" href="${this.escape(this.buildDocsHref(doc.devdocsUrl, 'devdocs'))}">DevDocs</a>`);
+    }
+    const sourceHref = this.buildSourceHref(doc);
+    if (sourceHref) {
+      actions.push(`<a class="chip chip-link" href="${this.escape(sourceHref)}">Source</a>`);
+    }
+    if (doc.module && doc.module !== 'builtins') {
+      actions.push(`<a class="chip chip-link" href="${this.escape(this.buildCommandHref('python-hover.browseModule', doc.module))}">Browse</a>`);
+    }
+    if (importStatement) {
+      actions.push(`<a class="chip chip-link" href="${this.escape(this.buildCommandHref('python-hover.copyImport', importStatement))}">Copy import</a>`);
+    }
+    actions.push(`<a class="chip chip-link" href="command:python-hover.openStudio">Studio</a>`);
+
+    return actions;
+  }
+
+  private renderSeeAlsoItem(item: string, doc: HoverDoc): string {
     const match = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(item.trim());
     if (match) {
-      return `<a class="chip chip-link" href="${this.escape(this.buildDocsHref(match[2]))}">${this.escape(match[1])}</a>`;
+      const href = this.buildCommandHref('python-hover.pinDocReference', {
+        label: match[1],
+        url: match[2],
+        currentModule: doc.module,
+        currentPackage: typeof doc.metadata?.indexedPackage === 'string' ? doc.metadata.indexedPackage : undefined,
+        currentTitle: doc.title,
+      });
+      return `<a class="chip chip-link" href="${this.escape(href)}">${this.escape(match[1])}</a>`;
     }
 
     const cleaned = cleanContent(item).trim();
-    return `<span class="chip chip-soft"><code>${this.escape(cleaned)}</code></span>`;
+    if (!cleaned) {
+      return '';
+    }
+
+    if (!/^[A-Za-z_][\w.]*$/.test(cleaned)) {
+      return `<span class="chip chip-soft"><code>${this.escape(cleaned)}</code></span>`;
+    }
+
+    const href = this.buildCommandHref('python-hover.pinDocReference', {
+      label: cleaned,
+      currentModule: doc.module,
+      currentPackage: typeof doc.metadata?.indexedPackage === 'string' ? doc.metadata.indexedPackage : undefined,
+      currentTitle: doc.title,
+    });
+    return `<a class="chip chip-soft" href="${this.escape(href)}"><code>${this.escape(cleaned)}</code></a>`;
+  }
+
+  private renderNavigation(): string {
+    if (this.navigationStack.length <= 1) {
+      return '';
+    }
+
+    const crumbs = this.navigationStack.map((entry, index) => {
+      const label = this.escape(entry.title.replace(/^builtins\./, ''));
+      if (index === this.navigationIndex) {
+        return `<span class="crumb current">${label}</span>`;
+      }
+
+      return `<a class="crumb" href="${this.escape(this.buildCommandHref('python-hover.pinPanelJump', index))}">${label}</a>`;
+    }).join('<span class="crumb-sep">/</span>');
+
+    const backHref = this.navigationIndex > 0 ? this.buildCommandHref('python-hover.pinPanelBack') : '';
+    const forwardHref = this.navigationIndex < this.navigationStack.length - 1 ? this.buildCommandHref('python-hover.pinPanelForward') : '';
+
+    return `
+      <div class="nav-row">
+        ${backHref ? `<a class="nav-chip" href="${this.escape(backHref)}">Back</a>` : '<span class="nav-chip disabled">Back</span>'}
+        ${forwardHref ? `<a class="nav-chip" href="${this.escape(forwardHref)}">Forward</a>` : '<span class="nav-chip disabled">Forward</span>'}
+      </div>
+      <div class="breadcrumb-row">${crumbs}</div>
+    `;
   }
 
     private renderHtml(doc: HoverDoc): string {
@@ -150,7 +371,6 @@ export class HoverPanel {
       if (doc.kind) {
         metaChips.push(this.renderChip(doc.kind, 'info'));
       }
-      metaChips.push(this.renderChip(this.getSourceLabel(doc), this.getSourceTone(doc)));
       if (doc.module && doc.module !== 'builtins') {
         metaChips.push(this.renderChip(doc.module, 'neutral'));
       }
@@ -165,6 +385,8 @@ export class HoverPanel {
       const metaHtml = metaChips.length > 0
         ? `<div class="meta-row">${metaChips.join('')}</div>`
             : '';
+      const provenanceHtml = this.renderProvenance(doc);
+      const importStatement = this.buildImportStatement(doc);
 
         let signatureHtml = '';
         if (doc.signature) {
@@ -240,7 +462,7 @@ export class HoverPanel {
         }
 
       const seeAlsoHtml = doc.seeAlso && doc.seeAlso.length > 0
-        ? `<section class="card"><h2>See also</h2><div class="chip-cloud">${doc.seeAlso.map(item => this.renderSeeAlsoItem(item)).join('')}</div></section>`
+        ? `<section class="card"><h2>See also</h2><div class="chip-cloud">${doc.seeAlso.map(item => this.renderSeeAlsoItem(item, doc)).filter(Boolean).join('')}</div></section>`
         : '';
 
       const exportsHtml = doc.moduleExports && doc.moduleExports.length > 0
@@ -248,23 +470,22 @@ export class HoverPanel {
         : '';
 
         const links: string[] = [];
-      const actionLinks = [
-        `<a class="chip chip-link" href="command:python-hover.openStudio">Open PyHover</a>`,
-        `<a class="chip chip-link" href="command:python-hover.showLogs">Logs</a>`,
-        `<a class="chip chip-link" href="command:python-hover.buildPythonCorpus">Build Corpus</a>`,
-      ];
+      const actionLinks = this.renderHeroActions(doc, importStatement);
         if (doc.url) {
-          links.push(`<a href="${e(this.buildDocsHref(doc.url))}">Official Docs</a>`);
+          links.push(`<a href="${e(this.buildDocsHref(doc.url, 'docs'))}">Official Docs</a>`);
         }
         if (doc.devdocsUrl) {
-        links.push(`<a href="${e(this.buildDocsHref(doc.devdocsUrl))}">DevDocs</a>`);
+          links.push(`<a href="${e(this.buildDocsHref(doc.devdocsUrl, 'devdocs'))}">DevDocs</a>`);
       }
       const sourceUrl = doc.sourceUrl || doc.links?.source;
       if (sourceUrl) {
-        links.push(`<a href="${e(this.buildDocsHref(sourceUrl))}">Source</a>`);
-        }
+        links.push(`<a href="${e(this.buildDocsHref(sourceUrl, 'docs'))}">Source</a>`);
+      }
+      if (importStatement) {
+        links.push(`<code>${e(importStatement)}</code>`);
+      }
         const footerHtml = links.length > 0
-          ? `<footer class="footer card"><div class="section-kicker">Links</div><div class="footer-links">${links.join('<span class="footer-sep">·</span>')}</div></footer>`
+          ? `<footer class="footer card"><div class="section-kicker">Links And Import</div><div class="footer-links">${links.join('<span class="footer-sep">·</span>')}</div></footer>`
             : '';
 
         return `<!DOCTYPE html>
@@ -325,6 +546,19 @@ export class HoverPanel {
     gap: 6px;
     margin-top: 8px;
   }
+  .provenance-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 10px;
+  }
+  .nav-row, .breadcrumb-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 10px;
+    align-items: center;
+  }
   .chip {
     display: inline-flex;
     align-items: center;
@@ -368,6 +602,29 @@ export class HoverPanel {
   }
   .chip-soft code {
     color: inherit;
+  }
+  .nav-chip, .crumb {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 4px;
+    padding: 2px 7px;
+    font-size: 11px;
+    border: 1px solid var(--panel-border);
+    text-decoration: none;
+    white-space: nowrap;
+    background: color-mix(in srgb, var(--vscode-textCodeBlock-background) 86%, transparent);
+    color: var(--vscode-textLink-foreground);
+  }
+  .crumb.current, .nav-chip.disabled {
+    color: var(--vscode-descriptionForeground);
+    text-decoration: none;
+    background: color-mix(in srgb, var(--vscode-editor-background) 88%, var(--vscode-foreground) 12%);
+  }
+  .nav-chip.disabled {
+    cursor: default;
+  }
+  .crumb-sep {
+    color: var(--vscode-descriptionForeground);
   }
   .card {
     background: color-mix(in srgb, var(--vscode-editor-background) 96%, var(--vscode-foreground) 4%);
@@ -484,6 +741,8 @@ export class HoverPanel {
   <header class="hero">
     <h1>${e(doc.title)}</h1>
     ${metaHtml}
+    ${provenanceHtml}
+    ${this.renderNavigation()}
     <div class="hero-actions">${actionLinks.join('')}</div>
   </header>
   ${signatureHtml}

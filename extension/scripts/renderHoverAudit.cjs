@@ -24,6 +24,24 @@ const baseConfig = {
     showSignatures: true,
     showReturnTypes: true,
     showPracticalExamples: true,
+    showBadges: true,
+    showMetadataChips: true,
+    showProvenance: true,
+    showToolbar: true,
+    showCallouts: true,
+    showParameters: true,
+    maxParameters: 6,
+    showSeeAlso: true,
+    showRaises: true,
+    showModuleExports: true,
+    showModuleStats: true,
+    showFooter: true,
+    showImportHints: true,
+    showUpdateWarning: true,
+    compactMode: false,
+    maxExamples: 2,
+    maxModuleExports: 20,
+    maxSeeAlsoItems: 8,
     maxSnippetLines: 12,
     maxContentLength: 800,
     docsBrowser: 'integrated',
@@ -62,6 +80,7 @@ printSample('Stdlib-style API (corpus + URL)', {
     source: ResolutionSource.Corpus,
     badges: [{ label: 'stdlib', color: 'blue' }],
     module: 'builtins',
+    metadata: { docsProvider: 'sphinx' },
 });
 
 // ── Third-party with long signature ───────────────────────────────────────
@@ -74,6 +93,29 @@ printSample('Third-party method (corpus source chip)', {
     devdocsUrl: 'https://devdocs.io/fastapi/',
     source: ResolutionSource.Corpus,
     module: 'fastapi',
+    metadata: { docsProvider: 'mkdocs' },
+});
+
+printSample('Inventory-backed symbol provenance (Click)', {
+    title: 'click.File',
+    kind: 'class',
+    signature: 'class click.File(mode: str = "r", encoding: str | None = None)',
+    summary: 'Declares a parameter that opens a file and converts it into a readable or writable stream.',
+    url: 'https://click.palletsprojects.com/en/stable/api/#click.File',
+    source: ResolutionSource.Corpus,
+    module: 'click',
+    metadata: { docsProvider: 'sphinx' },
+});
+
+printSample('Method provenance (FastAPI.middleware)', {
+    title: 'FastAPI.middleware',
+    kind: 'method',
+    signature: '(self, middleware_type: str) -> Callable[[DecoratedCallable], DecoratedCallable]',
+    summary: 'Add a function as a middleware handler for requests.',
+    url: 'https://fastapi.tiangolo.com/reference/fastapi/#fastapi.FastAPI.middleware',
+    source: ResolutionSource.Corpus,
+    module: 'fastapi',
+    metadata: { docsProvider: 'mkdocs' },
 });
 
 // ── Local user symbol ─────────────────────────────────────────────────────
@@ -83,7 +125,6 @@ printSample('Local code (local chip + go to def)', {
     signature: 'async def fetch_user(user_id: int) -> User',
     summary: 'Load a user from the database by primary key.',
     source: ResolutionSource.Local,
-    sourceUrl: '/home/user/proj/services.py',
 });
 
 // ── Import / module overview ─────────────────────────────────────────────
@@ -98,6 +139,32 @@ printSample('Import line module card', {
     devdocsUrl: 'https://devdocs.io/pandas~2/',
     source: ResolutionSource.Corpus,
     module: 'pandas',
+    license: 'BSD-3-Clause',
+    requiresPython: '>=3.9',
+    metadata: { docsProvider: 'sphinx' },
+});
+
+printSample('Structured docs dedupe', {
+    title: 'demo.parse',
+    kind: 'function',
+    signature: 'parse(value: str, *, strict: bool = True) -> Result',
+    summary: 'Parse a raw value into a structured result.',
+    parameters: [
+        { name: 'value', type: 'str', description: 'Raw incoming value.' },
+        { name: 'strict', type: 'bool', description: 'Raise on invalid input.' },
+    ],
+    returns: { type: 'Result', description: 'Structured parse result.' },
+    structuredContent: {
+        sections: [
+            { kind: 'paragraph', role: 'summary', title: 'Overview', content: 'Parse a raw value into a structured result.' },
+            { kind: 'paragraph', title: 'Description', content: 'Use this helper when you want validated parsing with a predictable error surface.' },
+            { kind: 'list', title: 'Parameters', content: '', items: ['value: Raw incoming value.', 'strict: Raise on invalid input.'] },
+            { kind: 'paragraph', title: 'Returns', content: 'Structured parse result.' },
+            { kind: 'paragraph', title: 'Description', content: 'Use this helper when you want validated parsing with a predictable error surface.' },
+        ],
+    },
+    source: ResolutionSource.Static,
+    url: 'https://example.com/docs/parse',
 });
 
 // ── Keyword-style body (renderer uses keyword branch when kind=keyword) ───

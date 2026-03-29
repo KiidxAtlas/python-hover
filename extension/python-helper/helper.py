@@ -3,7 +3,7 @@ import json
 import sys
 
 from identifier import identify_at_position
-from resolver import get_docstring_from_source, resolve_symbol
+from resolver import get_docstring_from_file, get_docstring_from_source, resolve_symbol
 
 
 def server_mode():
@@ -36,6 +36,12 @@ def server_mode():
                 result = resolve_symbol(req["symbol"])
             elif cmd == "get_docstring":
                 result = get_docstring_from_source(req["source"], req["symbol"])
+            elif cmd == "resolve_source_symbol":
+                result = get_docstring_from_file(
+                    req["file_path"],
+                    req.get("candidates") or [],
+                    req.get("module"),
+                )
             elif cmd == "identify":
                 result = identify_at_position(req["source"], req["line"], req["col"])
                 result = {"type": result}

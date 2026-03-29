@@ -1,7 +1,6 @@
 import * as vscode from 'vscode';
-import { IndexedSymbolSummary } from '../../shared/types';
+import { HoverDoc, IndexedSymbolSummary } from '../../shared/types';
 import { HoverProvider } from './hoverProvider';
-import { DocsPanel } from './ui/docsPanel';
 
 type WorkspaceSymbolCandidate = {
     name?: string;
@@ -11,7 +10,7 @@ type WorkspaceSymbolCandidate = {
 export async function openIndexedSymbolSource(
     symbol: IndexedSymbolSummary,
     hoverProvider: HoverProvider,
-    docsPanel: DocsPanel,
+    openDocsLink: (url: string) => Thenable<void>,
 ): Promise<boolean> {
     const workspaceLocation = await findWorkspaceSymbolLocation(symbol.name);
     if (workspaceLocation) {
@@ -20,24 +19,56 @@ export async function openIndexedSymbolSource(
     }
 
     const doc = await hoverProvider.resolveIndexedSymbolDoc(symbol);
-    const sourceTarget = doc?.sourceUrl || doc?.links?.source || doc?.links?.Source || doc?.url;
+    if (!doc) {
+        return false;
+    }
+
+    return openHoverDocSource(doc, openDocsLink);
+}
+
+export async function openHoverDocSource(
+    doc: Pick<HoverDoc, 'sourceUrl' | 'links' | 'url'>,
+    openDocsLink: (url: string) => Thenable<void>,
+): Promise<boolean> {
+    const sourceTarget = getHoverDocSourceTarget(doc);
+    if (!sourceTarget) {
+        return false;
+    }
+
+    return openSourceTarget(sourceTarget, openDocsLink);
+}
+
+export function getHoverDocSourceTarget(doc: Pick<HoverDoc, 'sourceUrl' | 'links' | 'url'>): string | undefined {
+    const sourceTarget = doc.sourceUrl || doc.links?.source || doc.links?.Source || doc.url;
+    return typeof sourceTarget === 'string' && sourceTarget.trim() ? sourceTarget.trim() : undefined;
+}
+
+export async function openSourceTarget(
+    sourceTarget: string,
+    openDocsLink: (url: string) => Thenable<void>,
+): Promise<boolean> {
     if (!sourceTarget) {
         return false;
     }
 
     if (/^https?:\/\//i.test(sourceTarget)) {
-        docsPanel.show(sourceTarget);
+        await openDocsLink(sourceTarget);
         return true;
     }
 
     const uri = sourceTarget.includes('://') ? vscode.Uri.parse(sourceTarget) : vscode.Uri.file(sourceTarget);
-    const textDocument = await vscode.workspace.openTextDocument(uri);
-    await vscode.window.showTextDocument(textDocument, {
-        viewColumn: vscode.ViewColumn.Beside,
-        preserveFocus: true,
-        preview: true,
-    });
-    return true;
+    try {
+        const textDocument = await vscode.workspace.openTextDocument(uri);
+        await vscode.window.showTextDocument(textDocument, {
+            viewColumn: vscode.ViewColumn.Beside,
+            preserveFocus: true,
+            preview: true,
+        });
+        return true;
+    } catch {
+        await vscode.env.openExternal(uri);
+        return true;
+    }
 }
 
 async function findWorkspaceSymbolLocation(symbolName: string): Promise<vscode.Location | undefined> {

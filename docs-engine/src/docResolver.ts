@@ -6,6 +6,7 @@ import { PyPiClient } from './pypi/pypiClient';
 import { StaticDocResolver } from './resolvers/staticDocResolver';
 import { SphinxScraper } from './scraping/sphinxScraper';
 import { SearchFallback } from './search/searchFallback';
+import { SiteIndexResolver } from './search/siteIndexResolver';
 
 export interface ResolverConfig {
     cacheTTL?: {
@@ -28,6 +29,7 @@ export class DocResolver {
     private readonly inventoryFetcher: InventoryFetcher;
     private readonly pypiClient: PyPiClient;
     private readonly fallback: SearchFallback;
+    private readonly siteIndexResolver: SiteIndexResolver;
     private readonly scraper: SphinxScraper;
     private readonly staticResolver: StaticDocResolver;
     private readonly config?: ResolverConfig;
@@ -48,6 +50,7 @@ export class DocResolver {
         );
         this.pypiClient = new PyPiClient(diskCache);
         this.fallback = new SearchFallback();
+        this.siteIndexResolver = new SiteIndexResolver(diskCache, config?.requestTimeout || 5000);
         this.scraper = new SphinxScraper(diskCache, config?.requestTimeout || 5000);
         this.staticResolver = new StaticDocResolver();
         this.config = config;
@@ -67,6 +70,16 @@ export class DocResolver {
 
     searchSymbols(query: string) {
         return this.inventoryFetcher.searchSymbols(query);
+    }
+
+    findSymbolReference(reference: {
+        label: string;
+        url?: string;
+        currentModule?: string;
+        currentPackage?: string;
+        currentTitle?: string;
+    }): IndexedSymbolSummary | null {
+        return this.inventoryFetcher.findSymbolReference(reference);
     }
 
     getModuleSymbols(moduleName: string): IndexedSymbolSummary[] {
@@ -117,26 +130,45 @@ export class DocResolver {
 
     async buildPythonStdlibCorpus(
         onProgress?: (progress: { completed: number; total: number; current: string }) => void,
-    ): Promise<{ targets: number; corpusPackages: number }> {
+        shouldCancel?: () => boolean,
+    ): Promise<{ targets: number; corpusPackages: number; completed: number; cancelled: boolean }> {
         await this.inventoryFetcher.ensurePackageLoaded('builtins', undefined, true);
 
         const targets = this.inventoryFetcher.getPackageSymbolTargets('builtins');
         const corpusPackages = new Set<string>();
         const BATCH = 4;
         let completed = 0;
+        let cancelled = false;
 
         for (let i = 0; i < targets.length; i += BATCH) {
+            if (shouldCancel?.()) {
+                cancelled = true;
+                break;
+            }
+
             const batch = targets.slice(i, i + BATCH);
             await Promise.all(batch.map(async target => {
+                if (shouldCancel?.()) {
+                    cancelled = true;
+                    return;
+                }
                 corpusPackages.add(target.corpusPackage);
                 await this.scraper.fetchContent(target.corpusPackage, target.url, PYHOVER_PYTHON_STDLIB_CORPUS_GROUP, true).catch(() => null);
                 await this.scraper.fetchSeeAlso(target.corpusPackage, target.url, PYHOVER_PYTHON_STDLIB_CORPUS_GROUP, true).catch(() => []);
+                if (shouldCancel?.()) {
+                    cancelled = true;
+                    return;
+                }
                 completed += 1;
                 onProgress?.({ completed, total: targets.length, current: target.url });
             }));
+
+            if (cancelled) {
+                break;
+            }
         }
 
-        return { targets: targets.length, corpusPackages: corpusPackages.size };
+        return { targets: targets.length, corpusPackages: corpusPackages.size, completed, cancelled };
     }
 
     private corpusPackageName(packageName?: string, moduleName?: string, symbolName?: string): string {
@@ -337,6 +369,74 @@ export class DocResolver {
         });
     }
 
+    private async resolveSearchIndexedDoc(
+        key: DocKey,
+        corpusPackage: string,
+        corpusGroup?: string,
+    ): Promise<HoverDoc | null> {
+        const baseUrl = await this.resolveSiteIndexBaseUrl(key);
+        if (!baseUrl) {
+            return null;
+        }
+
+        const siteIndexDoc = await this.siteIndexResolver.resolve(key, baseUrl).catch(e => {
+            Logger.log(`Site index lookup failed for ${key.name}: ${e}`);
+            return null;
+        });
+        if (!siteIndexDoc) {
+            return null;
+        }
+
+        const cachedContent = siteIndexDoc.url
+            ? this.scraper.getCachedContent(corpusPackage, siteIndexDoc.url, corpusGroup) ?? undefined
+            : undefined;
+        const cachedStructuredContent = this.getStructuredContent(corpusPackage, siteIndexDoc.url, corpusGroup, cachedContent);
+        const needsImmediateScrape = this.shouldBuildCorpus()
+            && !!siteIndexDoc.url
+            && !this.hasUsefulText(cachedContent)
+            && !this.hasUsefulText(siteIndexDoc.summary);
+        const scrapedContent = needsImmediateScrape
+            ? await this.scraper.fetchContent(corpusPackage, siteIndexDoc.url!, corpusGroup).catch(() => null) ?? undefined
+            : undefined;
+        const content = cachedContent || scrapedContent;
+        const structuredContent = cachedStructuredContent || this.getStructuredContent(corpusPackage, siteIndexDoc.url, corpusGroup, content);
+        const summary = siteIndexDoc.summary || this.extractSummaryFromStructuredOrContent(structuredContent, content);
+        const seeAlso = this.getSeeAlso(corpusPackage, siteIndexDoc.url, corpusGroup, content);
+
+        if (!content && siteIndexDoc.url) {
+            this.prefetchInventoryEnhancements(corpusPackage, siteIndexDoc.url);
+        }
+
+        return {
+            ...siteIndexDoc,
+            content,
+            structuredContent,
+            summary,
+            source: content ? ResolutionSource.Corpus : siteIndexDoc.source,
+            confidence: content ? 0.9 : siteIndexDoc.confidence,
+            devdocsUrl: this.fallback.getDevDocsUrl(key) ?? undefined,
+            seeAlso,
+            module: key.module || key.package,
+            sourceUrl: siteIndexDoc.sourceUrl || this.cpythonSourceUrl(key) || this.pypiClient.getCachedRepoUrl(key.package) || undefined,
+        };
+    }
+
+    private async resolveSiteIndexBaseUrl(key: DocKey): Promise<string | undefined> {
+        const isStdlib = key.isStdlib || key.package === 'builtins' || key.package === 'python';
+        const candidatePackage = isStdlib ? 'builtins' : key.package;
+        const suggested = this.inventoryFetcher.getSuggestedBaseUrl(candidatePackage, isStdlib);
+        if (suggested) {
+            return suggested;
+        }
+
+        if (this.config?.onlineDiscovery === false || isStdlib || !candidatePackage) {
+            return undefined;
+        }
+
+        const metadata = await this.pypiClient.getPackageMetadata(candidatePackage).catch(() => null);
+        return metadata?.url ?? undefined;
+    }
+
     private shouldUseImmediateBuiltinStaticPath(key: DocKey, staticDoc: HoverDoc | null): boolean {
         if (!staticDoc?.url) return false;
         if (key.package !== 'builtins' && key.module !== 'builtins') return false;
@@ -460,6 +560,16 @@ export class DocResolver {
                 this.prefetchInventoryEnhancements(corpusPackage, url);
             }
             summary = summary || this.extractSummaryFromStructuredOrContent(structuredContent, content);
+        }
+
+        if ((!summary || !content) && this.config?.onlineDiscovery !== false) {
+            const siteIndexDoc = await this.resolveSearchIndexedDoc(docKey, corpusPackage, corpusGroup);
+            if (siteIndexDoc) {
+                summary = summary || siteIndexDoc.summary;
+                content = content || siteIndexDoc.content;
+                structuredContent = structuredContent || siteIndexDoc.structuredContent;
+                url = url || siteIndexDoc.url;
+            }
         }
 
         return {
@@ -662,6 +772,13 @@ export class DocResolver {
                     immediateSummary,
                     cachedSeeAlso,
                 );
+            }
+
+            if (this.config?.onlineDiscovery !== false) {
+                const siteIndexDoc = await this.resolveSearchIndexedDoc(key, corpusPackage, corpusGroup);
+                if (siteIndexDoc) {
+                    return siteIndexDoc;
+                }
             }
 
             // 2. PyPI metadata (only if online discovery enabled, no inventory match)

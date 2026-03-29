@@ -2,7 +2,7 @@
     "name": "python-hover",
     "displayName": "🐍 Python Hover - Enhanced Documentation",
     "description": "Instant Python documentation on hover. Covers 300+ constructs, all keywords/operators with correct anchors, NumPy, Pandas, FastAPI, Django, PyTorch, Flask, Pydantic, SQLAlchemy, Requests and more. Scoped DevDocs links, smart context detection, zero config.",
-    "version": "0.7.2",
+    "version": "0.7.3",
     "publisher": "KiidxAtlas",
     "author": {
         "name": "KiidxAtlas",
@@ -97,8 +97,23 @@
                 "category": "Python Hover"
             },
             {
+                "command": "python-hover.clearStdlibCorpus",
+                "title": "Clear Python Stdlib Corpus",
+                "category": "Python Hover"
+            },
+            {
+                "command": "python-hover.clearAllCache",
+                "title": "Clear All PyHover Cache",
+                "category": "Python Hover"
+            },
+            {
                 "command": "python-hover.buildPythonCorpus",
                 "title": "Build Python Stdlib Corpus",
+                "category": "Python Hover"
+            },
+            {
+                "command": "python-hover.cancelPythonCorpusBuild",
+                "title": "Cancel Python Stdlib Corpus Build",
                 "category": "Python Hover"
             },
             {
@@ -146,27 +161,27 @@
             "editor/context": [
                 {
                     "command": "python-hover.searchDocs",
-                    "when": "editorLangId == python",
+                    "when": "editorLangId == python && pyhover.contextMenu.enabled && pyhover.contextMenu.searchDocs",
                     "group": "navigation@10"
                 },
                 {
                     "command": "python-hover.browseModule",
-                    "when": "editorLangId == python",
+                    "when": "editorLangId == python && pyhover.contextMenu.enabled && pyhover.contextMenu.browseModule",
                     "group": "navigation@11"
                 },
                 {
                     "command": "python-hover.pinHover",
-                    "when": "editorLangId == python",
+                    "when": "editorLangId == python && pyhover.contextMenu.enabled && pyhover.contextMenu.pinHover",
                     "group": "navigation@12"
                 },
                 {
                     "command": "python-hover.debugPinHover",
-                    "when": "editorLangId == python",
+                    "when": "editorLangId == python && pyhover.contextMenu.enabled && pyhover.contextMenu.debugPinHover",
                     "group": "navigation@13"
                 },
                 {
                     "command": "python-hover.openStudio",
-                    "when": "editorLangId == python",
+                    "when": "editorLangId == python && pyhover.contextMenu.enabled && pyhover.contextMenu.openStudio",
                     "group": "navigation@14"
                 }
             ]
@@ -305,13 +320,19 @@
                 "python-hover.customLibraries": {
                     "type": "array",
                     "default": [],
-                    "description": "Custom Sphinx documentation sources. Each entry needs a name and baseUrl.",
+                    "description": "Custom Sphinx documentation sources. Each entry needs a name and baseUrl; set inventoryUrl when objects.inv lives elsewhere.",
                     "items": {
                         "type": "object",
-                        "required": ["name", "inventoryUrl", "baseUrl"],
+                        "required": [
+                            "name",
+                            "baseUrl"
+                        ],
                         "properties": {
                             "name": { "type": "string", "description": "Library name (e.g. 'mylib')" },
-                            "inventoryUrl": { "type": "string", "description": "URL to the objects.inv file" },
+                            "inventoryUrl": {
+                                "type": "string",
+                                "description": "Optional URL to the objects.inv file when it is not served from baseUrl/objects.inv"
+                            },
                             "baseUrl": { "type": "string", "description": "Base docs URL" }
                         }
                     }
@@ -336,6 +357,41 @@
                     "default": false,
                     "markdownDescription": "Show a Debug button in the hover toolbar so users can jump straight into the pinned debug view."
                 },
+                "python-hover.ui.showStatusBar": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show the PyHover status bar entry for quick actions and cache status."
+                },
+                "python-hover.ui.contextMenu.enabled": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show PyHover commands in the Python editor context menu."
+                },
+                "python-hover.ui.contextMenu.searchDocs": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show the Search Docs command in the Python editor context menu."
+                },
+                "python-hover.ui.contextMenu.browseModule": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show the Browse Module command in the Python editor context menu."
+                },
+                "python-hover.ui.contextMenu.pinHover": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show the Pin Hover command in the Python editor context menu."
+                },
+                "python-hover.ui.contextMenu.debugPinHover": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show the Debug Pin Hover command in the Python editor context menu."
+                },
+                "python-hover.ui.contextMenu.openStudio": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show the Open Studio command in the Python editor context menu."
+                },
                 "python-hover.ui.maxContentLength": {
                     "type": "number",
                     "default": 800,
@@ -358,10 +414,15 @@
                     "default": true,
                     "description": "Show the metadata chips row under the hover title (kind, source, module, version, badges)."
                 },
+                "python-hover.ui.showProvenance": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show the source provenance line under the hover title so docs origin stays visible at a glance."
+                },
                 "python-hover.ui.showToolbar": {
                     "type": "boolean",
                     "default": true,
-                    "description": "Show the hover action toolbar with pin, docs, source, and browse links."
+                    "description": "Show the hover action toolbar with the core pin, docs, source, and browse links."
                 },
                 "python-hover.ui.showCallouts": {
                     "type": "boolean",
@@ -395,10 +456,20 @@
                     "default": true,
                     "description": "Show module export lists for import/module hovers."
                 },
+                "python-hover.ui.showModuleStats": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show module summary stats such as installed version, export count, license, and Python requirement."
+                },
                 "python-hover.ui.showFooter": {
                     "type": "boolean",
                     "default": true,
-                    "description": "Show the footer action row with copy commands, Python version, and source label."
+                    "description": "Show the compact footer line with import hints for non-local symbols."
+                },
+                "python-hover.ui.showImportHints": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show import suggestions in the hover footer for non-local symbols."
                 },
                 "python-hover.ui.maxExamples": {
                     "type": "number",
@@ -425,6 +496,56 @@
                     "type": "boolean",
                     "default": true,
                     "description": "Show an 'Update available' callout when the installed package is behind the latest PyPI release."
+                },
+                "python-hover.ui.moduleBrowser.defaultView": {
+                    "type": "string",
+                    "enum": [
+                        "hierarchy",
+                        "flat"
+                    ],
+                    "default": "flat",
+                    "description": "Default module browser view mode when opening indexed modules. Flat is better for dotted method discovery; hierarchy is available when you want path drilldown."
+                },
+                "python-hover.ui.moduleBrowser.defaultSort": {
+                    "type": "string",
+                    "enum": [
+                        "name",
+                        "kind",
+                        "package"
+                    ],
+                    "default": "name",
+                    "description": "Default module browser sort mode."
+                },
+                "python-hover.ui.moduleBrowser.defaultDensity": {
+                    "type": "string",
+                    "enum": [
+                        "comfortable",
+                        "compact"
+                    ],
+                    "default": "comfortable",
+                    "description": "Default card density for the module browser."
+                },
+                "python-hover.ui.moduleBrowser.showPrivateSymbols": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Show names that look private or dunder-style by default in the module browser."
+                },
+                "python-hover.ui.moduleBrowser.showHierarchyHints": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show hierarchy and branch hints in the module browser when navigating large modules."
+                },
+                "python-hover.ui.moduleBrowser.autoLoadPreviews": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Automatically hydrate module browser cards with richer summaries and signatures in the background."
+                },
+                "python-hover.ui.moduleBrowser.previewBatchSize": {
+                    "type": "number",
+                    "default": 18,
+                    "minimum": 4,
+                    "maximum": 50,
+                    "description": "How many symbol previews the module browser hydrates per background batch."
                 },
                 "python-hover.diagnostics.enabled": {
                     "type": "boolean",
@@ -465,6 +586,9 @@
         "lint": "eslint src --ext ts",
         "package": "vsce package",
         "verify": "npm run compile && npm run lint && npm run package"
+    },
+    "dependencies": {
+        "minimatch": "^9.0.3"
     },
     "devDependencies": {
         "@types/vscode": "^1.85.0",

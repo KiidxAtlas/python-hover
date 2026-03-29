@@ -29,7 +29,7 @@ Common examples: `jupyter_client`, `jupyter_core`, `black`, `mypy`, `httpx`, and
 
 ```json
 {
-  "pythonHover.experimental.autoDetectLibraries": true  // Default: true
+  "python-hover.onlineDiscovery": true  // Default: true
 }
 ```
 
@@ -67,7 +67,7 @@ Add custom libraries in your VS Code settings (`.vscode/settings.json` or User S
 
 ```json
 {
-  "pythonHover.customLibraries": [
+  "python-hover.customLibraries": [
     {
       "name": "mylib",
       "inventoryUrl": "https://mylib.readthedocs.io/en/latest/objects.inv",
@@ -82,11 +82,12 @@ Add custom libraries in your VS Code settings (`.vscode/settings.json` or User S
 - **`name`** (required): The library name as it appears in Python imports
   - Example: `"requests"`, `"mycompany_utils"`, `"torch"`
 
-- **`inventoryUrl`** (required): URL to the Intersphinx `objects.inv` file
+- **`inventoryUrl`** (optional): URL to the Intersphinx `objects.inv` file
   - Common patterns:
     - ReadTheDocs: `https://yourproject.readthedocs.io/en/latest/objects.inv`
     - GitHub Pages: `https://yourorg.github.io/yourproject/objects.inv`
     - Custom: `https://docs.yoursite.com/api/objects.inv`
+  - If omitted, Python Hover uses `baseUrl/objects.inv`
 
 - **`baseUrl`** (required): Base URL for documentation pages
   - Must end with `/`
@@ -162,7 +163,7 @@ Here's a real-world configuration with multiple custom libraries:
 
 ```json
 {
-  "pythonHover.customLibraries": [
+  "python-hover.customLibraries": [
     {
       "name": "mycompany_core",
       "inventoryUrl": "https://docs.mycompany.internal/core/objects.inv",
@@ -188,7 +189,7 @@ You can override the built-in library configurations. For example, to use a diff
 
 ```json
 {
-  "pythonHover.customLibraries": [
+  "python-hover.customLibraries": [
     {
       "name": "numpy",
       "inventoryUrl": "https://numpy.org/doc/1.24/objects.inv",
@@ -214,7 +215,7 @@ Add to `.vscode/settings.json` in your project:
 ```json
 // .vscode/settings.json
 {
-  "pythonHover.customLibraries": [
+  "python-hover.customLibraries": [
     {
       "name": "our_project_lib",
       "inventoryUrl": "https://docs.ourproject.com/objects.inv",
@@ -244,7 +245,7 @@ Add to `.vscode/settings.json` in your project:
 4. **Enable debug logging**
    ```json
    {
-     "pythonHover.enableDebugLogging": true
+       "python-hover.enableDebugLogging": true
    }
    ```
    Then check **Output → Python Hover** for diagnostic messages
@@ -291,7 +292,7 @@ You can configure different versions for different projects:
 ```json
 // Project A - uses old version
 {
-  "pythonHover.customLibraries": [
+  "python-hover.customLibraries": [
     {
       "name": "mylib",
       "inventoryUrl": "https://mylib.readthedocs.io/en/v1.0/objects.inv",
@@ -302,7 +303,7 @@ You can configure different versions for different projects:
 
 // Project B - uses new version
 {
-  "pythonHover.customLibraries": [
+  "python-hover.customLibraries": [
     {
       "name": "mylib",
       "inventoryUrl": "https://mylib.readthedocs.io/en/v2.0/objects.inv",

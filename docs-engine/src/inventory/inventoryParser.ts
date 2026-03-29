@@ -12,7 +12,7 @@ interface InventoryItem {
 }
 
 export class InventoryParser {
-    parse(buffer: Buffer, baseUrl: string): Map<string, HoverDoc> {
+    parse(buffer: Buffer, baseUrl: string, docsProvider: 'mkdocs' | 'sphinx' = 'sphinx'): Map<string, HoverDoc> {
         const inventory = new Map<string, HoverDoc>();
 
         // 1. Split header and compressed body
@@ -84,7 +84,10 @@ export class InventoryParser {
                     url: fullUrl,
                     kind: this.mapRoleToKind(domainRole),
                     source: ResolutionSource.Corpus,
-                    confidence: 1.0
+                    confidence: 1.0,
+                    metadata: {
+                        docsProvider,
+                    },
                 });
             }
 

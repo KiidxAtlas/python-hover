@@ -405,6 +405,36 @@ export class PythonHelper {
         };
     }
 
+    async getInstalledSourceSymbol(
+        filePath: string,
+        candidates: string[],
+        moduleName?: string,
+    ): Promise<SymbolInfo | null> {
+        if (!this.enablePersistentRuntime || !filePath || candidates.length === 0) {
+            return null;
+        }
+
+        const result = await this.send({
+            cmd: 'resolve_source_symbol',
+            file_path: filePath,
+            candidates,
+            module: moduleName,
+        }, 2500);
+
+        if (!result || result.error) return null;
+
+        return {
+            name: candidates[0],
+            module: result.module,
+            docstring: result.docstring,
+            signature: result.signature,
+            path: filePath,
+            isStdlib: result.is_stdlib,
+            qualname: result.qualname,
+            kind: result.kind,
+        };
+    }
+
     async getPythonVersion(): Promise<string> {
         if (!this.enablePersistentRuntime) {
             return this.probePythonVersionMinor();

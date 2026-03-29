@@ -12,6 +12,7 @@ export enum ResolutionSource {
     Runtime = 'Runtime',
     Sphinx = 'Sphinx',
     RTD = 'RTD',
+    SearchIndex = 'SearchIndex',
     DevDocs = 'DevDocs',
     PyPI = 'PyPI',
     GitHub = 'GitHub',

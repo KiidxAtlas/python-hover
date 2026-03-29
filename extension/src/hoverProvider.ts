@@ -236,6 +236,23 @@ export class HoverProvider implements vscode.HoverProvider {
         return this.docResolver.searchSymbols(query);
     }
 
+    async resolvePinnedReference(reference: {
+        label: string;
+        url?: string;
+        currentModule?: string;
+        currentPackage?: string;
+        currentTitle?: string;
+    }): Promise<HoverDoc | null> {
+        await this.ready;
+
+        const symbol = this.docResolver.findSymbolReference(reference);
+        if (!symbol) {
+            return null;
+        }
+
+        return this.resolveIndexedSymbolDoc(symbol);
+    }
+
     getModuleSymbols(moduleName: string) {
         return this.docResolver.getModuleSymbols(moduleName);
     }
@@ -271,6 +288,12 @@ export class HoverProvider implements vscode.HoverProvider {
             if (installedVersion) {
                 built.installedVersion = installedVersion;
             }
+            built.metadata = {
+                ...(built.metadata ?? {}),
+                indexedPackage: symbol.package,
+                indexedName: symbol.name,
+                indexedModule: symbol.module,
+            };
             return built;
         } catch (error) {
             Logger.log(`Indexed symbol resolve failed for ${symbol.name}: ${error}`);
@@ -295,9 +318,10 @@ export class HoverProvider implements vscode.HoverProvider {
 
     async buildPythonCorpus(
         onProgress?: (progress: { completed: number; total: number; current: string }) => void,
+        shouldCancel?: () => boolean,
     ) {
         await this.ready;
-        return this.docResolver.buildPythonStdlibCorpus(onProgress);
+        return this.docResolver.buildPythonStdlibCorpus(onProgress, shouldCancel);
     }
 
     getIndexedSymbolCount() {
@@ -432,6 +456,9 @@ export class HoverProvider implements vscode.HoverProvider {
         doc.metadata = {
             ...(doc.metadata ?? {}),
             commandToken,
+            indexedPackage: typeof doc.metadata?.indexedPackage === 'string' ? doc.metadata.indexedPackage : doc.module?.split('.')[0],
+            indexedModule: typeof doc.metadata?.indexedModule === 'string' ? doc.metadata.indexedModule : doc.module,
+            indexedName: typeof doc.metadata?.indexedName === 'string' ? doc.metadata.indexedName : doc.title,
         };
         this.commandDocCache.set(commandToken, doc);
         this.evictIfNeeded(this.commandDocCache);
@@ -1054,6 +1081,34 @@ export class HoverProvider implements vscode.HoverProvider {
             if (token.isCancellationRequested) return null;
 
             // ── Doc resolution + installed version (parallel) ─────────────────────
+            if (this.shouldUseInstalledSourceFallback(symbolInfo, lspSymbol.path)) {
+                const sourceInfo = await this.pythonHelper.getInstalledSourceSymbol(
+                    lspSymbol.path!,
+                    this.buildInstalledSourceCandidates(symbolInfo, lspSymbol.path!),
+                    symbolInfo.module ?? this.moduleFromLibraryPath(lspSymbol.path!) ?? undefined,
+                ).catch(() => null);
+
+                if (sourceInfo?.docstring && !symbolInfo.docstring) {
+                    symbolInfo.docstring = sourceInfo.docstring;
+                }
+
+                if (sourceInfo?.signature && this.isWeakLibrarySignature(symbolInfo.signature)) {
+                    symbolInfo.signature = sourceInfo.signature;
+                }
+
+                if (sourceInfo?.kind && !symbolInfo.kind) {
+                    symbolInfo.kind = sourceInfo.kind;
+                }
+
+                if (sourceInfo?.module && !symbolInfo.module) {
+                    symbolInfo.module = sourceInfo.module;
+                }
+
+                if (sourceInfo?.isStdlib) {
+                    symbolInfo.isStdlib = true;
+                }
+            }
+
             const docKey = DocKeyBuilder.fromSymbol(symbolInfo);
             const rootName = (symbolInfo.name ?? '').replace(/^builtins\./, '').split('.')[0] ?? '';
             const hasLibraryDefinitionPath = !!(lspSymbol.path && isLibraryPath(lspSymbol.path));
@@ -1204,6 +1259,76 @@ export class HoverProvider implements vscode.HoverProvider {
         }
 
         return null;
+    }
+
+    private shouldUseInstalledSourceFallback(symbolInfo: LspSymbol, libraryPath?: string): boolean {
+        if (!this.config.runtimeHelperEnabled || !libraryPath || !isLibraryPath(libraryPath)) {
+            return false;
+        }
+
+        if (!/\.(?:py|pyi)$/i.test(libraryPath)) {
+            return false;
+        }
+
+        if (!symbolInfo.docstring?.trim()) {
+            return true;
+        }
+
+        return this.isWeakLibrarySignature(symbolInfo.signature);
+    }
+
+    private isWeakLibrarySignature(signature?: string): boolean {
+        const normalized = signature?.trim();
+        if (!normalized) {
+            return true;
+        }
+
+        return /^\(\*args,?\s*\*\*(?:kwargs|kwds)\)$/.test(normalized)
+            || /^\(\.\.\.\)$/.test(normalized);
+    }
+
+    private buildInstalledSourceCandidates(symbolInfo: LspSymbol, libraryPath: string): string[] {
+        const candidates: string[] = [];
+        const seen = new Set<string>();
+        const push = (value?: string) => {
+            const normalized = value?.trim().replace(/^builtins\./, '');
+            if (!normalized || seen.has(normalized)) {
+                return;
+            }
+            seen.add(normalized);
+            candidates.push(normalized);
+        };
+
+        const fullName = symbolInfo.name.replace(/^builtins\./, '');
+        push(fullName);
+
+        const moduleCandidates = new Set<string>();
+        if (symbolInfo.module) {
+            moduleCandidates.add(symbolInfo.module);
+        }
+        const moduleFromPath = this.moduleFromLibraryPath(libraryPath);
+        if (moduleFromPath) {
+            moduleCandidates.add(moduleFromPath);
+        }
+
+        for (const moduleName of moduleCandidates) {
+            if (fullName.startsWith(`${moduleName}.`)) {
+                push(fullName.slice(moduleName.length + 1));
+            }
+        }
+
+        const parts = fullName.split('.').filter(Boolean);
+        if (parts.length >= 3) {
+            push(parts.slice(-3).join('.'));
+        }
+        if (parts.length >= 2) {
+            push(parts.slice(-2).join('.'));
+        }
+        if (parts.length === 1 || symbolInfo.kind === 'function' || symbolInfo.kind === 'class' || symbolInfo.kind === 'module') {
+            push(parts[parts.length - 1]);
+        }
+
+        return candidates;
     }
 
     // ─── Private helpers ─────────────────────────────────────────────────────

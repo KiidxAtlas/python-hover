@@ -4,6 +4,20 @@ All notable changes to Python Hover will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.7.3] - 2026-03-29
+
+Polish, customizability, and release-readiness improvements
+
+- Unified hover and pinned-panel doc actions so official docs, DevDocs, and source links respect the configured browser target consistently.
+- Added clearer provenance, import hints, module stats, and cleaner module overviews so visible hover content better explains where docs came from and how to use the symbol.
+- Improved pinned hover navigation with related-reference jumps, back/forward history, and symbol-focused actions for docs, source, browsing, and import copying.
+- Upgraded module browsing with a simpler split layout, flatter default discovery, dotted-name relevance ranking, selected-symbol details, and less disruptive opening behavior.
+- Expanded Studio and command coverage for cache management, corpus building and cancellation, context-menu visibility, status bar visibility, and release-time maintenance controls.
+- Improved third-party docs resolution with site-index lookup, optional custom inventory URLs, and installed-library source fallback for better signatures and docstrings.
+- Updated docs and audit fixtures to cover the current settings surface and hover UI behavior more accurately.
+
+---
+
 ## [0.7.2] - 2026-03-27
 
 Performance and safety improvements

@@ -61,6 +61,7 @@ export class HoverDocBuilder {
             badges: badges,
             source: docs?.source || ResolutionSource.Runtime,
             confidence: docs?.confidence || 0.5,
+            metadata: docs?.metadata,
             content: legacyContent,
             structuredContent,
             overloads: symbolInfo.overloads,
