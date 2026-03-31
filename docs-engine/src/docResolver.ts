@@ -1,5 +1,5 @@
 import { Logger } from '../../extension/src/logger';
-import { DocKey, HoverDoc, IndexedSymbolSummary, ResolutionSource, StructuredHoverContent } from '../../shared/types';
+import { CustomLibraryConfig, DocKey, HoverDoc, IndexedSymbolSummary, ResolutionSource, StructuredHoverContent } from '../../shared/types';
 import { DiskCache, PYHOVER_PYTHON_STDLIB_CORPUS_GROUP } from './cache/diskCache';
 import { InventoryFetcher } from './inventory/inventoryFetcher';
 import { PyPiClient } from './pypi/pypiClient';
@@ -14,7 +14,7 @@ export interface ResolverConfig {
         snippetHours: number;
     };
     requestTimeout?: number;
-    customLibraries?: any[];
+    customLibraries?: CustomLibraryConfig[];
     onlineDiscovery?: boolean;
     /** When true, scrape the full documentation for each package in the background
      *  on first hover — builds the local corpus all at once instead of symbol-by-symbol. */
@@ -94,6 +94,15 @@ export class DocResolver {
 
     getIndexedPackageSummaries() {
         return this.inventoryFetcher.getIndexedPackageSummaries();
+    }
+
+    async ensureIndexedPackage(packageName: string, isStdlib = false): Promise<void> {
+        const normalized = packageName.trim();
+        if (!normalized) {
+            return;
+        }
+
+        await this.inventoryFetcher.ensurePackageLoaded(normalized, undefined, isStdlib);
     }
 
     async hydrateCachedInventories(): Promise<string[]> {
@@ -188,6 +197,10 @@ export class DocResolver {
 
     private shouldBuildFullCorpus(): boolean {
         return this.shouldBuildCorpus() && this.config?.buildFullCorpus === true;
+    }
+
+    private isLikelyPythonModuleName(name?: string): boolean {
+        return !!name && (name === 'builtins' || name === 'python' || /^[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)*$/.test(name));
     }
 
     private buildAlternateInventoryKeys(key: DocKey): DocKey[] {
@@ -326,7 +339,27 @@ export class DocResolver {
         return false;
     }
 
-    private buildResolvedInventoryDoc(
+    private async resolveSourceUrl(
+        key: DocKey,
+        explicitSourceUrl?: string,
+    ): Promise<string | undefined> {
+        if (explicitSourceUrl?.trim()) {
+            return explicitSourceUrl.trim();
+        }
+
+        const stdlibSourceUrl = this.cpythonSourceUrl(key);
+        if (stdlibSourceUrl) {
+            return stdlibSourceUrl;
+        }
+
+        if (this.config?.onlineDiscovery === false || key.isStdlib || !this.isLikelyPythonModuleName(key.package)) {
+            return undefined;
+        }
+
+        return await this.pypiClient.getPackageRepoUrl(key.package).catch(() => null) ?? undefined;
+    }
+
+    private async buildResolvedInventoryDoc(
         key: DocKey,
         inventoryDoc: HoverDoc,
         content?: string,
@@ -334,7 +367,8 @@ export class DocResolver {
         summary?: string,
         seeAlso?: string[],
         links?: Record<string, string>,
-    ): HoverDoc {
+    ): Promise<HoverDoc> {
+        const sourceUrl = await this.resolveSourceUrl(key, inventoryDoc.sourceUrl);
         return {
             ...inventoryDoc,
             content,
@@ -346,7 +380,7 @@ export class DocResolver {
             devdocsUrl: this.fallback.getDevDocsUrl(key) ?? undefined,
             seeAlso: seeAlso && seeAlso.length > 0 ? seeAlso : undefined,
             module: key.module || key.package,
-            sourceUrl: inventoryDoc.sourceUrl || this.cpythonSourceUrl(key) || this.pypiClient.getCachedRepoUrl(key.package) || undefined,
+            sourceUrl,
         };
     }
 
@@ -407,6 +441,8 @@ export class DocResolver {
             this.prefetchInventoryEnhancements(corpusPackage, siteIndexDoc.url);
         }
 
+        const sourceUrl = await this.resolveSourceUrl(key, siteIndexDoc.sourceUrl);
+
         return {
             ...siteIndexDoc,
             content,
@@ -417,13 +453,17 @@ export class DocResolver {
             devdocsUrl: this.fallback.getDevDocsUrl(key) ?? undefined,
             seeAlso,
             module: key.module || key.package,
-            sourceUrl: siteIndexDoc.sourceUrl || this.cpythonSourceUrl(key) || this.pypiClient.getCachedRepoUrl(key.package) || undefined,
+            sourceUrl,
         };
     }
 
     private async resolveSiteIndexBaseUrl(key: DocKey): Promise<string | undefined> {
         const isStdlib = key.isStdlib || key.package === 'builtins' || key.package === 'python';
         const candidatePackage = isStdlib ? 'builtins' : key.package;
+        if (!this.isLikelyPythonModuleName(candidatePackage)) {
+            return undefined;
+        }
+
         const suggested = this.inventoryFetcher.getSuggestedBaseUrl(candidatePackage, isStdlib);
         if (suggested) {
             return suggested;
@@ -531,13 +571,15 @@ export class DocResolver {
         let latestVersion: string | undefined;
         let license: string | undefined;
         let requiresPython: string | undefined;
-        if (this.config?.onlineDiscovery !== false && !isStdlib) {
+        let sourceUrl: string | undefined;
+        if (this.config?.onlineDiscovery !== false && !isStdlib && this.isLikelyPythonModuleName(packageName)) {
             try {
                 const pypiDoc = await this.pypiClient.findDocs(docKey).catch(() => null);
                 summary = pypiDoc?.summary;
                 latestVersion = pypiDoc?.latestVersion;
                 license = pypiDoc?.license;
                 requiresPython = pypiDoc?.requiresPython;
+                sourceUrl = await this.resolveSourceUrl(docKey, pypiDoc?.sourceUrl);
             } catch { /* ignore */ }
         }
 
@@ -585,6 +627,7 @@ export class DocResolver {
             module: packageName,
             moduleExports: moduleExports.length > 0 ? moduleExports : undefined,
             exportCount: exportCount > 0 ? exportCount : undefined,
+            sourceUrl,
             latestVersion,
             license,
             requiresPython,
@@ -670,6 +713,8 @@ export class DocResolver {
                     }
                 }
 
+                const sourceUrl = await this.resolveSourceUrl(key, inventoryDoc.sourceUrl);
+
                 return {
                     ...inventoryDoc,
                     url: bestUrl,
@@ -680,7 +725,7 @@ export class DocResolver {
                     confidence: 1.0,
                     devdocsUrl: this.fallback.getDevDocsUrl(key) ?? undefined,
                     module: key.module || key.package,
-                    sourceUrl: inventoryDoc.sourceUrl || this.cpythonSourceUrl(key) || this.pypiClient.getCachedRepoUrl(key.package) || undefined,
+                    sourceUrl,
                 };
             }
 
@@ -760,10 +805,6 @@ export class DocResolver {
                 // Return immediately with whatever we have — never block on scraping.
                 // Background prefetch ensures the next hover gets richer content.
                 // Also prefetch PyPI metadata so the source URL is cached for future hovers.
-                if (!key.isStdlib && key.package && !this.pypiClient.getCachedRepoUrl(key.package)
-                    && this.config?.onlineDiscovery !== false) {
-                    void this.pypiClient.getPackageMetadata(key.package).catch(() => { });
-                }
                 return this.buildResolvedInventoryDoc(
                     key,
                     inventoryDoc,
@@ -786,7 +827,7 @@ export class DocResolver {
             // `typing` backport) have unrelated summaries that would be shown as content.
             const isStdlib = key.isStdlib || key.package === 'builtins';
 
-            if (this.config?.onlineDiscovery !== false && !isStdlib) {
+            if (this.config?.onlineDiscovery !== false && !isStdlib && this.isLikelyPythonModuleName(key.package)) {
                 const pypiDoc = await this.pypiClient.findDocs(key).catch(e => {
                     Logger.log(`PyPI fetch failed for ${key.name}: ${e}`);
                     return null;

@@ -1,9 +1,5 @@
+import { BUILTIN_TYPES } from '../../shared/pythonBuiltins';
 import { LspSymbol } from '../../shared/types';
-
-const BUILTIN_TYPES = new Set([
-    'str', 'list', 'dict', 'set', 'tuple', 'int', 'float',
-    'bytes', 'bytearray', 'frozenset', 'complex', 'bool', 'object',
-]);
 
 /**
  * Top-level Python stdlib module names. Used to skip inventory warmup for

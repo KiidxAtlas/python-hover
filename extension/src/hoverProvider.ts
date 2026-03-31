@@ -3,9 +3,12 @@ import { HoverDocBuilder } from '../../docs-engine/src/builder/hoverDocBuilder';
 import { DiskCache } from '../../docs-engine/src/cache/diskCache';
 import { DocResolver } from '../../docs-engine/src/docResolver';
 import { DocKeyBuilder } from '../../shared/docKey';
-import { HoverDoc, IndexedSymbolPreview, IndexedSymbolSummary, LspSymbol, ResolutionSource, SymbolInfo } from '../../shared/types';
+import { BUILTIN_OWNER_TYPES, BUILTIN_TYPES, isKnownTopLevelBuiltin } from '../../shared/pythonBuiltins';
+import { HoverDoc, HoverHistoryEntry, IndexedSymbolPreview, IndexedSymbolSummary, LspSymbol, ResolutionSource, SymbolInfo } from '../../shared/types';
 import { AliasResolver } from './aliasResolver';
 import { Config } from './config';
+import { HoverParameterLensService } from './hoverParameterLensService';
+import { HoverSessionState } from './hoverSessionState';
 import { Logger } from './logger';
 import { LspClient } from './lspClient';
 import { NameRefinement } from './nameRefinement';
@@ -31,37 +34,6 @@ const PYTHON_STRUCTURAL_KEYWORDS = new Set([
     'return', 'try', 'while', 'with', 'yield',
 ]);
 
-const BUILTIN_OWNER_TYPES = new Set([
-    'str', 'list', 'dict', 'set', 'tuple', 'int', 'float', 'bool',
-    'bytes', 'bytearray', 'frozenset', 'complex', 'object', 'None',
-]);
-
-const KNOWN_TOP_LEVEL_BUILTINS = new Set([
-    'abs', 'aiter', 'all', 'anext', 'any', 'ascii',
-    'bin', 'bool', 'breakpoint', 'bytearray', 'bytes',
-    'callable', 'chr', 'classmethod', 'compile', 'complex',
-    'delattr', 'dict', 'dir', 'divmod',
-    'enumerate', 'eval', 'exec',
-    'filter', 'float', 'format', 'frozenset',
-    'getattr', 'globals',
-    'hasattr', 'hash', 'help', 'hex',
-    'id', 'input', 'int', 'isinstance', 'issubclass', 'iter',
-    'len', 'list', 'locals',
-    'map', 'max', 'memoryview', 'min',
-    'next',
-    'object', 'oct', 'open', 'ord',
-    'pow', 'print', 'property',
-    'range', 'repr', 'reversed', 'round',
-    'set', 'setattr', 'slice', 'sorted', 'staticmethod', 'str', 'sum', 'super',
-    'tuple', 'type',
-    'vars',
-    'zip',
-    '__import__',
-    'None', 'True', 'False', 'NotImplemented', 'Ellipsis', '__debug__',
-]);
-
-const BUILTIN_EXCEPTION_PATTERN = /^[A-Z][A-Za-z0-9]+(?:Error|Exception|Warning|Exit)$/;
-
 export class HoverProvider implements vscode.HoverProvider {
     private static readonly HOVER_LOG_COOLDOWN_MS = 2000;
     private static readonly NEGATIVE_HOVER_CACHE_MS = 2000;
@@ -71,13 +43,15 @@ export class HoverProvider implements vscode.HoverProvider {
     private pythonHelper: PythonHelper;
     private docBuilder: HoverDocBuilder;
     private aliasResolver: AliasResolver;
+    private sessionState: HoverSessionState;
+    private parameterLensService: HoverParameterLensService;
     private ready: Promise<void>;
     /** Segments hover caches when the configured interpreter path changes. */
     private readonly envCacheId: string;
 
     private diagnosticCollection: vscode.DiagnosticCollection | undefined;
     private deprecatedRanges = new Map<string, vscode.Diagnostic[]>();
-    private lastDoc: HoverDoc | null = null;
+    readonly onDidChangeSidebarState: vscode.Event<void>;
 
     /** Maximum entries per in-memory cache before oldest entries are evicted. */
     private static readonly MAX_CACHE_SIZE = 500;
@@ -123,12 +97,6 @@ export class HoverProvider implements vscode.HoverProvider {
     private documentTextCache = new Map<string, string>();
     /** Alias resolutions per document version and symbol. */
     private aliasResolutionCache = new Map<string, string>();
-    /** Hover docs addressable by command token so Pin/Debug/Copy act on the hovered card, not mutable global state. */
-    private commandDocCache = new Map<string, HoverDoc>();
-
-    /** Ring buffer of the last 25 successfully resolved hover docs for the history command. */
-    private hoverHistory: { title: string; kind?: string; module?: string; package?: string; url?: string }[] = [];
-    private static readonly HOVER_HISTORY_MAX = 25;
 
     /** Active hover-delay timer — cleared on cancellation to avoid stale resolutions. */
     private hoverDelayTimer: ReturnType<typeof setTimeout> | undefined;
@@ -154,6 +122,17 @@ export class HoverProvider implements vscode.HoverProvider {
         });
         this.docBuilder = new HoverDocBuilder();
         this.aliasResolver = new AliasResolver();
+        this.sessionState = new HoverSessionState();
+        this.onDidChangeSidebarState = this.sessionState.onDidChangeSidebarState;
+        this.parameterLensService = new HoverParameterLensService(
+            this.renderer,
+            this.docResolver,
+            this.docBuilder,
+            this.sessionState,
+            {
+                resolveAliasForDocument: (document, documentText, symbol) => this.resolveAliasForDocument(document, documentText, symbol),
+            },
+        );
         this.ready = this.initializePythonVersion();
     }
 
@@ -199,14 +178,15 @@ export class HoverProvider implements vscode.HoverProvider {
     }
 
     getLastDoc(): HoverDoc | null {
-        return this.lastDoc;
+        return this.sessionState.getLastDoc();
     }
 
     getDocByCommandToken(token?: string): HoverDoc | null {
-        if (!token) {
-            return this.lastDoc;
-        }
-        return this.commandDocCache.get(token) ?? this.lastDoc;
+        return this.sessionState.getDocByCommandToken(token);
+    }
+
+    getExactDocByCommandToken(token: string): HoverDoc | null {
+        return this.sessionState.getExactDocByCommandToken(token);
     }
 
     getRenderedHoverMarkdown(token?: string): string | null {
@@ -228,8 +208,8 @@ export class HoverProvider implements vscode.HoverProvider {
         return this.getRenderedHoverMarkdown();
     }
 
-    getHoverHistory() {
-        return [...this.hoverHistory];
+    getHoverHistory(): HoverHistoryEntry[] {
+        return this.sessionState.getHoverHistory();
     }
 
     searchDocs(query: string) {
@@ -263,6 +243,11 @@ export class HoverProvider implements vscode.HoverProvider {
 
     getIndexedPackageSummaries() {
         return this.docResolver.getIndexedPackageSummaries();
+    }
+
+    async ensureIndexedPackage(packageName: string, isStdlib = false): Promise<void> {
+        await this.ready;
+        await this.docResolver.ensureIndexedPackage(packageName, isStdlib);
     }
 
     async hydrateCachedInventories(): Promise<string[]> {
@@ -373,12 +358,14 @@ export class HoverProvider implements vscode.HoverProvider {
         this.importedRootsCache.clear();
         this.documentTextCache.clear();
         this.aliasResolutionCache.clear();
+        this.parameterLensService.clearSessionCache();
         // commandDocCache is intentionally NOT cleared here — the Pin / Debug
         // command tokens in already-rendered hovers must remain valid after a
         // document save so the user can still act on them without re-hovering.
         this.pythonHelper.clearSessionCache();
         this.diagnosticCollection?.clear();
         this.deprecatedRanges.clear();
+        this.sessionState.fireSidebarDidChange();
     }
 
     private documentVersionCacheKey(document: vscode.TextDocument): string {
@@ -453,17 +440,7 @@ export class HoverProvider implements vscode.HoverProvider {
     }
 
     private rememberCommandDoc(doc: HoverDoc, commandToken: string): HoverDoc {
-        doc.metadata = {
-            ...(doc.metadata ?? {}),
-            commandToken,
-            indexedPackage: typeof doc.metadata?.indexedPackage === 'string' ? doc.metadata.indexedPackage : doc.module?.split('.')[0],
-            indexedModule: typeof doc.metadata?.indexedModule === 'string' ? doc.metadata.indexedModule : doc.module,
-            indexedName: typeof doc.metadata?.indexedName === 'string' ? doc.metadata.indexedName : doc.title,
-        };
-        this.commandDocCache.set(commandToken, doc);
-        this.evictIfNeeded(this.commandDocCache);
-        this.lastDoc = doc;
-        return doc;
+        return this.sessionState.rememberCommandDoc(doc, commandToken);
     }
 
     /** Cache key stable for any cursor offset inside the same identifier token. */
@@ -499,7 +476,8 @@ export class HoverProvider implements vscode.HoverProvider {
                 const rel = vscode.workspace.asRelativePath(document.uri, false);
                 const patterns = this.config.excludePatterns;
                 if (patterns.length > 0) {
-                    const { minimatch } = await import('minimatch').catch(() => ({ minimatch: null as any }));
+                    const minimatchModule = await import('minimatch').catch(() => null);
+                    const minimatch = minimatchModule?.minimatch;
                     if (minimatch && patterns.some(p => minimatch(rel, p, { dot: true }))) {
                         return null;
                     }
@@ -531,6 +509,8 @@ export class HoverProvider implements vscode.HoverProvider {
             // (which changes lastDoc and breaks Pin).
             const segmentRange = this.getSegmentRange(document, position);
             const segmentText = segmentRange ? document.getText(segmentRange) : '';
+            const documentText = this.getDocumentText(document);
+            const parameterLens = await this.parameterLensService.getParameterLens(document, position, token);
 
             // Fast path: if we've already resolved this position in this document version,
             // skip the entire LSP + AST + refinement pipeline and go straight to hoverCache.
@@ -538,20 +518,22 @@ export class HoverProvider implements vscode.HoverProvider {
             const knownKey = this.positionToKey.get(posKey);
             if (knownKey) {
                 if (this.isNegativeHoverCached(knownKey) || this.isNegativeHoverCached(posKey)) {
-                    return null;
+                    return this.parameterLensService.decorateHoverWithParameterLens(null, undefined, parameterLens, segmentRange, document, documentText, position);
                 }
                 const cached = this.hoverCache.get(knownKey);
-                if (cached) return cached;
+                if (cached) {
+                    return this.parameterLensService.decorateHoverWithParameterLens(cached, knownKey, parameterLens, segmentRange, document, documentText, position);
+                }
                 const inflight = this.inflightHovers.get(knownKey);
-                if (inflight) return inflight;
+                if (inflight) {
+                    return inflight.then(result => this.parameterLensService.decorateHoverWithParameterLens(result, knownKey, parameterLens, segmentRange, document, documentText, position));
+                }
             }
 
             const inflightByPosition = this.inflightPositionHovers.get(posKey);
             if (inflightByPosition) {
-                return inflightByPosition;
+                return inflightByPosition.then(result => this.parameterLensService.decorateHoverWithParameterLens(result, knownKey, parameterLens, segmentRange, document, documentText, position));
             }
-
-            const documentText = this.getDocumentText(document);
 
             const hoverPromise = (async () => {
 
@@ -571,7 +553,7 @@ export class HoverProvider implements vscode.HoverProvider {
                 const kwPromise = this.resolveKeyword(simpleWord, kwKey, segmentRange);
                 this.inflightHovers.set(kwKey, kwPromise);
                 kwPromise.finally(() => this.inflightHovers.delete(kwKey));
-                return kwPromise;
+                return kwPromise.then(result => this.parameterLensService.decorateHoverWithParameterLens(result, kwKey, parameterLens, segmentRange, document, documentText, position));
             }
 
             // ── Phase 1: LSP + AST (sequential — AST branches on LSP result) ──────
@@ -633,7 +615,7 @@ export class HoverProvider implements vscode.HoverProvider {
                     })();
                     this.inflightHovers.set(moduleKey, modulePromise);
                     modulePromise.finally(() => this.inflightHovers.delete(moduleKey));
-                    return modulePromise;
+                    return modulePromise.then(result => this.parameterLensService.decorateHoverWithParameterLens(result, moduleKey, parameterLens, segmentRange, document, documentText, position));
                 }
             }
 
@@ -703,7 +685,7 @@ export class HoverProvider implements vscode.HoverProvider {
             // doesn't show string (str) documentation.
             if (identifiedType === 'docstring_literal') {
                 this.cacheNegativeHover(posKey);
-                return null;
+                return this.parameterLensService.decorateHoverWithParameterLens(null, undefined, parameterLens, segmentRange, document, documentText, position);
             }
 
             if (identifiedType) {
@@ -745,7 +727,7 @@ export class HoverProvider implements vscode.HoverProvider {
             if (!lspSymbol) {
                 this.cacheNegativeHover(posKey);
                 this.logHoverEvent(`no-symbol:${posKey}:${segmentText}`, `Hover: no symbol recognized for ${segmentText || '<unknown>'}`);
-                return null;
+                return this.parameterLensService.decorateHoverWithParameterLens(null, undefined, parameterLens, segmentRange, document, documentText, position);
             }
 
             // ── Phase 2: Name refinement (sync, fast) ────────────────────────────
@@ -792,14 +774,14 @@ export class HoverProvider implements vscode.HoverProvider {
             // Return cached result immediately (no logging, no async work)
             const cached = this.hoverCache.get(cacheKey);
             if (cached) {
-                return cached;
+                return this.parameterLensService.decorateHoverWithParameterLens(cached, cacheKey, parameterLens, segmentRange, document, documentText, position);
             }
 
             // If another hover for the same symbol is already resolving, share its promise.
             // This prevents stampedes when the cursor lingers on a slow-loading symbol.
             const inflight = this.inflightHovers.get(cacheKey);
             if (inflight) {
-                return inflight;
+                return inflight.then(result => this.parameterLensService.decorateHoverWithParameterLens(result, cacheKey, parameterLens, segmentRange, document, documentText, position));
             }
 
             // Log alias resolution only once per symbol (after cache miss confirmed)
@@ -829,13 +811,15 @@ export class HoverProvider implements vscode.HoverProvider {
             this.inflightHovers.set(cacheKey, resolutionPromise);
             resolutionPromise.finally(() => this.inflightHovers.delete(cacheKey));
                 return resolutionPromise.then(result => {
-                    Logger.debugDuration('Hover total pipeline', hoverStartedAt, {
-                        file: document.uri.fsPath,
-                        line: position.line + 1,
-                        symbol: lspSymbol?.name,
-                        resolved: !!result,
-                    }, 60);
-                    return result;
+                    return this.parameterLensService.decorateHoverWithParameterLens(result, cacheKey, parameterLens, segmentRange, document, documentText, position).then(decorated => {
+                        Logger.debugDuration('Hover total pipeline', hoverStartedAt, {
+                            file: document.uri.fsPath,
+                            line: position.line + 1,
+                            symbol: lspSymbol?.name,
+                            resolved: !!decorated,
+                        }, 60);
+                        return decorated;
+                    });
                 });
 
             })();
@@ -887,7 +871,7 @@ export class HoverProvider implements vscode.HoverProvider {
             // If we can't produce any meaningful local content, fall through to the
             // library doc resolver which can hit stdlib corpus/static docs.
             const builtinLeaf = (lspSymbol.name ?? '').replace(/^builtins\./, '').split('.').pop() ?? '';
-            const looksLikeBuiltinType = new Set(['str', 'list', 'dict', 'set', 'tuple', 'int', 'float', 'bytes', 'bytearray', 'frozenset', 'complex', 'bool', 'object']).has(builtinLeaf);
+            const looksLikeBuiltinType = BUILTIN_TYPES.has(builtinLeaf);
             const shouldPreferLibrary = (lspSymbol.module === 'builtins' || looksLikeBuiltinType) && !isDotted;
 
             if (isLocal && !shouldPreferLibrary) {
@@ -1038,7 +1022,7 @@ export class HoverProvider implements vscode.HoverProvider {
             const topLevelBuiltinName = (symbolInfo.name ?? '').replace(/^builtins\./, '');
             if (!symbolInfo.isStdlib
                 && !symbolInfo.name.includes('.')
-                && (KNOWN_TOP_LEVEL_BUILTINS.has(topLevelBuiltinName) || BUILTIN_EXCEPTION_PATTERN.test(topLevelBuiltinName))) {
+                && isKnownTopLevelBuiltin(topLevelBuiltinName)) {
                 symbolInfo.isStdlib = true;
                 symbolInfo.module = 'builtins';
                 symbolInfo.path = 'builtins';
@@ -1199,16 +1183,14 @@ export class HoverProvider implements vscode.HoverProvider {
 
             // Record in hover history ring buffer (skip module-overview entries).
             if (hoverDoc.title && hoverDoc.kind !== 'module') {
-                this.hoverHistory.unshift({
+                this.sessionState.rememberHoverHistoryEntry({
                     title: hoverDoc.title.replace(/^builtins\./, ''),
                     kind: hoverDoc.kind,
                     module: hoverDoc.module,
                     package: hoverDoc.module?.split('.')[0],
                     url: hoverDoc.url,
+                    commandToken: cacheKey,
                 });
-                if (this.hoverHistory.length > HoverProvider.HOVER_HISTORY_MAX) {
-                    this.hoverHistory.length = HoverProvider.HOVER_HISTORY_MAX;
-                }
             }
 
             return hover;
@@ -1616,6 +1598,7 @@ export class HoverProvider implements vscode.HoverProvider {
             clearTimeout(this.hoverDelayTimer);
             this.hoverDelayTimer = undefined;
         }
+        this.sessionState.dispose();
         this.pythonHelper.dispose();
     }
 }

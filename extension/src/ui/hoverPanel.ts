@@ -1,6 +1,11 @@
 import * as vscode from 'vscode';
 import { HoverDoc, StructuredHoverSection } from '../../../shared/types';
+import { isActiveParameterMatch } from '../parameterLens';
+import { buildSavedDocEntry, getSavedDocModuleTarget } from '../savedDocs';
 import { cleanContent, cleanSignature } from './contentCleaner';
+import { buildCopyableSignature, buildDescriptionContent, buildImportStatement, getDisplayParameters, getDisplayTitle, getRequiredPythonVersion, getStructuredExampleSections, getVisibleStructuredDescriptionSections, getVisibleStructuredNoteSections, isMeaningfullyOutdated } from './docPresentation';
+import { HOVER_PANEL_COMMANDS } from './webviewCommandAllowlist';
+import { createWebviewNonce } from './webviewNonce';
 
 export class HoverPanel {
     static currentPanel: HoverPanel | undefined;
@@ -12,9 +17,9 @@ export class HoverPanel {
     private constructor(doc: HoverDoc) {
         this.panel = vscode.window.createWebviewPanel(
             'pythonHoverPanel',
-            doc.title,
+          this.panelTitleFor(doc),
             { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true },
-          { enableScripts: false, enableCommandUris: true, retainContextWhenHidden: false },
+          { enableScripts: true, enableCommandUris: HOVER_PANEL_COMMANDS, retainContextWhenHidden: false, localResourceRoots: [] },
         );
       this.resetHistory(doc);
         this.panel.onDidDispose(() => {
@@ -54,10 +59,14 @@ export class HoverPanel {
   }
 
     update(doc: HoverDoc): void {
-        this.panel.title = doc.title;
+      this.panel.title = this.panelTitleFor(doc);
         this.panel.webview.html = this.renderHtml(doc);
         this.panel.reveal(vscode.ViewColumn.Beside, true);
     }
+
+  private panelTitleFor(doc: HoverDoc): string {
+    return getDisplayTitle(doc.title);
+  }
 
   private resetHistory(doc: HoverDoc): void {
     this.navigationStack = [doc];
@@ -164,22 +173,25 @@ export class HoverPanel {
   private renderStructuredSection(section: StructuredHoverSection): string {
     const roleClass = section.role ? ` role-${section.role}` : '';
     const title = section.title ? `<h3>${this.escape(section.title)}</h3>` : '';
+    const isNoteSection = section.kind === 'note' || section.role === 'note';
 
     if (section.kind === 'code') {
-      return `<div class="structured-block kind-code${roleClass}">${title}<pre><code>${this.escape(section.content.trim())}</code></pre></div>`;
+      const body = `<pre><code>${this.escape(section.content.trim())}</code></pre>`;
+      return `<div class="structured-block kind-code${roleClass}">${title}${isNoteSection ? `<div class="callout">${body}</div>` : body}</div>`;
     }
 
     if (section.kind === 'list' && section.items && section.items.length > 0) {
       const items = section.items
         .map(item => `<li>${this.markdownish(this.escape(cleanContent(item)))}</li>`)
         .join('');
-      return `<div class="structured-block kind-list${roleClass}">${title}<ul>${items}</ul></div>`;
+      const body = `<ul>${items}</ul>`;
+      return `<div class="structured-block kind-list${roleClass}">${title}${isNoteSection ? `<div class="callout">${body}</div>` : body}</div>`;
     }
 
     const text = this.markdownish(this.escape(cleanContent(section.content)));
     if (!text.trim()) return '';
 
-    if (section.kind === 'note') {
+    if (isNoteSection) {
       return `<div class="structured-block kind-note${roleClass}">${title}<div class="callout">${text}</div></div>`;
     }
 
@@ -258,20 +270,22 @@ export class HoverPanel {
     return `<div class="provenance-row">${parts.join('')}</div>`;
   }
 
+  private getProvenanceChips(doc: HoverDoc): string[] {
+    const chips = [this.renderChip(this.getSourceLabel(doc), this.getSourceTone(doc))];
+    const host = this.getDocHostLabel(doc);
+    if (host) {
+      chips.push(this.renderChip(host, 'neutral'));
+    }
+    return chips;
+  }
+
   private buildImportStatement(doc: HoverDoc): string | undefined {
-    if (doc.source === 'Local') return undefined;
-    const rawTitle = doc.title.replace(/^builtins\./, '');
-    if (!rawTitle || /^__\w+__$/.test(rawTitle)) return undefined;
-    if (doc.kind === 'module') {
-      return rawTitle === 'builtins' ? undefined : `import ${rawTitle}`;
-    }
-    if (!doc.module || doc.module === 'builtins') return undefined;
-    const segments = rawTitle.split('.').filter(Boolean);
-    let shortName = segments[segments.length - 1] || rawTitle;
-    if (segments.length > 1 && /^(?:method|property|field)$/i.test(doc.kind ?? '')) {
-      shortName = segments[0];
-    }
-    return `from ${doc.module} import ${shortName}`;
+    return buildImportStatement(doc);
+  }
+
+  private getModuleBrowseTarget(doc: HoverDoc): string | undefined {
+    const moduleName = getSavedDocModuleTarget(doc);
+    return moduleName && moduleName !== 'builtins' ? moduleName : undefined;
   }
 
   private buildSourceHref(doc: HoverDoc): string | undefined {
@@ -282,28 +296,59 @@ export class HoverPanel {
     return this.buildCommandHref('python-hover.openHoverSource', { target: sourceTarget });
   }
 
-  private renderHeroActions(doc: HoverDoc, importStatement?: string): string[] {
-    const actions: string[] = [];
+  private renderHeroActions(doc: HoverDoc, importStatement?: string): { primary: string[]; secondary: string[] } {
+    const primary: string[] = [];
+    const secondary: string[] = [];
+    const copyableSignature = doc.signature ? this.getCopyableSignature(doc) : undefined;
+    const moduleBrowseTarget = this.getModuleBrowseTarget(doc);
+    const savedDocEntry = buildSavedDocEntry(doc);
 
     if (doc.url) {
-      actions.push(`<a class="chip chip-link" href="${this.escape(this.buildDocsHref(doc.url, 'docs'))}">Docs</a>`);
+      primary.push(`<a class="chip chip-link" href="${this.escape(this.buildDocsHref(doc.url, 'docs'))}">Docs</a>`);
     }
     if (doc.devdocsUrl && !doc.url) {
-      actions.push(`<a class="chip chip-link" href="${this.escape(this.buildDocsHref(doc.devdocsUrl, 'devdocs'))}">DevDocs</a>`);
+      primary.push(`<a class="chip chip-link" href="${this.escape(this.buildDocsHref(doc.devdocsUrl, 'devdocs'))}">DevDocs</a>`);
     }
     const sourceHref = this.buildSourceHref(doc);
     if (sourceHref) {
-      actions.push(`<a class="chip chip-link" href="${this.escape(sourceHref)}">Source</a>`);
+      primary.push(`<a class="chip chip-link" href="${this.escape(sourceHref)}">Source</a>`);
     }
-    if (doc.module && doc.module !== 'builtins') {
-      actions.push(`<a class="chip chip-link" href="${this.escape(this.buildCommandHref('python-hover.browseModule', doc.module))}">Browse</a>`);
+    if (moduleBrowseTarget && doc.kind !== 'module') {
+      primary.push(`<a class="chip chip-link" href="${this.escape(this.buildCommandHref('python-hover.browseModule', moduleBrowseTarget))}">Browse</a>`);
     }
     if (importStatement) {
-      actions.push(`<a class="chip chip-link" href="${this.escape(this.buildCommandHref('python-hover.copyImport', importStatement))}">Copy import</a>`);
+      secondary.push(`<a class="chip chip-link" href="${this.escape(this.buildCommandHref('python-hover.copyImport', importStatement))}">Import</a>`);
     }
-    actions.push(`<a class="chip chip-link" href="command:python-hover.openStudio">Studio</a>`);
+    if (copyableSignature) {
+      secondary.push(`<a class="chip chip-link" href="${this.escape(this.buildCommandHref('python-hover.copySignature', copyableSignature))}">Signature</a>`);
+    }
+    if (savedDocEntry) {
+      secondary.push(`<a class="chip chip-link" href="${this.escape(this.buildCommandHref('python-hover.toggleSavedHover', savedDocEntry))}">Save</a>`);
+    }
+    secondary.push(`<a class="chip chip-link" href="command:python-hover.showHistory">History</a>`);
+    secondary.push(`<a class="chip chip-link" href="command:python-hover.openStudio">Studio</a>`);
 
-    return actions;
+    return { primary, secondary };
+  }
+
+  private shouldRenderCompactSignature(signature: string): boolean {
+    return !signature.includes('\n') && signature.length <= 92;
+  }
+
+  private renderSignatureBody(signature: string): string {
+    if (this.shouldRenderCompactSignature(signature)) {
+      return `<div class="signature-inline"><code>${this.escape(signature)}</code></div>`;
+    }
+
+    return `<pre class="sig"><code>${this.escape(signature)}</code></pre>`;
+  }
+
+  private getDescriptionContent(doc: HoverDoc): string {
+    return buildDescriptionContent(doc) || '';
+  }
+
+  private getCopyableSignature(doc: HoverDoc): string | undefined {
+    return doc.signature ? buildCopyableSignature(doc.title, doc.signature) : undefined;
   }
 
   private renderSeeAlsoItem(item: string, doc: HoverDoc): string {
@@ -363,66 +408,124 @@ export class HoverPanel {
     `;
   }
 
+  private renderParameterLensCard(doc: HoverDoc): string {
+    const lens = doc.parameterLens;
+    if (!lens) {
+      return '';
+    }
+
+    const lensSignature = cleanSignature(lens.signature);
+    const docSignature = doc.signature ? cleanSignature(doc.signature) : undefined;
+    const chips = [this.renderChip(`slot ${lens.parameterIndex + 1}/${lens.parameterCount}`, 'accent')];
+    if (lens.parameter.type) {
+      chips.push(this.renderChip(lens.parameter.type, 'info'));
+    }
+    if (lens.parameter.default !== undefined) {
+      chips.push(this.renderChip(`default ${lens.parameter.default}`, 'neutral'));
+    }
+
+    const signatureHtml = !docSignature || docSignature !== lensSignature
+      ? `<pre class="sig"><code>${this.escape(lensSignature)}</code></pre>`
+      : '';
+    const descriptionHtml = lens.parameter.description
+      ? `<div class="callout"><strong>${this.escape(lens.parameter.name || lens.parameterLabel)}</strong><p>${this.markdownish(this.escape(cleanContent(lens.parameter.description)))}</p></div>`
+      : `<div class="callout"><strong>${this.escape(lens.parameter.name || lens.parameterLabel)}</strong></div>`;
+
+    return `<section class="card lens-card"><div class="section-kicker">Contextual parameter lens</div><div class="meta-row">${chips.join('')}</div>${signatureHtml}${descriptionHtml}</section>`;
+  }
+
     private renderHtml(doc: HoverDoc): string {
         const e = (s: string) => this.escape(s);
         const m = (s: string) => this.markdownish(e(s));
+      const displayTitle = this.panelTitleFor(doc);
+      const nonce = createWebviewNonce();
+      const docStateKey = JSON.stringify([displayTitle, doc.url || '', doc.sourceUrl || '', doc.module || '', doc.kind || '']);
 
       const metaChips: string[] = [];
-      if (doc.kind) {
-        metaChips.push(this.renderChip(doc.kind, 'info'));
+      if (doc.kind && doc.kind.toLowerCase() !== 'module') {
+        metaChips.push(this.renderChip(this.formatKindLabel(doc.kind), 'info'));
       }
-      if (doc.module && doc.module !== 'builtins') {
+      if (doc.module && doc.module !== 'builtins' && doc.kind !== 'module') {
         metaChips.push(this.renderChip(doc.module, 'neutral'));
       }
       if (doc.installedVersion) {
         metaChips.push(this.renderChip(`v${doc.installedVersion}`, 'success'));
+      }
+      if (doc.latestVersion && !doc.installedVersion) {
+        metaChips.push(this.renderChip(`latest ${doc.latestVersion}`, 'success'));
+      }
+      if (doc.requiresPython) {
+        metaChips.push(this.renderChip(`py ${doc.requiresPython}`, 'info'));
+      }
+      if (doc.exportCount) {
+        metaChips.push(this.renderChip(`${doc.exportCount.toLocaleString()} indexed`, 'neutral'));
+      }
+      if (doc.license) {
+        metaChips.push(this.renderChip(doc.license, 'neutral'));
       }
       if (doc.badges) {
         for (const badge of doc.badges) {
           metaChips.push(this.renderChip(badge.label, this.getBadgeTone(badge.color)));
         }
       }
-      const metaHtml = metaChips.length > 0
-        ? `<div class="meta-row">${metaChips.join('')}</div>`
-            : '';
-      const provenanceHtml = this.renderProvenance(doc);
+      const heroChips = [...this.getProvenanceChips(doc), ...metaChips];
+      const metaHtml = heroChips.length > 0
+        ? `<div class="meta-row">${heroChips.join('')}</div>`
+        : '';
       const importStatement = this.buildImportStatement(doc);
 
         let signatureHtml = '';
         if (doc.signature) {
             let sig = cleanSignature(doc.signature);
-            if (sig.startsWith('(')) sig = `${doc.title}${sig}`;
-          signatureHtml = `<section class="card signature-card"><div class="section-kicker">Signature</div><pre class="sig"><code>${e(sig)}</code></pre></section>`;
+          if (sig.startsWith('(')) sig = `${displayTitle}${sig}`;
+          signatureHtml = `<section class="card signature-card"><div class="section-kicker">Signature</div>${this.renderSignatureBody(sig)}</section>`;
         } else if (doc.overloads && doc.overloads.length > 0) {
-          signatureHtml = `<section class="card signature-card"><div class="section-kicker">Overloads</div>${doc.overloads
-                .map(o => `<pre class="sig"><code>${e(cleanSignature(o))}</code></pre>`)
-              .join('\n')}</section>`;
+          signatureHtml = `<section class="card signature-card"><div class="section-kicker">Overloads</div><div class="signature-stack">${doc.overloads
+            .map(o => `<div class="signature-entry">${this.renderSignatureBody(cleanSignature(o))}</div>`)
+            .join('\n')}</div></section>`;
         }
 
-      const structuredSections = doc.structuredContent?.sections
-        ?.filter(section => section.role !== 'example' && section.role !== 'note' && section.kind !== 'note') ?? [];
+      const structuredSections = getVisibleStructuredDescriptionSections(doc);
       const descBody = structuredSections.length > 0
         ? structuredSections.map(section => this.renderStructuredSection(section)).filter(Boolean).join('\n')
         : (() => {
-          const rawDesc = doc.summary || doc.content || '';
+          const rawDesc = this.getDescriptionContent(doc);
           const desc = cleanContent(rawDesc);
           return desc ? `<div class="structured-block kind-paragraph role-summary"><p>${m(desc)}</p></div>` : '';
         })();
       const descHtml = descBody
         ? `<section class="card lead-card"><div class="section-kicker">Overview</div>${descBody}</section>`
             : '';
+      const parameterLensHtml = this.renderParameterLensCard(doc);
 
-      const notesHtml = doc.notes && doc.notes.length > 0
-        ? `<section class="card"><h2>Notes</h2>${doc.notes.map(note => `<div class="callout note-callout">${m(cleanContent(note))}</div>`).join('')}</section>`
+      const availabilityNotes: string[] = [];
+      if (doc.latestVersion && doc.installedVersion && isMeaningfullyOutdated(doc.installedVersion, doc.latestVersion)) {
+        availabilityNotes.push(`<div class="callout">Update available: <code>${e(doc.installedVersion)}</code> → <code>${e(doc.latestVersion)}</code></div>`);
+      }
+      const requiredVersion = getRequiredPythonVersion(doc);
+      if (requiredVersion) {
+        availabilityNotes.push(`<div class="callout">Installed package docs require Python <code>${e(requiredVersion)}+</code>.</div>`);
+      }
+      const availabilityHtml = availabilityNotes.length > 0
+        ? `<section class="card"><h2>Availability</h2>${availabilityNotes.join('')}</section>`
+        : '';
+
+      const noteSections = getVisibleStructuredNoteSections(doc);
+      const notesHtml = noteSections.length > 0
+        ? `<section class="card"><h2>Notes</h2>${noteSections.map(section => this.renderStructuredSection(section)).filter(Boolean).join('')}</section>`
         : '';
 
         let paramsHtml = '';
-        if (doc.parameters && doc.parameters.length > 0) {
-            const rows = doc.parameters.map(p => {
+      const displayParameters = getDisplayParameters(doc);
+      if (displayParameters.length > 0) {
+        const rows = displayParameters.map((p, index) => {
+          const active = isActiveParameterMatch(doc.parameterLens, p, index);
                 const name = p.default !== undefined ? `${e(p.name)}=${e(p.default)}` : e(p.name);
                 const type = p.type ? e(p.type) : '—';
                 const pdesc = p.description ? m(p.description) : '';
-                return `<tr><td><code>${name}</code></td><td><code>${type}</code></td><td>${pdesc}</td></tr>`;
+            const activeBadge = active ? '<span class="param-focus">Current argument</span>' : '';
+            const description = [activeBadge, pdesc].filter(Boolean).join(pdesc ? ' ' : '');
+            return `<tr${active ? ' class="param-row-active"' : ''}><td><code>${name}</code></td><td><code>${type}</code></td><td>${description}</td></tr>`;
             }).join('\n');
             paramsHtml = `
 <section class="card">
@@ -450,9 +553,7 @@ export class HoverPanel {
           raisesHtml = `<section class="card"><h2>Raises</h2><ul>${items}</ul></section>`;
         }
 
-      const structuredExamples = doc.structuredContent?.sections?.filter(
-        section => section.role === 'example',
-      ) ?? [];
+      const structuredExamples = getStructuredExampleSections(doc);
         let examplesHtml = '';
       if (structuredExamples.length > 0 || (doc.examples && doc.examples.length > 0)) {
         const blocks = structuredExamples.length > 0
@@ -465,35 +566,44 @@ export class HoverPanel {
         ? `<section class="card"><h2>See also</h2><div class="chip-cloud">${doc.seeAlso.map(item => this.renderSeeAlsoItem(item, doc)).filter(Boolean).join('')}</div></section>`
         : '';
 
-      const exportsHtml = doc.moduleExports && doc.moduleExports.length > 0
-        ? `<section class="card"><h2>Key exports</h2><div class="chip-cloud">${doc.moduleExports.map(name => `<span class="chip chip-soft"><code>${e(name)}</code></span>`).join('')}</div></section>`
+      const moduleBrowseTarget = this.getModuleBrowseTarget(doc);
+      const browseModuleChip = moduleBrowseTarget
+        ? `<a class="chip chip-link" href="${this.escape(this.buildCommandHref('python-hover.browseModule', moduleBrowseTarget))}">Browse${doc.exportCount ? ` ${doc.exportCount.toLocaleString()} indexed` : ' module'}</a>`
         : '';
+      const exportsHtml = doc.moduleExports && doc.moduleExports.length > 0
+        ? `<section class="card"><h2>Key exports</h2><div class="chip-cloud">${doc.moduleExports.map(name => `<span class="chip chip-soft"><code>${e(name)}</code></span>`).join('')}${browseModuleChip}</div></section>`
+        : (browseModuleChip && doc.kind === 'module')
+          ? `<section class="card"><h2>Indexed symbols</h2><div class="chip-cloud">${browseModuleChip}</div></section>`
+          : '';
 
-        const links: string[] = [];
       const actionLinks = this.renderHeroActions(doc, importStatement);
-        if (doc.url) {
-          links.push(`<a href="${e(this.buildDocsHref(doc.url, 'docs'))}">Official Docs</a>`);
-        }
-        if (doc.devdocsUrl) {
-          links.push(`<a href="${e(this.buildDocsHref(doc.devdocsUrl, 'devdocs'))}">DevDocs</a>`);
-      }
-      const sourceUrl = doc.sourceUrl || doc.links?.source;
-      if (sourceUrl) {
-        links.push(`<a href="${e(this.buildDocsHref(sourceUrl, 'docs'))}">Source</a>`);
-      }
-      if (importStatement) {
-        links.push(`<code>${e(importStatement)}</code>`);
-      }
-        const footerHtml = links.length > 0
-          ? `<footer class="footer card"><div class="section-kicker">Links And Import</div><div class="footer-links">${links.join('<span class="footer-sep">·</span>')}</div></footer>`
-            : '';
+
+      const mainColumn = [descHtml, notesHtml, paramsHtml, returnsHtml, raisesHtml, examplesHtml]
+        .filter(Boolean)
+        .join('');
+      const sideColumn = [availabilityHtml, seeAlsoHtml, exportsHtml]
+        .filter(Boolean)
+        .join('');
+      const contentGridHtml = mainColumn || sideColumn
+        ? `<div class="content-grid">${mainColumn ? `<div class="main-column">${mainColumn}</div>` : ''}${sideColumn ? `<aside class="side-column">${sideColumn}</aside>` : ''}</div>`
+        : '';
+      const footerToolsHtml = actionLinks.secondary.length > 0
+        ? `<div class="footer-tools"><div class="section-kicker">Tools</div><div class="hero-actions">${actionLinks.secondary.join('')}</div></div>`
+        : '';
+      const footerImportHtml = importStatement && doc.kind !== 'module'
+        ? `<div class="footer-import"><span class="footer-label">Import</span><code>${e(importStatement)}</code></div>`
+        : '';
+      const footerHtml = footerToolsHtml || footerImportHtml
+        ? `<footer class="footer card">${footerImportHtml}${footerToolsHtml}</footer>`
+        : '';
 
         return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>${e(doc.title)}</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src https: data:; script-src 'nonce-${nonce}'; base-uri 'none';">
+      <title>${e(displayTitle)}</title>
 <style>
   :root {
     --panel-border: color-mix(in srgb, var(--vscode-panel-border) 70%, transparent);
@@ -514,6 +624,17 @@ export class HoverPanel {
     padding: 14px;
     display: grid;
     gap: 10px;
+  }
+  .content-grid {
+    display: grid;
+    gap: 10px;
+    grid-template-columns: minmax(0, 1.8fr) minmax(240px, 1fr);
+    align-items: start;
+  }
+  .main-column, .side-column {
+    display: grid;
+    gap: 10px;
+    min-width: 0;
   }
   .hero {
     background: color-mix(in srgb, var(--vscode-editor-background) 94%, var(--vscode-foreground) 6%);
@@ -638,16 +759,40 @@ export class HoverPanel {
   .signature-card {
     padding-top: 10px;
   }
+  .signature-inline {
+    padding: 8px 10px;
+    border-radius: 5px;
+    border: 1px solid color-mix(in srgb, var(--panel-border) 70%, transparent);
+    background: color-mix(in srgb, var(--vscode-textCodeBlock-background) 92%, transparent);
+    overflow-x: auto;
+  }
+  .signature-stack {
+    display: grid;
+    gap: 8px;
+  }
+  .signature-entry {
+    min-width: 0;
+  }
+  .lens-card pre {
+    margin-top: 10px;
+    margin-bottom: 10px;
+  }
   .section-kicker {
     font-size: 11px;
     color: var(--vscode-descriptionForeground);
     margin-bottom: 6px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
   }
   .structured-block + .structured-block {
     margin-top: 10px;
   }
   .structured-block.role-summary p {
     line-height: 1.55;
+  }
+  .structured-block.role-note:not(.kind-note) {
+    border-left: 2px solid color-mix(in srgb, var(--panel-accent) 52%, transparent);
+    padding-left: 10px;
   }
   .structured-block.role-example:not(.kind-code) {
     border-left: 2px solid color-mix(in srgb, var(--panel-success) 60%, transparent);
@@ -699,6 +844,20 @@ export class HoverPanel {
     vertical-align: top;
   }
   tr:last-child td { border-bottom: none; }
+  .param-row-active td {
+    background: color-mix(in srgb, var(--panel-accent) 8%, transparent);
+  }
+  .param-focus {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    padding: 1px 6px;
+    margin-right: 6px;
+    font-size: 11px;
+    background: color-mix(in srgb, var(--panel-accent) 14%, transparent);
+    border: 1px solid color-mix(in srgb, var(--panel-accent) 30%, transparent);
+    color: var(--panel-accent);
+  }
   th {
     background: color-mix(in srgb, var(--vscode-textCodeBlock-background) 80%, transparent);
     font-size: 11px;
@@ -708,30 +867,42 @@ export class HoverPanel {
     color: var(--vscode-textLink-foreground);
     text-decoration: none;
   }
+  a:focus-visible,
+  .chip:focus-visible,
+  .nav-chip:focus-visible,
+  .crumb:focus-visible {
+    outline: 2px solid var(--panel-accent);
+    outline-offset: 2px;
+  }
   a:hover { text-decoration: underline; }
-  .footer {
-    display: grid;
-    gap: 6px;
+  .action-group + .action-group {
+    margin-top: 8px;
   }
   .hero-actions {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
-    margin-top: 10px;
   }
-  .footer-links {
-    display: flex;
-    flex-wrap: wrap;
+  .footer {
+    display: grid;
     gap: 8px;
-    align-items: center;
-    font-size: 12px;
   }
-  .footer-sep {
+  .footer-import {
+    display: grid;
+    gap: 4px;
+  }
+  .footer-label {
+    font-size: 11px;
     color: var(--vscode-descriptionForeground);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
   }
   @media (max-width: 640px) {
     .shell {
       padding: 10px;
+    }
+    .content-grid {
+      grid-template-columns: 1fr;
     }
   }
 </style>
@@ -739,24 +910,46 @@ export class HoverPanel {
 <body>
 <div class="shell">
   <header class="hero">
-    <h1>${e(doc.title)}</h1>
+    <h1>${e(displayTitle)}</h1>
     ${metaHtml}
-    ${provenanceHtml}
     ${this.renderNavigation()}
-    <div class="hero-actions">${actionLinks.join('')}</div>
+    ${actionLinks.primary.length > 0 ? `<div class="action-group"><div class="section-kicker">Open</div><div class="hero-actions">${actionLinks.primary.join('')}</div></div>` : ''}
   </header>
   ${signatureHtml}
-  ${descHtml}
-  ${notesHtml}
-  ${paramsHtml}
-  ${returnsHtml}
-  ${raisesHtml}
-  ${examplesHtml}
-  ${seeAlsoHtml}
-  ${exportsHtml}
+  ${parameterLensHtml}
+  ${contentGridHtml}
   ${footerHtml}
 </div>
+<script nonce="${nonce}">
+  const vscode = acquireVsCodeApi();
+  const docStateKey = ${JSON.stringify(docStateKey)};
+  const restored = vscode.getState() || {};
+  const scrollByDoc = restored.scrollByDoc && typeof restored.scrollByDoc === 'object' ? restored.scrollByDoc : {};
+  const restoredScrollY = typeof scrollByDoc[docStateKey] === 'number' ? scrollByDoc[docStateKey] : 0;
+
+  if (restoredScrollY > 0) {
+    window.addEventListener('load', () => {
+      window.scrollTo({ top: restoredScrollY, behavior: 'auto' });
+    }, { once: true });
+  }
+
+  let persistScrollTimer;
+  window.addEventListener('scroll', () => {
+    clearTimeout(persistScrollTimer);
+    persistScrollTimer = setTimeout(() => {
+      const state = vscode.getState() || {};
+      const nextScrollByDoc = state.scrollByDoc && typeof state.scrollByDoc === 'object' ? state.scrollByDoc : {};
+      nextScrollByDoc[docStateKey] = window.scrollY;
+      vscode.setState({ ...state, scrollByDoc: nextScrollByDoc });
+    }, 40);
+  }, { passive: true });
+</script>
 </body>
 </html>`;
     }
+
+  private formatKindLabel(kind?: string): string {
+    if (!kind) return 'Function';
+    return kind.charAt(0).toUpperCase() + kind.slice(1).toLowerCase();
+  }
 }

@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { BUILTIN_TYPES } from '../../shared/pythonBuiltins';
 import { LspSymbol } from '../../shared/types';
 
 const LSP_TIMEOUT_MS = 2000;
@@ -6,11 +7,6 @@ const RESOLVED_SYMBOL_CACHE_TTL_MS = 4000;
 const DOCUMENT_SYMBOL_CACHE_TTL_MS = 15000;
 const HOVER_QUERY_CACHE_TTL_MS = 4000;
 const MAX_CACHE_ENTRIES = 256;
-
-const BUILTIN_TYPES = new Set([
-    'str', 'list', 'dict', 'set', 'tuple', 'int', 'float',
-    'bytes', 'bytearray', 'frozenset', 'complex', 'bool', 'object',
-]);
 
 export class LspClient {
     private static internalHoverRequests = new Map<string, number>();
@@ -221,7 +217,7 @@ export class LspClient {
                 // For builtin types (str, list, …) always prefer this since the definition
                 // lookup can fail on large builtins.pyi files.
                 // For all others, only use it when there is no definition (Pylance cold).
-                const qualMatch = /^\(method\)\s+((?:[A-Za-z_]\w*\.)+[A-Za-z_]\w*)\s*[[()]/.exec(raw);
+                const qualMatch = /^\(method\)\s+((?:[A-Za-z_]\w*\.)+[A-Za-z_]\w*)\s*[[(]/.exec(raw);
                 if (qualMatch) {
                     const qualName = qualMatch[1];
                     const root = qualName.split('.')[0];

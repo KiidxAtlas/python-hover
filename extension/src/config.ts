@@ -1,5 +1,6 @@
 import * as crypto from 'crypto';
 import * as vscode from 'vscode';
+import { CustomLibraryConfig } from '../../shared/types';
 
 export class Config {
     private get config() {
@@ -69,14 +70,17 @@ export class Config {
         return this.config.get('devdocsBrowser', 'external');
     }
 
-    get customLibraries(): Array<{ name: string; baseUrl: string; inventoryUrl?: string }> {
-        const raw = this.config.get<any[]>('customLibraries', []);
+    get customLibraries(): CustomLibraryConfig[] {
+        const raw = this.config.get<unknown[]>('customLibraries', []);
         return raw.flatMap(entry => {
-            if (!entry || typeof entry.name !== 'string' || typeof entry.baseUrl !== 'string') return [];
+            if (!entry || typeof entry !== 'object') return [];
 
-            const name = entry.name.trim();
-            const baseUrl = entry.baseUrl.trim();
-            const inventoryUrl = typeof entry.inventoryUrl === 'string' ? entry.inventoryUrl.trim() : undefined;
+            const candidate = entry as { name?: unknown; baseUrl?: unknown; inventoryUrl?: unknown };
+            if (typeof candidate.name !== 'string' || typeof candidate.baseUrl !== 'string') return [];
+
+            const name = candidate.name.trim();
+            const baseUrl = candidate.baseUrl.trim();
+            const inventoryUrl = typeof candidate.inventoryUrl === 'string' ? candidate.inventoryUrl.trim() : undefined;
             if (!name || !baseUrl) return [];
 
             try {
@@ -250,6 +254,14 @@ export class Config {
 
     get showUpdateWarning(): boolean {
         return this.config.get('ui.showUpdateWarning', true);
+    }
+
+    get redirectIntegratedHoverToDocsPage(): boolean {
+        return this.config.get('ui.redirectIntegratedHoverToDocsPage', false);
+    }
+
+    get autoOpenCurrentHoverInIntegratedDocs(): boolean {
+        return this.config.get('ui.autoOpenCurrentHoverInIntegratedDocs', false);
     }
 
     get moduleBrowserDefaultView(): 'hierarchy' | 'flat' {

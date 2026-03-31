@@ -2,7 +2,7 @@
     "name": "python-hover",
     "displayName": "🐍 Python Hover - Enhanced Documentation",
     "description": "Instant Python documentation on hover. Covers 300+ constructs, all keywords/operators with correct anchors, NumPy, Pandas, FastAPI, Django, PyTorch, Flask, Pydantic, SQLAlchemy, Requests and more. Scoped DevDocs links, smart context detection, zero config.",
-    "version": "0.7.3",
+    "version": "0.7.4",
     "publisher": "KiidxAtlas",
     "author": {
         "name": "KiidxAtlas",
@@ -72,13 +72,33 @@
                 "category": "Python Hover"
             },
             {
+                "command": "python-hover.openSidebarHistoryEntry",
+                "title": "Open Sidebar History Entry",
+                "category": "Python Hover"
+            },
+            {
+                "command": "python-hover.toggleSavedHover",
+                "title": "Save Hover To Saved Docs",
+                "category": "Python Hover"
+            },
+            {
+                "command": "python-hover.openSavedHoverEntry",
+                "title": "Open Saved Doc Entry",
+                "category": "Python Hover"
+            },
+            {
+                "command": "python-hover.removeSavedHover",
+                "title": "Remove Saved Doc",
+                "category": "Python Hover"
+            },
+            {
                 "command": "python-hover.pinLast",
                 "title": "Pin Last Hover",
                 "category": "Python Hover"
             },
             {
                 "command": "python-hover.showStatusNotification",
-                "title": "PyHover: Show Actions",
+                "title": "Open PyHover Command Center",
                 "category": "Python Hover"
             },
             {
@@ -157,6 +177,53 @@
                 "category": "Python Hover"
             }
         ],
+        "viewsContainers": {
+            "activitybar": [
+                {
+                    "id": "pyhover",
+                    "title": "PyHover",
+                    "icon": "media/pyhover-activity.svg"
+                }
+            ]
+        },
+        "views": {
+            "pyhover": [
+                {
+                    "id": "pyhover.inspector",
+                    "name": "Inspector"
+                },
+                {
+                    "id": "pyhover.saved",
+                    "name": "Saved Docs"
+                },
+                {
+                    "id": "pyhover.history",
+                    "name": "History"
+                },
+                {
+                    "id": "pyhover.packages",
+                    "name": "Recent Packages"
+                }
+            ]
+        },
+        "viewsWelcome": [
+            {
+                "view": "pyhover.inspector",
+                "contents": "Inspect the current hover target here after you hover a Python symbol.\n\n[Search docs](command:python-hover.searchDocs)\n[Browse modules](command:python-hover.browseModule)\n[Open Studio](command:python-hover.openStudio)"
+            },
+            {
+                "view": "pyhover.saved",
+                "contents": "Build a reusable reading list from the hover and pinned docs surfaces.\n\nUse **Save** from a hover card or pinned panel, then reopen entries here.\n\n[Search docs](command:python-hover.searchDocs)\n[Open Studio](command:python-hover.openStudio)"
+            },
+            {
+                "view": "pyhover.history",
+                "contents": "Recent hover targets appear here as you move through Python code.\n\nLive session entries reopen in the inspector; stored links reopen docs when the session copy is gone.\n\n[Browse modules](command:python-hover.browseModule)\n[Search docs](command:python-hover.searchDocs)"
+            },
+            {
+                "view": "pyhover.packages",
+                "contents": "Recently explored packages and indexed libraries show up here for quick return visits.\n\n[Browse modules](command:python-hover.browseModule)\n[Search docs](command:python-hover.searchDocs)"
+            }
+        ],
         "menus": {
             "editor/context": [
                 {
@@ -183,6 +250,13 @@
                     "command": "python-hover.openStudio",
                     "when": "editorLangId == python && pyhover.contextMenu.enabled && pyhover.contextMenu.openStudio",
                     "group": "navigation@14"
+                }
+            ],
+            "view/item/context": [
+                {
+                    "command": "python-hover.removeSavedHover",
+                    "when": "view == pyhover.saved && viewItem == pyhoverSavedDocEntry",
+                    "group": "inline@1"
                 }
             ]
         },
@@ -215,6 +289,12 @@
                 "command": "python-hover.copyImport",
                 "key": "ctrl+k ctrl+i",
                 "mac": "cmd+k cmd+i",
+                "when": "editorLangId == python"
+            },
+            {
+                "command": "python-hover.toggleSavedHover",
+                "key": "ctrl+k ctrl+s",
+                "mac": "cmd+k cmd+s",
                 "when": "editorLangId == python"
             }
         ],
@@ -497,6 +577,16 @@
                     "default": true,
                     "description": "Show an 'Update available' callout when the installed package is behind the latest PyPI release."
                 },
+                "python-hover.ui.redirectIntegratedHoverToDocsPage": {
+                    "type": "boolean",
+                    "default": false,
+                    "markdownDescription": "When `python-hover.docsBrowser` is set to `integrated`, open the hover's Docs and Continue Reading actions in the PyHover docs page instead of the side browser panel."
+                },
+                "python-hover.ui.autoOpenCurrentHoverInIntegratedDocs": {
+                    "type": "boolean",
+                    "default": false,
+                    "markdownDescription": "When `python-hover.docsBrowser` is set to `integrated` and the docs panel is already open, replace its current page with the current hover target as hover results resolve."
+                },
                 "python-hover.ui.moduleBrowser.defaultView": {
                     "type": "string",
                     "enum": [
@@ -582,6 +672,7 @@
         "vscode:prepublish": "npm run compile",
         "compile": "tsc -p ./",
         "audit:hover": "npm run compile && node ./scripts/renderHoverAudit.cjs",
+        "smoke:parameter-lens": "npm run compile && node ./scripts/parameterLensSmoke.cjs",
         "watch": "tsc -watch -p ./",
         "lint": "eslint src --ext ts",
         "package": "vsce package",

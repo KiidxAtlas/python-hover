@@ -1,3 +1,5 @@
+import { BUILTIN_OWNER_TYPES, normalizeSelfTypeAlias } from '../../shared/pythonBuiltins';
+
 /**
  * Symbol-name fixup logic.
  *
@@ -6,19 +8,6 @@
  * remaining edge cases using the signature's `self` parameter.
  */
 export class NameRefinement {
-    private static readonly SELF_TYPE_ALIASES: Record<string, string> = {
-        'LiteralString': 'str',
-        'AnyStr': 'str',
-        'Text': 'str',
-        'ByteString': 'bytes',
-        'NoneType': 'None',
-    };
-
-    private static readonly BUILTIN_OWNER_TYPES = new Set([
-        'str', 'list', 'dict', 'set', 'tuple', 'int', 'float', 'bool',
-        'bytes', 'bytearray', 'frozenset', 'complex', 'object', 'None',
-    ]);
-
     /**
      * Fix names where the LSP resolves a method as a top-level function.
      * E.g. signature "def join(self: str, ...)" tells us it's str.join, not builtins.join.
@@ -39,7 +28,7 @@ export class NameRefinement {
         if (name.endsWith(expectedSuffix)) return name;
 
         const lastDot = name.lastIndexOf('.');
-        const useBuiltinOwner = this.BUILTIN_OWNER_TYPES.has(className);
+        const useBuiltinOwner = BUILTIN_OWNER_TYPES.has(className);
         if (lastDot === -1 || useBuiltinOwner) {
             return `${className}.${methodName}`;
         }
@@ -51,10 +40,7 @@ export class NameRefinement {
     }
 
     private static normalizeSelfType(className: string): string {
-        const normalized = className.startsWith('builtins.')
-            ? className.slice('builtins.'.length)
-            : className;
-        return this.SELF_TYPE_ALIASES[normalized] ?? normalized;
+        return normalizeSelfTypeAlias(className);
     }
 
     /**
@@ -75,6 +61,11 @@ export class NameRefinement {
             parts.splice(0, 2);
         }
 
-        return parts.join('.');
+        const normalized = parts.join('.');
+        if (['ntpath', 'posixpath', 'macpath'].includes(normalized)) {
+            return 'os.path';
+        }
+
+        return normalized;
     }
 }

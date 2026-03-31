@@ -4,6 +4,18 @@ All notable changes to Python Hover will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.7.4] - 2026-03-30
+
+Production hardening for the new Studio, sidebar surfaces, and contextual hover workflows.
+
+- Added a dedicated PyHover Activity Bar container with Inspector, Saved Docs, History, and Recent Packages views backed by shared session state.
+- Added contextual parameter-lens rendering from signature help, callable-doc promotion for active arguments, and smoke-test coverage for the promoted stdlib callable path.
+- Expanded Studio with hover presets, browser-routing controls, hover-depth limits, module-browser defaults, and more reliable settings writes.
+- Upgraded the integrated docs browser, saved-doc flows, and status-bar command center so recent docs, saved docs, and pinned inspector workflows connect cleanly.
+- Extracted shared presentation and builtin-normalization helpers, narrowed webview command allowlists, and moved heavier webview logic into dedicated browser-side scripts.
+- Fixed parameter-lens promotion for stdlib module callables like `os.path.join` so they resolve against the correct stdlib module instead of falling back to builtins.
+- Hardened session-state bookkeeping and release metadata for the 0.7.4 Marketplace update.
+
 ## [0.7.3] - 2026-03-29
 
 Polish, customizability, and release-readiness improvements
@@ -99,7 +111,7 @@ Works out of the box with NumPy, Pandas, Matplotlib, PyTorch, scikit-learn, Djan
 
 ---
 
-### 🐛 Bug Fixes
+### 🐛 Bug Fixes In 0.6.15
 
 - **`"""` docstring literals no longer show `str` docs** — hovering the triple-quote of a docstring now correctly suppresses the hover instead of showing Python's `str` type documentation.
 - **`__init__` hover shows class docstring + data model link** — hovering `def __init__` now shows the enclosing class docstring and a link to `reference/datamodel.html#object.__init__`. Previously fell through to a sparse corpus entry or showed nothing.
@@ -138,7 +150,7 @@ Works out of the box with NumPy, Pandas, Matplotlib, PyTorch, scikit-learn, Djan
 
 ## [0.6.15] - 2026-03-22
 
-### 🐛 Bug Fixes
+### 🐛 Bug Fixes In 0.6.13
 
 - **`typing.List` / `typing.Union` wrong content** — Root cause: when the Python runtime couldn't import a typing alias (Python 3.14 changed internals), `isStdlib` was lost. The doc resolver then queried the PyPI `typing` backport package and got "Support for type hints — List, Dict, Optional, Union, Callable, Protocol". Fixed by inferring `isStdlib = true` from the LSP file path (typeshed / stdlib paths) as a reliable safety net independent of runtime success.
 - **`typing.List(*args, **kwargs)` signature** — Same runtime failure path meant Pylance's misleading `_GenericAlias.__call__` signature wasn't being suppressed. Added a post-merge safety net in the pipeline: if a symbol's module is `typing` and the signature matches `(*args, **kwargs)`, it's cleared before rendering. Also simplified `resolver.py` to use `obj.__module__ == 'typing'` (cross-version) instead of a fragile class-name allowlist.
@@ -148,7 +160,7 @@ Works out of the box with NumPy, Pandas, Matplotlib, PyTorch, scikit-learn, Djan
 - **Local variable names triggering wrong PyPI results** — Hovering a local variable (e.g. `agg` in `agg: Series = df.agg(...)`) would query PyPI for a package named `agg` and return completely unrelated packages (e.g. the "FATE dice roller"). Fixed by treating symbols with no file path and no resolved module as local/unresolvable, skipping all remote doc lookup.
 - **`Person.__init__` rendered as "Person.init"** — Double underscores in hover titles (e.g. `__init__`, `__str__`) were consumed by Markdown bold syntax inside the `### heading`, silently dropping them. Fixed by escaping `__` as `\_\_` in the display title before inserting into the heading.
 
-### ⚡ Performance
+### ⚡ Performance In 0.6.15
 
 - Keyword hovers (class, def, for, …) now resolve in ~1 ms with a single runtime call and no LSP round-trips.
 
@@ -156,12 +168,12 @@ Works out of the box with NumPy, Pandas, Matplotlib, PyTorch, scikit-learn, Djan
 
 ## [0.6.14] - 2026-03-22
 
-### ✨ New Features
+### ✨ New Features In 0.6.14
 
 - **Import line hover → module overview** — Hovering over `import numpy` or `from pandas import …` (on the module name part) now shows a dedicated module overview card: PyPI description, key exported names, total indexed symbol count, and a Browse link. Completely distinct from symbol hovers. Uses the already-loaded Sphinx inventory with no extra network requests.
 - **Module exports grid** — The module overview card lists up to 16 top-level public exports (`array`, `ndarray`, `zeros`, …) sorted by depth (top-level first) and kind (classes first), with a count and Browse link for the full symbol list.
 
-### ⚡ Performance
+### ⚡ Performance In 0.6.14
 
 - **Parallel URL probing** — Unknown package doc URLs used to be probed sequentially (8 candidates × 5 s timeout = up to 40 s). All 8 candidates are now probed concurrently with `Promise.any`; the first response wins, cutting worst-case unknown-package resolution from ~40 s to ~5 s.
 - **Parallel LSP calls** — Definition provider and hover provider used to run in series (2 s + 2 s = up to 4 s). They now run concurrently via `Promise.all`; only the reverse symbol lookup (which depends on the definition result) remains sequential. Saves ~2 s per first hover.
@@ -198,7 +210,7 @@ Works out of the box with NumPy, Pandas, Matplotlib, PyTorch, scikit-learn, Djan
 
 ## [0.6.7] - 2026-03-03
 
-### ✨ New Features
+### ✨ New Features In 0.6.7
 
 - **Keyword & operator hovers now link to the correct docs.python.org section** — Every Python keyword and operator (`if`, `elif`, `else`, `for`, `while`, `try`, `except`, `finally`, `with`, `def`, `class`, `async`, `match`, `case`, `pass`, `del`, `return`, `raise`, `break`, `continue`, `import`, `from`, `global`, `nonlocal`, `assert`, `yield`, `lambda`, `await`, `not`, `and`, `or`, `in`, `is`) links directly to its specific section anchor, not just the top of the page.
 - **Operator hovers** — `not`, `and`, `or`, `in`, `is` now link to `expressions.html#boolean-operations` / `membership-test-operations` / `identity-comparisons` respectively.
@@ -211,7 +223,7 @@ Works out of the box with NumPy, Pandas, Matplotlib, PyTorch, scikit-learn, Djan
 - **Fixed DevDocs button not appearing** — `hoverDocBuilder` was manually reconstructing the `HoverDoc` return object field-by-field and silently dropping `devdocsUrl`. Fixed.
 - **Known package map** — Added `DEVDOCS_DOC_SETS` mapping for numpy, pandas, scipy, matplotlib, scikit-learn, flask, django, fastapi, tensorflow, pytorch, sqlalchemy, redis, requests, httpx, aiohttp, beautifulsoup, lxml, pydantic, attrs. Unknown packages return `null` (no DevDocs button) rather than a potentially wrong URL.
 
-### 🐛 Bug Fixes
+### 🐛 Bug Fixes In 0.6.7
 
 - **Keyword URL was hardcoded** — The keyword fast-path in `hoverProvider` was building `simple_stmts.html#<keyword>` for every keyword (sending `elif`, `for`, `while`, `not` etc. to `simple_stmts.html#elif` which has no anchor). Now calls the doc resolver to get the correct page and anchor from the static MAP.
 - **Duplicate `PLACEHOLDER_MSGS`** — Removed duplicate constant defined twice in `hoverDocBuilder`.
@@ -228,14 +240,14 @@ Works out of the box with NumPy, Pandas, Matplotlib, PyTorch, scikit-learn, Djan
 
 ## [0.6.5] - 2026-01-02
 
-### ✨ UI/UX Improvements
+### ✨ UI/UX Improvements In 0.6.5
 
 - **Redesigned Hover UI** — Clean visual hierarchy with section headers, icons, and better spacing
 - **New Status Bar** — Minimal design with quick-pick menu for all actions
 - **Improved Keyword Docs** — Rich formatting for Python keywords with BNF syntax, examples, and PEP links
 - **DevDocs Integration** — More reliable search-based links to DevDocs
 
-### 🐛 Bug Fixes
+### 🐛 Bug Fixes In 0.6.5
 
 - Fixed DevDocs links returning wrong results for common names like `from`, `class`
 - Fixed VS Code Remote/SSH compatibility issues with HTTPS protocol
@@ -268,7 +280,7 @@ Works out of the box with NumPy, Pandas, Matplotlib, PyTorch, scikit-learn, Djan
 
 This release represents a **ground-up rewrite** of Python Hover with a new modular architecture designed for reliability, speed, and extensibility.
 
-### ✨ New Features
+### ✨ New Features In 0.6.0
 
 #### **Hybrid Resolution Engine**
 
@@ -342,7 +354,7 @@ This release represents a **ground-up rewrite** of Python Hover with a new modul
 - **Reduced LSP Chatter** — AST identification handles many cases locally
 - **Cancellation Support** — Long-running requests can be cancelled
 
-### 🐛 Bug Fixes
+### 🐛 Bug Fixes In 0.6.0
 
 - Fixed method hovers showing wrong class (e.g., `object.method` instead of `str.method`)
 - Fixed dunder methods (`__init__`, `__str__`) not resolving correctly
@@ -355,14 +367,14 @@ This release represents a **ground-up rewrite** of Python Hover with a new modul
 
 New settings added:
 
-| Setting                             | Default    | Description                                            |
-| ----------------------------------- | ---------- | ------------------------------------------------------ |
-| `python-hover.onlineDiscovery`    | `true`   | Enable/disable network requests                        |
-| `python-hover.docsVersion`        | `"auto"` | Python version for docs (`"auto"`, `"3.11"`, etc.) |
-| `python-hover.inventoryCacheDays` | `7`      | Days to cache Sphinx inventories                       |
-| `python-hover.snippetCacheHours`  | `24`     | Hours to cache documentation snippets                  |
-| `python-hover.requestTimeout`     | `5000`   | Network request timeout in ms                          |
-| `python-hover.customLibraries`    | `[]`     | Custom library inventory definitions                   |
+| Setting | Default | Description |
+| --- | --- | --- |
+| `python-hover.onlineDiscovery` | `true` | Enable or disable network requests |
+| `python-hover.docsVersion` | `"auto"` | Python version for docs (`"auto"`, `"3.11"`, etc.) |
+| `python-hover.inventoryCacheDays` | `7` | Days to cache Sphinx inventories |
+| `python-hover.snippetCacheHours` | `24` | Hours to cache documentation snippets |
+| `python-hover.requestTimeout` | `5000` | Network request timeout in ms |
+| `python-hover.customLibraries` | `[]` | Custom library inventory definitions |
 
 ### 📦 Dependencies
 
@@ -377,7 +389,7 @@ This rewrite was driven by community feedback requesting better offline support,
 
 ## [0.5.3] - 2025-10-22
 
-### ✨ Improvements
+### ✨ Improvements In 0.5.3
 
 - Operator hovers now show real reference content with correct anchors and versioned URLs
 - Standard library module hovers prefer curated module mapping for clearer descriptions
@@ -396,13 +408,13 @@ This rewrite was driven by community feedback requesting better offline support,
 
 ## [0.4.2] - 2025-10-10
 
-### 🐛 Bug Fixes
+### 🐛 Bug Fixes In 0.4.2
 
 - Fixed method hover lookups (str.upper, list.append, etc.)
 - Fixed cancellation error filtering in status bar
 - Fixed generic documentation pages for built-in functions
 
-### ✨ Improvements
+### ✨ Improvements In 0.4.2
 
 - Enhanced logging with VS Code Output Channel
 - Improved hover content formatting
@@ -412,7 +424,7 @@ This rewrite was driven by community feedback requesting better offline support,
 
 ## [0.3.0] - 2025-09-15
 
-### ✨ Features
+### ✨ Features In 0.3.0
 
 - Auto-discovery for ANY library with Sphinx documentation
 - PyPI integration for documentation URL discovery
@@ -422,7 +434,7 @@ This rewrite was driven by community feedback requesting better offline support,
 
 ## [0.2.0] - 2025-08-01
 
-### ✨ Features
+### ✨ Features In 0.2.0
 
 - 19+ pre-configured third-party libraries
 - Smart context detection for DataFrames, strings, lists

@@ -47,11 +47,51 @@ export interface IndexedSymbolPreview {
     installedVersion?: string;
 }
 
+export interface HoverHistoryEntry {
+    title: string;
+    kind?: string;
+    module?: string;
+    package?: string;
+    url?: string;
+    commandToken?: string;
+}
+
+export interface SavedDocEntry {
+    id: string;
+    title: string;
+    kind?: string;
+    module?: string;
+    package?: string;
+    url?: string;
+    sourceUrl?: string;
+    summary?: string;
+    commandToken?: string;
+}
+
+export interface ActiveParameterLens {
+    callable: string;
+    signature: string;
+    callableDocumentation?: string;
+    parameters?: ParameterInfo[];
+    parameterLabel: string;
+    parameter: ParameterInfo;
+    parameterIndex: number;
+    parameterCount: number;
+    source: 'signatureHelp' | 'merged';
+}
+
+export interface CustomLibraryConfig {
+    name: string;
+    baseUrl: string;
+    inventoryUrl?: string;
+}
+
 export interface HoverDoc {
     title: string;
     kind?: string;
     signature?: string;
     summary?: string;
+    parameterLens?: ActiveParameterLens;
     parameters?: ParameterInfo[];
     returns?: ReturnInfo;
     raises?: ExceptionInfo[];
@@ -64,7 +104,7 @@ export interface HoverDoc {
     badges?: Badge[];
     source: ResolutionSource;
     confidence: number; // 0.0 to 1.0
-    metadata?: Record<string, any>;
+    metadata?: Record<string, unknown>;
     content?: string; // Legacy support
     structuredContent?: StructuredHoverContent;
     overloads?: string[];
@@ -119,11 +159,6 @@ export interface Badge {
     label: string;
     color?: string;
     tooltip?: string;
-}
-
-export interface Candidate {
-    key: DocKey;
-    score: number;
 }
 
 /**

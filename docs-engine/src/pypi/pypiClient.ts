@@ -2,21 +2,125 @@ import * as https from 'https';
 import { DocKey, HoverDoc, ResolutionSource } from '../../../shared/types';
 import { DiskCache } from '../cache/diskCache';
 
+interface PyPiPackageInfo {
+    project_urls?: Record<string, unknown>;
+    home_page?: string | null;
+    summary?: string | null;
+    version?: string | null;
+    license?: string | null;
+    requires_python?: string | null;
+}
+
+interface PyPiPackageResponse {
+    info?: PyPiPackageInfo | null;
+}
+
+function normalizeUrl(value: string | null | undefined): string | null {
+    const trimmed = value?.trim();
+    if (!trimmed) return null;
+    return /^https?:\/\//i.test(trimmed) ? trimmed : null;
+}
+
+function isLikelyRepositoryUrl(value: string | null | undefined): boolean {
+    const normalized = normalizeUrl(value);
+    if (!normalized) return false;
+
+    try {
+        const parsed = new URL(normalized);
+        const host = parsed.hostname.toLowerCase();
+        const path = parsed.pathname.replace(/\/+$/, '');
+        if (!/github\.com$|gitlab\.com$|bitbucket\.org$|codeberg\.org$|sourcehut\.org$/.test(host)) {
+            return false;
+        }
+
+        const segments = path.split('/').filter(Boolean);
+        if (segments.length < 2) {
+            return false;
+        }
+
+        if (segments[0].startsWith('@')) {
+            return segments.length >= 2;
+        }
+
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+function canonicalizeRepositoryUrl(value: string | null | undefined): string | null {
+    const normalized = normalizeUrl(value);
+    if (!normalized) return null;
+
+    try {
+        const parsed = new URL(normalized);
+        const host = parsed.hostname.toLowerCase();
+        if (!/github\.com$|gitlab\.com$|bitbucket\.org$|codeberg\.org$|sourcehut\.org$/.test(host)) {
+            return normalized;
+        }
+
+        const segments = parsed.pathname.split('/').filter(Boolean);
+        if (segments.length < 2) {
+            return normalized;
+        }
+
+        const rootSegments = segments[0].startsWith('@')
+            ? segments.slice(0, 2)
+            : segments.slice(0, 2);
+        parsed.pathname = `/${rootSegments.join('/')}`;
+        parsed.search = '';
+        parsed.hash = '';
+        return parsed.toString().replace(/\/$/, '');
+    } catch {
+        return normalized;
+    }
+}
+
+function scoreRepoCandidate(label: string, url: string): number {
+    const normalizedUrl = normalizeUrl(url);
+    if (!normalizedUrl) return Number.NEGATIVE_INFINITY;
+
+    const lowerLabel = label.toLowerCase();
+    let score = 0;
+
+    if (lowerLabel === 'source' || lowerLabel === 'source code' || lowerLabel === 'repository' || lowerLabel === 'code') {
+        score += 100;
+    }
+    if (lowerLabel.includes('source') || lowerLabel.includes('repository') || lowerLabel.includes('github') || lowerLabel.includes('gitlab') || lowerLabel.includes('bitbucket')) {
+        score += 70;
+    }
+    if (lowerLabel.includes('homepage') || lowerLabel === 'home' || lowerLabel === 'home page' || lowerLabel === 'website') {
+        score += 15;
+    }
+    if (lowerLabel.includes('bug') || lowerLabel.includes('issue') || lowerLabel.includes('changelog') || lowerLabel.includes('release')) {
+        score -= 40;
+    }
+    if (isLikelyRepositoryUrl(normalizedUrl)) {
+        score += 50;
+    }
+
+    return score;
+}
+
 /**
  * Pick the best docs/home URL from PyPI `project_urls` + optional home_page.
  * Documentation links are preferred over source repos.
  */
 function pickRepoUrlFromLinks(links: Record<string, string>): string | null {
-    for (const [label, url] of Object.entries(links)) {
-        if (!url?.trim()) continue;
-        const l = label.toLowerCase();
-        if (l === 'source' || l === 'repository' || l === 'code' ||
-            l.includes('source') || l.includes('repository') ||
-            l.includes('github') || l.includes('gitlab')) {
-            return url;
+    let bestUrl: string | null = null;
+    let bestScore = Number.NEGATIVE_INFINITY;
+
+    for (const [label, value] of Object.entries(links)) {
+        const url = normalizeUrl(value);
+        if (!url) continue;
+        const score = scoreRepoCandidate(label, url);
+        if (score > bestScore) {
+            bestScore = score;
+            bestUrl = url;
         }
     }
-    return null;
+
+    return bestScore > 0 ? canonicalizeRepositoryUrl(bestUrl) : null;
 }
 
 function pickBestProjectUrl(links: Record<string, string>, homePage: string | null): string | null {
@@ -65,7 +169,7 @@ export class PyPiClient {
         }
 
         try {
-            const metadata = await this.fetchJson(`https://pypi.org/pypi/${packageName}/json`);
+            const metadata = await this.fetchJson<PyPiPackageResponse>(`https://pypi.org/pypi/${packageName}/json`);
             if (!metadata || !metadata.info) {
                 if (this.diskCache) {
                     this.diskCache.setCorpusPackageMetadata(packageName, { negative: true });
@@ -124,6 +228,18 @@ export class PyPiClient {
         return url;
     }
 
+    async getPackageRepoUrl(packageName: string | undefined): Promise<string | null> {
+        if (!packageName) return null;
+
+        const cached = this.getCachedRepoUrl(packageName);
+        if (cached) {
+            return cached;
+        }
+
+        const metadata = await this.getPackageMetadata(packageName);
+        return pickRepoUrlFromLinks(metadata.links);
+    }
+
     async findDocs(key: DocKey): Promise<HoverDoc | null> {
         const { url, summary, links, version, license, requiresPython } = await this.getPackageMetadata(key.package);
         if (url || summary) {
@@ -150,7 +266,7 @@ export class PyPiClient {
         return pickRepoUrlFromLinks(meta.links);
     }
 
-    private fetchJson(url: string): Promise<any> {
+    private fetchJson<T>(url: string): Promise<T> {
         return new Promise((resolve, reject) => {
             const req = https.get(url, { timeout: 5000 }, (res) => {
                 if (res.statusCode !== 200) {
@@ -161,7 +277,7 @@ export class PyPiClient {
                 res.on('data', chunk => data += chunk);
                 res.on('end', () => {
                     try {
-                        resolve(JSON.parse(data));
+                        resolve(JSON.parse(data) as T);
                     } catch (e) {
                         reject(e);
                     }

@@ -12,7 +12,7 @@ export class Logger {
         this._debugEnabled = enabled;
     }
 
-    public static log(message: string, data?: any) {
+    public static log(message: string, data?: unknown) {
         if (!this._outputChannel) {
             return;
         }
@@ -30,14 +30,14 @@ export class Logger {
         this._outputChannel.appendLine(logMessage);
     }
 
-    public static debug(message: string, data?: any) {
+    public static debug(message: string, data?: unknown) {
         if (!this._debugEnabled) {
             return;
         }
         this.log(`[debug] ${message}`, data);
     }
 
-    public static debugDuration(message: string, startedAt: number, data?: any, minDurationMs = 0) {
+    public static debugDuration(message: string, startedAt: number, data?: unknown, minDurationMs = 0) {
         if (!this._debugEnabled) {
             return;
         }
@@ -48,14 +48,14 @@ export class Logger {
         }
 
         const payload = data && typeof data === 'object'
-            ? { ...data, durationMs }
+            ? { ...(data as Record<string, unknown>), durationMs }
             : data !== undefined
                 ? { detail: data, durationMs }
                 : { durationMs };
         this.log(`[debug] ${message}`, payload);
     }
 
-    public static error(message: string, error?: any) {
+    public static error(message: string, error?: unknown) {
         if (!this._outputChannel) {
             return;
         }

@@ -1,3 +1,5 @@
+<!-- markdownlint-disable-file MD001 MD026 MD032 MD033 MD040 MD041 MD060 -->
+
 <div align="center">
 
 # 🐍 Python Hover
@@ -56,6 +58,15 @@ Most hover extensions show you a one-liner from PyPI. **Python Hover fetches fro
 | `for` keyword | Nothing or wrong page | Exact anchor on the language reference |
 | Any keyword | Nothing | BNF syntax, description, PEP links |
 | Private library | Nothing | Works if the package has Sphinx docs |
+
+---
+
+## 🆕 New in 0.7.4
+
+- **Contextual parameter lens** shows the active argument slot inside hovers, then promotes the callable’s docs when the symbol under your cursor is just an argument value.
+- **PyHover Activity Bar** adds Inspector, Saved Docs, History, and Recent Packages views so you can keep working from inside VS Code instead of reopening docs from scratch.
+- **PyHover Studio** now exposes hover presets, docs-routing controls, integrated-browser behavior, and module-browser defaults from one place.
+- **Integrated docs workflows** now support saved docs, recent-session recovery, module browsing, and a command-center status bar without leaving the editor.
 
 ---
 
@@ -262,27 +273,24 @@ Python Hover uses Pylance + AST + runtime introspection in layers. For best accu
 
 ## 📊 By the Numbers
 
-| | |
-|---|---|
-| **37+** Python keywords & operators with exact doc anchors |
-| **70+** built-in functions with complete parameter docs |
-| **20+** third-party libraries pre-configured |
-| **Thousands** of libraries auto-discoverable via Sphinx |
-| **< 1 ms** for keywords/operators (fully offline, static) |
-| **< 5 ms** for cached library lookups (session cache hit) |
-| **153 KB** total installed size |
-| **0** configuration required to get started |
+| Area | Snapshot |
+| --- | --- |
+| Coverage | **37+** Python keywords and operators with exact doc anchors |
+| Built-ins | **70+** built-in functions with complete parameter docs |
+| Popular libraries | **20+** third-party libraries pre-configured |
+| Auto-discovery | **Thousands** of libraries discoverable via Sphinx |
+| Static speed | **< 1 ms** for keywords and operators |
+| Cached speed | **< 5 ms** for cached library lookups |
+| Package size | **153 KB** total installed size |
+| Setup cost | **0** configuration required to get started |
 
 ---
 
 ## 💬 What Developers Say
 
 > *"Finally I don't have to leave VS Code to check pandas documentation."*
-
 > *"The context-awareness is incredible. It knows exactly which method I'm looking at."*
-
 > *"Hover over `elif` and get the right docs page. Details matter."*
-
 > *"Saved me hours of alt-tabbing. Worth every star."*
 
 ---

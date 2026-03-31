@@ -33,7 +33,7 @@ export class HoverDocBuilder {
         const parameters = parsedDocstring.parameters && parsedDocstring.parameters.length > 0
             ? parsedDocstring.parameters
             : structuredParameters;
-        const badges = this.buildBadges(symbolInfo, parsedDocstring);
+        const badges = this.buildBadges(symbolInfo);
         const examples = this.buildExamples(parsedDocstring, docs);
         const notes = this.buildNotes(parsedDocstring, docs);
         const kind = this.inferKind(symbolInfo, docs);
@@ -68,6 +68,12 @@ export class HoverDocBuilder {
             protocolHints: symbolInfo.protocolHints,
             seeAlso: docs?.seeAlso,
             module: symbolInfo.module || docs?.module,
+            moduleExports: docs?.moduleExports,
+            exportCount: docs?.exportCount,
+            installedVersion: docs?.installedVersion,
+            latestVersion: docs?.latestVersion,
+            license: docs?.license,
+            requiresPython: docs?.requiresPython,
         };
     }
 
@@ -194,7 +200,7 @@ export class HoverDocBuilder {
         return notes.size > 0 ? [...notes] : undefined;
     }
 
-    private buildBadges(symbolInfo: SymbolInfo, parsed: ParsedDocstring): Badge[] {
+    private buildBadges(symbolInfo: SymbolInfo): Badge[] {
         const badges: Badge[] = [];
         const doc = symbolInfo.docstring || '';
         const sig = symbolInfo.signature || '';

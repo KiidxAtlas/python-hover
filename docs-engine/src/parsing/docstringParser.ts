@@ -221,7 +221,6 @@ export class DocstringParser {
 
         // Simple section parsing
         let currentSection = '';
-        let buffer: string[] = [];
 
         for (; i < lines.length; i++) {
             const line = lines[i];
@@ -352,7 +351,6 @@ export class DocstringParser {
 
         for (; i < lines.length; i++) {
             const line = lines[i];
-            const trimmed = line.trim();
 
             // :param name: description
             // :type name: type

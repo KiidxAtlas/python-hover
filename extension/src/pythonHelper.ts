@@ -6,9 +6,57 @@ import { DiskCache } from '../../docs-engine/src/cache/diskCache';
 import { SymbolInfo } from '../../shared/types';
 import { Logger } from './logger';
 
+type ResolveRequest = { cmd: 'resolve'; symbol: string };
+type IdentifyRequest = { cmd: 'identify'; source: string; line: number; col: number };
+type GetDocstringRequest = { cmd: 'get_docstring'; source: string; symbol: string };
+type ResolveSourceSymbolRequest = { cmd: 'resolve_source_symbol'; file_path: string; candidates: string[]; module?: string };
+type VersionInfoRequest = { cmd: 'version_info' };
+type PackageVersionRequest = { cmd: 'pkg_version'; package: string };
+
+type PythonServerCommand =
+    | ResolveRequest
+    | IdentifyRequest
+    | GetDocstringRequest
+    | ResolveSourceSymbolRequest
+    | VersionInfoRequest
+    | PackageVersionRequest;
+
+interface PythonHelperErrorResult {
+    error: string;
+}
+
+interface PythonSymbolPayload {
+    module?: string;
+    docstring?: string | null;
+    signature?: string | null;
+    qualname?: string;
+    kind?: string;
+    is_stdlib?: boolean;
+    url?: string | null;
+}
+
+type ResolveSymbolResult = PythonSymbolPayload | PythonHelperErrorResult;
+type DocstringResult = PythonSymbolPayload | PythonHelperErrorResult;
+type SourceSymbolResult = PythonSymbolPayload | PythonHelperErrorResult;
+type IdentifyResult = { type?: string | null };
+type VersionInfoResult = { version?: string; full_version?: string };
+type PackageVersionResult = { version?: string | null };
+
+interface PythonCommandResultMap {
+    resolve: ResolveSymbolResult;
+    identify: IdentifyResult;
+    get_docstring: DocstringResult;
+    resolve_source_symbol: SourceSymbolResult;
+    version_info: VersionInfoResult;
+    pkg_version: PackageVersionResult;
+}
+
+type PythonCommandName = keyof PythonCommandResultMap;
+type PythonCommandFor<T extends PythonCommandName> = Extract<PythonServerCommand, { cmd: T }>;
+
 interface PendingRequest {
-    resolve: (value: any) => void;
-    reject: (reason: any) => void;
+    resolve: (value: unknown) => void;
+    reject: (reason: unknown) => void;
     timer: ReturnType<typeof setTimeout>;
 }
 
@@ -74,12 +122,15 @@ class PythonProcess {
             const trimmed = line.trim();
             if (!trimmed) continue;
             try {
-                const msg = JSON.parse(trimmed);
+                const msg = JSON.parse(trimmed) as { id?: unknown; result?: unknown; error?: unknown };
+                if (typeof msg.id !== 'number') {
+                    continue;
+                }
                 const pending = this.pending.get(msg.id);
                 if (!pending) continue;
                 this.pending.delete(msg.id);
                 clearTimeout(pending.timer);
-                if (msg.error) {
+                if (typeof msg.error === 'string' && msg.error) {
                     pending.reject(new Error(msg.error));
                 } else {
                     pending.resolve(msg.result);
@@ -101,7 +152,7 @@ class PythonProcess {
         }
     }
 
-    send(cmd: Record<string, any>, timeoutMs: number): Promise<any> {
+    send<T extends PythonCommandName>(cmd: PythonCommandFor<T>, timeoutMs: number): Promise<PythonCommandResultMap[T]> {
         return new Promise((resolve, reject) => {
             if (!this.proc || this.dead) {
                 reject(new Error('Python process not running'));
@@ -116,7 +167,11 @@ class PythonProcess {
                 }
             }, timeoutMs);
 
-            this.pending.set(id, { resolve, reject, timer });
+            this.pending.set(id, {
+                resolve: value => resolve(value as T),
+                reject,
+                timer,
+            });
 
             try {
                 this.proc.stdin!.write(JSON.stringify({ id, ...cmd }) + '\n');
@@ -299,7 +354,13 @@ export class PythonHelper {
         return this.process;
     }
 
-    private async send(cmd: Record<string, any>, timeoutMs = 3000): Promise<any> {
+    private isErrorResult(value: unknown): value is PythonHelperErrorResult {
+        return !!value
+            && typeof value === 'object'
+            && typeof (value as { error?: unknown }).error === 'string';
+    }
+
+    private async send<T extends PythonCommandName>(cmd: PythonCommandFor<T>, timeoutMs = 3000): Promise<PythonCommandResultMap[T] | null> {
         const proc = await this.getProcess();
         if (!proc) return null;
 
@@ -345,7 +406,7 @@ export class PythonHelper {
         Logger.log(`PythonHelper: resolving ${symbol} via IPC`);
         const result = await this.send({ cmd: 'resolve', symbol });
 
-        if (!result || result.error) {
+        if (!result || this.isErrorResult(result)) {
             Logger.log(`PythonHelper: resolve failed for ${symbol}: ${result?.error}`);
             if (this.sessionCache.size >= PythonHelper.SESSION_CACHE_MAX) {
                 const oldest = this.sessionCache.keys().next().value;
@@ -358,8 +419,8 @@ export class PythonHelper {
         const info: SymbolInfo = {
             name: symbol.split('.').pop() || symbol,
             module: result.module,
-            docstring: result.docstring,
-            signature: result.signature,
+            docstring: result.docstring ?? undefined,
+            signature: result.signature ?? undefined,
             path: result.module,
             isStdlib: result.is_stdlib,
             qualname: result.qualname,
@@ -393,12 +454,12 @@ export class PythonHelper {
             return null;
         }
         const result = await this.send({ cmd: 'get_docstring', source, symbol }, 2000);
-        if (!result || result.error) return null;
+        if (!result || this.isErrorResult(result)) return null;
         return {
             name: symbol,
             module: result.module ?? 'user',
-            docstring: result.docstring,
-            signature: result.signature,
+            docstring: result.docstring ?? undefined,
+            signature: result.signature ?? undefined,
             kind: result.kind,
             isStdlib: false,
             qualname: result.qualname,
@@ -421,13 +482,13 @@ export class PythonHelper {
             module: moduleName,
         }, 2500);
 
-        if (!result || result.error) return null;
+        if (!result || this.isErrorResult(result)) return null;
 
         return {
             name: candidates[0],
             module: result.module,
-            docstring: result.docstring,
-            signature: result.signature,
+            docstring: result.docstring ?? undefined,
+            signature: result.signature ?? undefined,
             path: filePath,
             isStdlib: result.is_stdlib,
             qualname: result.qualname,

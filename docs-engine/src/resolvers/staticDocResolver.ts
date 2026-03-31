@@ -1,46 +1,12 @@
+import { BUILTIN_CONSTANTS, BUILTIN_EXCEPTION_PATTERN, KNOWN_BUILTIN_FUNCTIONS } from '../../../shared/pythonBuiltins';
 import { DocKey, HoverDoc, ResolutionSource } from '../../../shared/types';
 import { MAP } from '../../data/documentationUrls';
 import { STDLIB_MODULES } from '../../data/stdlibModules';
-
-const BUILTIN_CONSTANTS = new Set([
-    'None',
-    'True',
-    'False',
-    'NotImplemented',
-    'Ellipsis',
-    '__debug__',
-]);
-
-const BUILTIN_EXCEPTION_PATTERN = /^[A-Z][A-Za-z0-9]+(?:Error|Exception|Warning|Exit)$/;
 
 /** Builtin types that are documented in the richer stdtypes page. */
 const BUILTIN_STD_TYPES = new Set([
     'bool', 'bytearray', 'bytes', 'complex', 'dict', 'float', 'frozenset',
     'int', 'list', 'memoryview', 'range', 'set', 'slice', 'str', 'tuple',
-]);
-
-/** Actual Python builtin functions — only these should get a functions.html URL. */
-const KNOWN_BUILTIN_FUNCTIONS = new Set([
-    'abs', 'aiter', 'all', 'anext', 'any', 'ascii',
-    'bin', 'bool', 'breakpoint', 'bytearray', 'bytes',
-    'callable', 'chr', 'classmethod', 'compile', 'complex',
-    'delattr', 'dict', 'dir', 'divmod',
-    'enumerate', 'eval', 'exec',
-    'filter', 'float', 'format', 'frozenset',
-    'getattr', 'globals',
-    'hasattr', 'hash', 'help', 'hex',
-    'id', 'input', 'int', 'isinstance', 'issubclass', 'iter',
-    'len', 'list', 'locals',
-    'map', 'max', 'memoryview', 'min',
-    'next',
-    'object', 'oct', 'open', 'ord',
-    'pow', 'print', 'property',
-    'range', 'repr', 'reversed', 'round',
-    'set', 'setattr', 'slice', 'sorted', 'staticmethod', 'str', 'sum', 'super',
-    'tuple', 'type',
-    'vars',
-    'zip',
-    '__import__',
 ]);
 
 export class StaticDocResolver {

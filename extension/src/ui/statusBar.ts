@@ -2,11 +2,21 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { PYHOVER_CACHE_DIR_NAME } from '../../../docs-engine/src/cache/diskCache';
+import { HoverHistoryEntry, SavedDocEntry } from '../../../shared/types';
 import { updateSettingWithPreferredTarget } from '../configTarget';
+
+type StatusBarDataAccessors = {
+    getHoverHistory?: () => HoverHistoryEntry[];
+    getIndexedSymbolCount?: () => number;
+    getLastHoverTitle?: () => string | undefined;
+    getRecentPackages?: () => Array<{ name: string; count: number }>;
+    getSavedDocs?: () => SavedDocEntry[];
+};
 
 export class StatusBarManager {
     private item: vscode.StatusBarItem;
     private context: vscode.ExtensionContext;
+    private dataAccessors: StatusBarDataAccessors = {};
 
     /** Cached cache-size string so render() never blocks on repeated dir-walks. */
     private cacheSizeLabel = '…';
@@ -38,6 +48,11 @@ export class StatusBarManager {
         this.render();
     }
 
+    public setDataAccessors(accessors: StatusBarDataAccessors) {
+        this.dataAccessors = accessors;
+        this.render();
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // RENDER
     // ─────────────────────────────────────────────────────────────────────────
@@ -48,6 +63,8 @@ export class StatusBarManager {
         const online = cfg.get<boolean>('onlineDiscovery', true);
         const version = this.getVersion();
         const cacheSize = this.getCacheSizeInMB();
+        const indexedSymbols = this.dataAccessors.getIndexedSymbolCount?.();
+        const lastHoverTitle = this.dataAccessors.getLastHoverTitle?.();
 
         if (!showStatusBar) {
             this.item.hide();
@@ -56,9 +73,11 @@ export class StatusBarManager {
 
         this.item.text = `${online ? '$(globe)' : '$(circle-slash)'} PyHover ${cacheSize}`;
         const mode = online ? '$(globe) Online' : '$(circle-slash) Offline';
+        const escapedLastHover = lastHoverTitle?.replace(/[`*_{}[\]()+#.!-]/g, '\\$&');
         const tt = new vscode.MarkdownString(
             `**PyHover** v${version}\n\n` +
-            `${mode}  ·  $(database) ${cacheSize}\n\n` +
+            `${mode}  ·  $(database) ${cacheSize}${typeof indexedSymbols === 'number' ? `  ·  $(symbol-key) ${indexedSymbols.toLocaleString()} indexed` : ''}\n\n` +
+            `${escapedLastHover ? `Last hover: **${escapedLastHover}**\n\n` : ''}` +
             `Click for quick actions like search, browse, hover history, cache tools, and Studio.`
         );
         tt.supportThemeIcons = true;
@@ -78,80 +97,136 @@ export class StatusBarManager {
     private registerCommands() {
         this.context.subscriptions.push(
             vscode.commands.registerCommand('python-hover.showStatusNotification', async () => {
-                type StatusAction = vscode.QuickPickItem & { command?: string };
+                type StatusAction = vscode.QuickPickItem & { command?: string; run?: () => Thenable<unknown> | Promise<void> | void };
                 const cfg = vscode.workspace.getConfiguration('python-hover');
                 const online = cfg.get<boolean>('onlineDiscovery', true);
                 const cacheSize = this.getCacheSizeInMB();
+                const recentPackages = this.dataAccessors.getRecentPackages?.().slice(0, 5) ?? [];
+                const recentHistory = (this.dataAccessors.getHoverHistory?.() ?? []).filter(entry => !!entry.url).slice(0, 4);
+                const savedDocs = this.dataAccessors.getSavedDocs?.().slice(0, 4) ?? [];
+                const lastHoverTitle = this.dataAccessors.getLastHoverTitle?.();
+                const formatKind = (kind?: string) => kind ? `${kind.charAt(0).toUpperCase()}${kind.slice(1).toLowerCase()}` : undefined;
+                const meta = (...parts: Array<string | undefined>) => parts.filter(Boolean).join(' • ');
 
                 const items: StatusAction[] = [
-                    { label: 'Workspace', kind: vscode.QuickPickItemKind.Separator },
+                    { label: 'Session', kind: vscode.QuickPickItemKind.Separator },
                     {
-                        label: online ? '$(globe) Online discovery: on' : '$(circle-slash) Online discovery: off',
+                        label: online ? '$(globe) Online docs enabled' : '$(circle-slash) Online docs disabled',
                         description: `Cache ${cacheSize}`,
+                        detail: online
+                            ? 'Web docs lookup, inventories, and scraping are available.'
+                            : 'Only cached docs and local/runtime sources will be used.',
                         command: 'python-hover.toggleOnlineDiscovery',
                     },
+                    ...(lastHoverTitle ? [{
+                        label: '$(pin) Last hover target',
+                        description: lastHoverTitle,
+                        detail: 'Re-pin the latest hover into the inspector or docs panel.',
+                        command: 'python-hover.pinLast',
+                    }] : []),
                     {
                         label: '$(layout) Open PyHover Studio',
-                        description: 'Central dashboard for settings, cache, and hover tools',
+                        description: 'Settings, cache controls, and product-level tuning',
                         command: 'python-hover.openStudio',
                     },
                     {
                         label: '$(settings-gear) Open settings',
-                        description: 'Configure PyHover behavior',
+                        description: 'Full VS Code settings surface',
                         command: 'workbench.action.openSettings',
                     },
                     { label: 'Explore', kind: vscode.QuickPickItemKind.Separator },
                     {
                         label: '$(search) Search Python docs',
-                        description: 'Jump straight to indexed symbol search',
+                        description: 'Indexed symbol search',
+                        detail: 'Search known docs targets, saved docs, recent items, and package shortcuts.',
                         command: 'python-hover.searchDocs',
                     },
                     {
                         label: '$(symbol-namespace) Browse indexed modules',
-                        description: 'Open the module picker from cached indexes',
+                        description: 'Browse packages and modules',
+                        detail: 'Open the module picker across standard library and third-party indexes.',
                         command: 'python-hover.browseModule',
                     },
-                    { label: 'Hover', kind: vscode.QuickPickItemKind.Separator },
+                    { label: 'Recent And Saved', kind: vscode.QuickPickItemKind.Separator },
                     {
                         label: '$(history) Hover history',
                         description: 'Recent symbols you hovered',
+                        detail: 'Grouped into live session entries and stored docs links.',
                         command: 'python-hover.showHistory',
                     },
-                    {
-                        label: '$(pin) Pin last hover',
-                        description: 'Re-pin the most recently hovered symbol to the docs panel',
-                        command: 'python-hover.pinLast',
-                    },
-                    { label: 'Cache And Corpus', kind: vscode.QuickPickItemKind.Separator },
+                    ...(recentPackages.length > 0
+                        ? [
+                            { label: 'Recent Packages', kind: vscode.QuickPickItemKind.Separator },
+                            ...recentPackages.map(pkg => ({
+                                label: `$(symbol-namespace) ${pkg.name}`,
+                                description: `${pkg.count.toLocaleString()} indexed symbols`,
+                                detail: 'Open this package in the module browser.',
+                                run: () => vscode.commands.executeCommand('python-hover.browseModule', pkg.name),
+                            })),
+                        ]
+                        : []),
+                    ...(recentHistory.length > 0
+                        ? [
+                            { label: 'Recent Docs', kind: vscode.QuickPickItemKind.Separator },
+                            ...recentHistory.map(entry => ({
+                                label: `${entry.commandToken ? '$(history)' : '$(link-external)'} ${entry.title}`,
+                                description: meta(formatKind(entry.kind), entry.module ?? entry.package),
+                                detail: entry.commandToken
+                                    ? 'Live session entry. Reopen in the inspector if still available.'
+                                    : 'Stored docs link. Open the last known documentation target.',
+                                run: () => vscode.commands.executeCommand('python-hover.openSidebarHistoryEntry', entry),
+                            })),
+                        ]
+                        : []),
+                    ...(savedDocs.length > 0
+                        ? [
+                            { label: 'Saved Docs', kind: vscode.QuickPickItemKind.Separator },
+                            ...savedDocs.map(entry => ({
+                                label: `$(bookmark) ${entry.title}`,
+                                description: meta(formatKind(entry.kind), entry.module ?? entry.package),
+                                detail: entry.summary || 'Saved reading-list target.',
+                                run: () => vscode.commands.executeCommand('python-hover.openSavedHoverEntry', entry),
+                            })),
+                        ]
+                        : []),
+                    { label: 'Maintenance', kind: vscode.QuickPickItemKind.Separator },
                     {
                         label: '$(book) Build Python corpus',
                         description: 'Fetch richer built-in and keyword docs',
+                        detail: 'Populate the stdlib corpus for better offline and builtin hover coverage.',
                         command: 'python-hover.buildPythonCorpus',
                     },
                     {
                         label: '$(trash) Clear documentation cache',
-                        description: 'Keeps the Python corpus intact',
+                        description: 'Clear fetched docs and inventories',
+                        detail: 'Keeps the Python stdlib corpus intact.',
                         command: 'python-hover.clearCache',
                     },
                     {
                         label: '$(folder-opened) View cache folder',
-                        description: `${cacheSize} — open in file explorer`,
+                        description: `${cacheSize}`,
+                        detail: 'Open the PyHover cache folder in Finder.',
                         command: 'python-hover.openCacheFolder',
                     },
                     {
                         label: '$(output) Show logs',
                         description: 'Inspect resolver and cache output',
+                        detail: 'Open the PyHover output channel.',
                         command: 'python-hover.showLogs',
                     },
                 ];
 
                 const picked = await vscode.window.showQuickPick(items, {
-                    title: 'PyHover Actions',
-                    placeHolder: 'Choose a PyHover action',
+                    title: 'PyHover Command Center',
+                    placeHolder: 'Choose a session, navigation, or maintenance action',
                     matchOnDescription: true,
+                    matchOnDetail: true,
                 });
 
                 if (!picked?.command) {
+                    if (picked?.run) {
+                        await picked.run();
+                    }
                     return;
                 }
 

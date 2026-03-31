@@ -26,7 +26,7 @@ export class AliasResolver {
         let normalizedText = text.replace(/\\\n\s*/g, ' ');
 
         // Handle parenthesized imports by removing newlines inside parentheses
-        normalizedText = normalizedText.replace(/\(\s*([^)]+)\s*\)/g, (match, content) => {
+        normalizedText = normalizedText.replace(/\(\s*([^)]+)\s*\)/g, (_match, content) => {
             return '(' + content.replace(/\n\s*/g, ' ').replace(/\s+/g, ' ') + ')';
         });
 

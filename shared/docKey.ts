@@ -1,17 +1,5 @@
+import { BUILTIN_OWNER_TYPES, normalizeSelfTypeAlias } from './pythonBuiltins';
 import { DocKey, SymbolInfo } from './types';
-
-const SELF_TYPE_ALIASES: Record<string, string> = {
-    'LiteralString': 'str',
-    'AnyStr': 'str',
-    'Text': 'str',
-    'ByteString': 'bytes',
-    'NoneType': 'None',
-};
-
-const BUILTIN_OWNER_TYPES = new Set([
-    'str', 'list', 'dict', 'set', 'tuple', 'int', 'float', 'bool',
-    'bytes', 'bytearray', 'frozenset', 'complex', 'object', 'None',
-]);
 
 export class DocKeyBuilder {
     static fromSymbol(symbolInfo: SymbolInfo): DocKey {
@@ -23,9 +11,9 @@ export class DocKeyBuilder {
         // qualname "upper" (just the last segment), which misses in the inventory.
         let qualname: string;
         if (module && name.startsWith(module + '.')) {
-            qualname = (symbolInfo as any).qualname || name.slice(module.length + 1);
+            qualname = symbolInfo.qualname || name.slice(module.length + 1);
         } else {
-            qualname = (symbolInfo as any).qualname || name;
+            qualname = symbolInfo.qualname || name;
         }
         let pkg = '';
 
@@ -109,6 +97,6 @@ export class DocKeyBuilder {
             ownerType = ownerType.slice('builtins.'.length);
         }
 
-        return SELF_TYPE_ALIASES[ownerType] ?? ownerType;
+        return normalizeSelfTypeAlias(ownerType);
     }
 }

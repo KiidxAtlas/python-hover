@@ -1,3 +1,4 @@
+import * as path from 'path';
 import * as vscode from 'vscode';
 import { IndexedSymbolPreview, IndexedSymbolSummary } from '../../../shared/types';
 
@@ -27,6 +28,54 @@ type ModuleBrowserPayload = {
   settings: ModuleBrowserSettings;
 };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object';
+}
+
+function isIndexedSymbolSummary(value: unknown): value is IndexedSymbolSummary {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return typeof value.name === 'string'
+    && typeof value.url === 'string'
+    && typeof value.kind === 'string'
+    && typeof value.package === 'string'
+    && (value.title === undefined || typeof value.title === 'string')
+    && (value.module === undefined || typeof value.module === 'string')
+    && (value.signature === undefined || typeof value.signature === 'string')
+    && (value.summary === undefined || typeof value.summary === 'string')
+    && (value.sourceUrl === undefined || typeof value.sourceUrl === 'string');
+}
+
+function isModuleBrowserMessage(value: unknown): value is ModuleBrowserMessage {
+  if (!isRecord(value) || typeof value.type !== 'string') {
+    return false;
+  }
+
+  switch (value.type) {
+    case 'open-doc':
+      return typeof value.url === 'string';
+    case 'pin-symbol':
+    case 'open-source':
+    case 'copy-import':
+      return isIndexedSymbolSummary(value.symbol);
+    case 'load-previews':
+      return typeof value.requestId === 'number'
+        && Array.isArray(value.symbols)
+        && value.symbols.every(isIndexedSymbolSummary);
+    case 'run-command':
+      return typeof value.command === 'string';
+    case 'open-settings':
+      return value.query === undefined || typeof value.query === 'string';
+    case 'update-setting':
+      return typeof value.key === 'string'
+        && (typeof value.value === 'boolean' || typeof value.value === 'string' || typeof value.value === 'number');
+    default:
+      return false;
+  }
+}
+
 export class ModuleBrowserPanel {
   private static instance: ModuleBrowserPanel | undefined;
   private panel: vscode.WebviewPanel | undefined;
@@ -54,12 +103,16 @@ export class ModuleBrowserPanel {
         {
           enableScripts: true,
           retainContextWhenHidden: false,
+          localResourceRoots: [this.mediaRootUri()],
         },
       );
 
       this.disposables.push(
         this.panel.webview.onDidReceiveMessage(message => {
-          void this.onMessage(message as ModuleBrowserMessage);
+          if (!isModuleBrowserMessage(message)) {
+            return;
+          }
+          void this.onMessage(message);
         }),
       );
 
@@ -72,7 +125,7 @@ export class ModuleBrowserPanel {
     }
 
       this.panel.title = this.titleFor(moduleName);
-      this.panel.webview.html = this.buildHtml(this.currentPayload);
+    this.panel.webview.html = this.buildHtml(this.panel.webview, this.currentPayload);
       this.panel.reveal(targetColumn, false);
     }
 
@@ -82,7 +135,7 @@ export class ModuleBrowserPanel {
         }
 
     this.currentPayload = { ...this.currentPayload, settings };
-    this.panel.webview.html = this.buildHtml(this.currentPayload);
+    this.panel.webview.html = this.buildHtml(this.panel.webview, this.currentPayload);
   }
 
   postPreviewData(requestId: number, previews: IndexedSymbolPreview[]): void {
@@ -107,23 +160,190 @@ export class ModuleBrowserPanel {
     return `${moduleName} Browser`;
   }
 
-  private buildHtml(payload: ModuleBrowserPayload): string {
+  private mediaRootUri(): vscode.Uri {
+    return vscode.Uri.file(path.join(__dirname, '../../../../media'));
+  }
+
+  private moduleBrowserScriptUri(webview: vscode.Webview): string {
+    return webview.asWebviewUri(vscode.Uri.joinPath(this.mediaRootUri(), 'moduleBrowserWebview.js')).toString();
+  }
+
+  private buildInitialPackageOptions(symbols: IndexedSymbolSummary[]): string {
+    const packages = [...new Set(symbols.map(symbol => symbol.package).filter(Boolean))].sort((left, right) => left.localeCompare(right));
+    const options = [`<option value="all" selected>All packages (${packages.length})</option>`];
+
+    for (const pkg of packages) {
+      const count = symbols.filter(symbol => symbol.package === pkg).length;
+      options.push(`<option value="${this.escapeHtml(pkg)}">${this.escapeHtml(pkg)} (${count})</option>`);
+    }
+
+    return options.join('');
+  }
+
+  private buildInitialSidebarMeta(symbols: IndexedSymbolSummary[]): string {
+    const documentedCount = symbols.filter(symbol => this.hasInitialDocs(symbol)).length;
+    return [
+      `${symbols.length} indexed`,
+      `${documentedCount} with docs`,
+    ].map(label => `<span class="pill">${this.escapeHtml(label)}</span>`).join('');
+  }
+
+  private buildInitialKindFilters(symbols: IndexedSymbolSummary[]): string {
+    const counts = new Map<string, number>();
+    for (const symbol of symbols) {
+      const kind = this.normalizeKind(symbol.kind);
+      counts.set(kind, (counts.get(kind) || 0) + 1);
+    }
+
+    const chips = [`<span class="kind-chip active">All ${symbols.length}</span>`];
+    for (const [kind, count] of [...counts.entries()].sort((left, right) => left[0].localeCompare(right[0]))) {
+      chips.push(`<span class="kind-chip">${this.escapeHtml(kind)} ${count}</span>`);
+    }
+
+    return chips.join('');
+  }
+
+  private buildInitialModuleActions(symbols: IndexedSymbolSummary[], moduleName: string): string {
+    const exactRoot = symbols.find(symbol => symbol.name === moduleName);
+    if (!exactRoot?.url) {
+      return '<div class="sidebar-note">Interactive actions load when the browser script is ready.</div>';
+    }
+
+    return `<a class="ghost" href="${this.escapeHtml(exactRoot.url)}" target="_blank" rel="noopener noreferrer">Open docs</a>`;
+  }
+
+  private buildInitialSelectedDetail(symbols: IndexedSymbolSummary[]): { meta: string; html: string } {
+    const selected = [...symbols].sort((left, right) => left.name.localeCompare(right.name))[0];
+    if (!selected) {
+      return {
+        meta: 'No symbol selected',
+        html: '<div class="sidebar-note">No indexed symbols are available for this module yet.</div>',
+      };
+    }
+
+    const summary = this.escapeHtml(this.truncate(selected.summary || 'Select a symbol after the browser script loads for richer actions and previews.', 260));
+    return {
+      meta: this.escapeHtml(this.normalizeKind(selected.kind)),
+      html: [
+        `<div class="detail-title">${this.escapeHtml(this.displayName(selected))}</div>`,
+        `<div class="detail-copy">${this.escapeHtml(selected.name)}</div>`,
+        selected.signature ? `<div class="signature">${this.escapeHtml(this.truncate(selected.signature, 220))}</div>` : '',
+        `<div class="detail-copy">${summary || 'No cached summary is available for this symbol yet.'}</div>`,
+        `<div class="detail-copy">${this.escapeHtml(this.formatInitialRowMeta(selected))}</div>`,
+        selected.url ? `<div class="stack"><a class="ghost" href="${this.escapeHtml(selected.url)}" target="_blank" rel="noopener noreferrer">Open docs</a></div>` : '',
+      ].filter(Boolean).join(''),
+    };
+  }
+
+  private buildInitialNamespaces(moduleName: string, symbols: IndexedSymbolSummary[]): { meta: string; html: string } {
+    const branches = new Map<string, number>();
+
+    for (const symbol of symbols) {
+      if (!symbol.name.startsWith(`${moduleName}.`)) {
+        continue;
+      }
+
+      const parts = symbol.name.slice(moduleName.length + 1).split('.').filter(Boolean);
+      if (parts.length <= 1) {
+        continue;
+      }
+
+      branches.set(parts[0], (branches.get(parts[0]) || 0) + 1);
+    }
+
+    const entries = [...branches.entries()].sort((left, right) => left[0].localeCompare(right[0])).slice(0, 12);
+    if (entries.length === 0) {
+      return {
+        meta: '0 branches',
+        html: '<div class="sidebar-note">Namespace navigation loads when the browser script is ready.</div>',
+      };
+    }
+
+    return {
+      meta: `${entries.length} branches`,
+      html: entries.map(([name, count]) => `<div class="nav-item"><span class="nav-text"><span class="nav-title">${this.escapeHtml(name)}</span></span><span class="pill">${count}</span></div>`).join(''),
+    };
+  }
+
+  private buildInitialRows(symbols: IndexedSymbolSummary[]): { title: string; meta: string; html: string } {
+    const rows = [...symbols]
+      .sort((left, right) => left.name.localeCompare(right.name))
+      .slice(0, 160);
+
+    return {
+      title: 'Indexed symbols',
+      meta: `${rows.length} item${rows.length === 1 ? '' : 's'} shown`,
+      html: rows.length === 0
+        ? '<div class="empty">No indexed symbols are available for this module yet.</div>'
+        : rows.map(symbol => {
+          const summary = this.escapeHtml(this.truncate(symbol.summary || 'No cached summary is available for this symbol yet.', 220));
+          const signature = symbol.signature ? `<div class="signature">${this.escapeHtml(this.truncate(symbol.signature, 180))}</div>` : '';
+          const docsLink = symbol.url
+            ? `<div class="actions"><a class="action" href="${this.escapeHtml(symbol.url)}" target="_blank" rel="noopener noreferrer">Docs</a></div>`
+            : '';
+          return [
+            '<article class="row">',
+            '<div class="row-head">',
+            '<div class="row-title-group">',
+            `<div class="row-title">${this.escapeHtml(this.displayName(symbol))}</div>`,
+            `<div class="row-path">${this.escapeHtml(symbol.name)}</div>`,
+            '</div>',
+            docsLink,
+            '</div>',
+            `<div class="row-meta">${this.escapeHtml(this.formatInitialRowMeta(symbol))}</div>`,
+            signature,
+            `<div class="row-summary">${summary}</div>`,
+            '</article>',
+          ].join('');
+        }).join(''),
+    };
+  }
+
+  private displayName(symbol: IndexedSymbolSummary): string {
+    const parts = symbol.name.split('.').filter(Boolean);
+    return parts[parts.length - 1] || symbol.name;
+  }
+
+  private normalizeKind(kind?: string): string {
+    return kind || 'symbol';
+  }
+
+  private hasInitialDocs(symbol: IndexedSymbolSummary): boolean {
+    return Boolean(symbol.url || symbol.summary || symbol.signature || symbol.sourceUrl);
+  }
+
+  private formatInitialRowMeta(symbol: IndexedSymbolSummary): string {
+    const parts = [this.normalizeKind(symbol.kind), symbol.package || symbol.module || 'module'];
+    parts.push(this.hasInitialDocs(symbol) ? 'docs' : 'index only');
+    return parts.join(' · ');
+  }
+
+  private truncate(text: string, maxLength: number): string {
+    const clean = text.replace(/\s+/g, ' ').trim();
+    if (clean.length <= maxLength) {
+      return clean;
+    }
+
+    return `${clean.slice(0, maxLength - 1).trimEnd()}...`;
+  }
+
+  private buildHtml(webview: vscode.Webview, payload: ModuleBrowserPayload): string {
     const { moduleName, symbols, settings } = payload;
-    const data = JSON.stringify(symbols)
-      .replace(/</g, '\\u003c')
-      .replace(/>/g, '\\u003e')
-      .replace(/&/g, '\\u0026');
-      const settingsData = JSON.stringify(settings)
-        .replace(/</g, '\\u003c')
-        .replace(/>/g, '\\u003e')
-        .replace(/&/g, '\\u0026');
-    const nonce = String(Date.now());
+    const payloadData = this.serializeForScript({ moduleName, symbols, settings });
+    const initialPackageOptions = this.buildInitialPackageOptions(symbols);
+    const initialSidebarMeta = this.buildInitialSidebarMeta(symbols);
+    const initialKindFilters = this.buildInitialKindFilters(symbols);
+    const initialModuleActions = this.buildInitialModuleActions(symbols, moduleName);
+    const initialSelectedDetail = this.buildInitialSelectedDetail(symbols);
+    const initialNamespaces = this.buildInitialNamespaces(moduleName, symbols);
+    const initialRows = this.buildInitialRows(symbols);
+    const scriptUri = this.moduleBrowserScriptUri(webview);
 
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' ${webview.cspSource}; script-src ${webview.cspSource}; base-uri 'none';">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>${this.escapeHtml(moduleName)} Browser</title>
 <style>
@@ -152,7 +372,9 @@ export class ModuleBrowserPanel {
     margin: 0;
     padding: 0;
     height: 100%;
-    background: var(--bg);
+    background:
+      radial-gradient(circle at top left, color-mix(in srgb, var(--accent) 9%, transparent), transparent 36%),
+      var(--bg);
     color: var(--fg);
     font: 13px/1.45 var(--vscode-font-family);
   }
@@ -163,6 +385,14 @@ export class ModuleBrowserPanel {
     font: inherit;
   }
 
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  .row:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
   .app {
     height: 100vh;
     display: grid;
@@ -171,10 +401,52 @@ export class ModuleBrowserPanel {
 
   .toolbar {
     display: grid;
-    gap: 8px;
-    padding: 10px 12px;
+    gap: 10px;
+    padding: 12px;
     border-bottom: 1px solid var(--border);
     background: var(--panel);
+  }
+
+  .toolbar-hero {
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) minmax(260px, 0.95fr);
+    gap: 12px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 10%, var(--panel-alt)), var(--panel));
+  }
+
+  .toolbar-copy {
+    display: grid;
+    gap: 5px;
+    min-width: 0;
+  }
+
+  .toolbar-kicker {
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .toolbar-title {
+    font-size: 18px;
+    font-weight: 650;
+    line-height: 1.2;
+    word-break: break-word;
+  }
+
+  .toolbar-subtitle {
+    color: var(--muted);
+    max-width: 68ch;
+  }
+
+  .toolbar-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-content: start;
   }
 
   .toolbar-row {
@@ -182,6 +454,10 @@ export class ModuleBrowserPanel {
     flex-wrap: wrap;
     gap: 8px;
     align-items: center;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--bg) 97%, var(--fg) 3%);
   }
 
   .search {
@@ -224,9 +500,9 @@ export class ModuleBrowserPanel {
   .sidebar-block {
     display: grid;
     gap: 8px;
-    padding: 10px;
+    padding: 12px;
     border: 1px solid var(--border);
-    border-radius: 10px;
+    border-radius: 14px;
     background: var(--panel);
   }
 
@@ -388,13 +664,13 @@ export class ModuleBrowserPanel {
   }
 
   .list-header {
-    padding: 12px;
+    padding: 14px 14px 12px;
     border-bottom: 1px solid var(--border);
     background: var(--panel);
   }
 
   .kind-bar {
-    padding: 8px 12px;
+    padding: 10px 14px;
     border-bottom: 1px solid var(--border);
     background: var(--panel-alt);
   }
@@ -402,21 +678,28 @@ export class ModuleBrowserPanel {
   .results {
     min-height: 0;
     overflow: auto;
+    padding: 10px;
+    display: grid;
+    gap: 10px;
   }
 
   .row {
     display: grid;
     gap: 6px;
-    padding: 10px 12px;
-    border-bottom: 1px solid var(--border);
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--bg) 97%, var(--fg) 3%);
   }
 
   .row:hover {
     background: var(--row-hover);
+    border-color: var(--border-strong);
   }
 
   .row.active {
     background: var(--row-active);
+    border-color: color-mix(in srgb, var(--accent) 30%, transparent);
   }
 
   .row.compact {
@@ -480,11 +763,17 @@ export class ModuleBrowserPanel {
 
   .empty {
     padding: 16px 12px;
-    border-bottom: 1px solid var(--border);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--bg) 97%, var(--fg) 3%);
   }
 
   @media (max-width: 980px) {
     .split {
+      grid-template-columns: 1fr;
+    }
+
+    .toolbar-hero {
       grid-template-columns: 1fr;
     }
 
@@ -507,14 +796,16 @@ export class ModuleBrowserPanel {
     .sidebar,
     .list-header,
     .kind-bar,
-    .row {
+    .row,
+    .results {
       padding-left: 10px;
       padding-right: 10px;
     }
 
     .row-head,
     .list-header,
-    .sidebar-section-head {
+    .sidebar-section-head,
+    .toolbar-hero {
       flex-direction: column;
       align-items: stretch;
     }
@@ -524,62 +815,70 @@ export class ModuleBrowserPanel {
 <body>
 <div class="app">
   <header class="toolbar">
+    <div class="toolbar-hero">
+      <div class="toolbar-copy">
+        <div class="toolbar-kicker">Module browser</div>
+        <div class="toolbar-title">${this.escapeHtml(moduleName)}</div>
+        <div class="toolbar-subtitle">Search indexed symbols, drill through namespaces, and pin docs without leaving the editor.</div>
+      </div>
+      <div class="toolbar-meta">${initialSidebarMeta}</div>
+    </div>
     <div class="toolbar-row">
-      <input id="query" class="search" type="search" placeholder="Search dotted names like DataFrame.groupby or os.path.join">
-      <select id="package-filter" class="select"></select>
-      <select id="sort-filter" class="select">
+      <input id="query" class="search" type="search" data-focus-id="query" placeholder="Search dotted names like DataFrame.groupby or os.path.join">
+      <select id="package-filter" class="select" data-focus-id="package-filter">${initialPackageOptions}</select>
+      <select id="sort-filter" class="select" data-focus-id="sort-filter">
         <option value="name">Sort: name</option>
         <option value="kind">Sort: kind</option>
         <option value="package">Sort: package</option>
       </select>
-      <select id="view-filter" class="select">
+      <select id="view-filter" class="select" data-focus-id="view-filter">
         <option value="hierarchy">View: hierarchy</option>
         <option value="flat">View: flat</option>
       </select>
     </div>
     <div class="toolbar-row">
       <div class="segments" id="density-row"></div>
-      <label class="check"><input id="toggle-private" type="checkbox">Show private</label>
-      <label class="check"><input id="toggle-documented" type="checkbox">Documented only</label>
-      <label class="check"><input id="toggle-auto" type="checkbox">Auto previews</label>
-      <label class="check"><input id="toggle-hints" type="checkbox">Hierarchy hints</label>
-      <button class="ghost" data-manual-preview="true">Load previews</button>
-      <button class="ghost" data-run-command="python-hover.searchDocs">Search docs</button>
-      <button class="ghost" data-open-settings="python-hover.ui.moduleBrowser">Settings</button>
+      <label class="check"><input id="toggle-private" data-focus-id="toggle-private" type="checkbox">Show private</label>
+      <label class="check"><input id="toggle-documented" data-focus-id="toggle-documented" type="checkbox">Documented only</label>
+      <label class="check"><input id="toggle-auto" data-focus-id="toggle-auto" type="checkbox">Auto previews</label>
+      <label class="check"><input id="toggle-hints" data-focus-id="toggle-hints" type="checkbox">Hierarchy hints</label>
+      <button class="ghost" data-manual-preview="true" data-focus-id="manual-preview">Load previews</button>
+      <button class="ghost" data-run-command="python-hover.searchDocs" data-focus-id="search-docs">Search docs</button>
+      <button class="ghost" data-open-settings="python-hover.ui.moduleBrowser" data-focus-id="module-settings">Settings</button>
     </div>
   </header>
 
   <div class="split">
-    <aside class="sidebar">
+    <aside class="sidebar" id="sidebar">
       <section class="sidebar-block" id="module-block">
         <div class="sidebar-label">Module</div>
         <div class="module-title">${this.escapeHtml(moduleName)}</div>
-        <div class="pill-row" id="sidebar-meta"></div>
-        <div class="breadcrumbs" id="breadcrumbs"></div>
+        <div class="pill-row" id="sidebar-meta">${initialSidebarMeta}</div>
+        <div class="breadcrumbs" id="breadcrumbs"><span class="crumb current">${this.escapeHtml(moduleName)}</span></div>
       </section>
 
       <section class="sidebar-block" id="module-actions-block">
         <div class="sidebar-section-head">
           <div class="sidebar-label">Module Actions</div>
-          <div class="muted" id="current-scope"></div>
+          <div class="muted" id="current-scope">${this.escapeHtml(moduleName)}</div>
         </div>
-        <div class="stack" id="module-actions"></div>
+        <div class="stack" id="module-actions">${initialModuleActions}</div>
       </section>
 
       <section class="sidebar-block" id="selected-symbol-block">
         <div class="sidebar-section-head">
           <div class="sidebar-label">Selected Symbol</div>
-          <div class="muted" id="detail-meta"></div>
+          <div class="muted" id="detail-meta">${initialSelectedDetail.meta}</div>
         </div>
-        <div class="detail-block" id="detail-panel"></div>
+        <div class="detail-block" id="detail-panel">${initialSelectedDetail.html}</div>
       </section>
 
       <section class="sidebar-block" id="namespaces-block">
         <div class="sidebar-section-head">
           <div class="sidebar-label">Namespaces</div>
-          <div class="muted" id="branch-meta"></div>
+          <div class="muted" id="branch-meta">${this.escapeHtml(initialNamespaces.meta)}</div>
         </div>
-        <div class="nav-list" id="branch-list"></div>
+        <div class="nav-list" id="branch-list">${initialNamespaces.html}</div>
       </section>
     </aside>
 
@@ -587,727 +886,20 @@ export class ModuleBrowserPanel {
       <header class="list-header">
         <div>
           <div class="list-caption">Symbols</div>
-          <div class="list-title" id="list-title"></div>
+          <div class="list-title" id="list-title">${this.escapeHtml(initialRows.title)}</div>
         </div>
-        <div class="list-meta" id="list-meta"></div>
+        <div class="list-meta" id="list-meta">${this.escapeHtml(initialRows.meta)}</div>
       </header>
       <div class="kind-bar">
-        <div class="kind-row" id="kind-row"></div>
+        <div class="kind-row" id="kind-row">${initialKindFilters}</div>
       </div>
-      <div class="results" id="results"></div>
+      <div class="results" id="results">${initialRows.html}</div>
     </section>
   </div>
 </div>
 
-<script nonce="${nonce}">
-  const vscode = acquireVsCodeApi();
-  const moduleName = ${JSON.stringify(moduleName)};
-  const symbols = ${data};
-  const defaults = ${settingsData};
-  const previewCache = new Map();
-  const requestedPreviews = new Set();
-  const stateVersion = 2;
-  const restored = vscode.getState() || {};
-  const sameModule = restored.stateVersion === stateVersion && restored.moduleName === moduleName;
-
-  let query = sameModule && typeof restored.query === 'string' ? restored.query : '';
-  let activeKind = sameModule && typeof restored.activeKind === 'string' ? restored.activeKind : 'all';
-  let currentPath = sameModule && Array.isArray(restored.currentPath) ? restored.currentPath : [];
-  let selectedPackage = sameModule && typeof restored.selectedPackage === 'string' ? restored.selectedPackage : 'all';
-  let selectedSymbolName = sameModule && typeof restored.selectedSymbolName === 'string' ? restored.selectedSymbolName : '';
-  let viewMode = sameModule && typeof restored.viewMode === 'string' ? restored.viewMode : defaults.defaultView;
-  let sortMode = sameModule && typeof restored.sortMode === 'string' ? restored.sortMode : defaults.defaultSort;
-  let density = sameModule && typeof restored.density === 'string' ? restored.density : defaults.defaultDensity;
-  let showPrivate = sameModule && typeof restored.showPrivate === 'boolean' ? restored.showPrivate : defaults.showPrivateSymbols;
-  let showDocumentedOnly = sameModule && typeof restored.showDocumentedOnly === 'boolean' ? restored.showDocumentedOnly : false;
-  let autoLoadPreviews = sameModule && typeof restored.autoLoadPreviews === 'boolean' ? restored.autoLoadPreviews : defaults.autoLoadPreviews;
-  let previewRequestId = 0;
-
-  const queryInput = document.getElementById('query');
-  const packageFilter = document.getElementById('package-filter');
-  const sortFilter = document.getElementById('sort-filter');
-  const viewFilter = document.getElementById('view-filter');
-  const togglePrivate = document.getElementById('toggle-private');
-  const toggleDocumented = document.getElementById('toggle-documented');
-  const toggleAuto = document.getElementById('toggle-auto');
-  const toggleHints = document.getElementById('toggle-hints');
-  const moduleActionsBlockEl = document.getElementById('module-actions-block');
-  const selectedSymbolBlockEl = document.getElementById('selected-symbol-block');
-  const namespacesBlockEl = document.getElementById('namespaces-block');
-  const sidebarMetaEl = document.getElementById('sidebar-meta');
-  const breadcrumbsEl = document.getElementById('breadcrumbs');
-  const moduleActionsEl = document.getElementById('module-actions');
-  const currentScopeEl = document.getElementById('current-scope');
-  const detailMetaEl = document.getElementById('detail-meta');
-  const detailPanelEl = document.getElementById('detail-panel');
-  const branchMetaEl = document.getElementById('branch-meta');
-  const branchListEl = document.getElementById('branch-list');
-  const listTitleEl = document.getElementById('list-title');
-  const listMetaEl = document.getElementById('list-meta');
-  const kindRowEl = document.getElementById('kind-row');
-  const densityRowEl = document.getElementById('density-row');
-  const resultsEl = document.getElementById('results');
-
-  queryInput.value = query;
-  sortFilter.value = sortMode;
-  viewFilter.value = viewMode;
-  togglePrivate.checked = showPrivate;
-  toggleDocumented.checked = showDocumentedOnly;
-  toggleAuto.checked = autoLoadPreviews;
-  toggleHints.checked = defaults.showHierarchyHints;
-
-  for (const symbol of symbols) {
-    const preview = initialPreview(symbol);
-    if (hasInitialPreviewData(preview)) {
-      previewCache.set(symbol.name, preview);
-      requestedPreviews.add(symbol.name);
-    }
-  }
-
-  queryInput.addEventListener('input', event => {
-    query = event.target.value || '';
-    if (query.trim()) {
-      currentPath = [];
-    }
-    render();
-  });
-
-  packageFilter.addEventListener('change', event => {
-    selectedPackage = event.target.value || 'all';
-    render();
-  });
-
-  sortFilter.addEventListener('change', event => {
-    sortMode = event.target.value || defaults.defaultSort;
-    defaults.defaultSort = sortMode;
-    vscode.postMessage({ type: 'update-setting', key: 'python-hover.ui.moduleBrowser.defaultSort', value: sortMode });
-    render();
-  });
-
-  viewFilter.addEventListener('change', event => {
-    viewMode = event.target.value || defaults.defaultView;
-    defaults.defaultView = viewMode;
-    vscode.postMessage({ type: 'update-setting', key: 'python-hover.ui.moduleBrowser.defaultView', value: viewMode });
-    render();
-  });
-
-  togglePrivate.addEventListener('change', event => {
-    showPrivate = event.target.checked;
-    vscode.postMessage({ type: 'update-setting', key: 'python-hover.ui.moduleBrowser.showPrivateSymbols', value: showPrivate });
-    render();
-  });
-
-  toggleDocumented.addEventListener('change', event => {
-    showDocumentedOnly = event.target.checked;
-    render();
-  });
-
-  toggleAuto.addEventListener('change', event => {
-    autoLoadPreviews = event.target.checked;
-    vscode.postMessage({ type: 'update-setting', key: 'python-hover.ui.moduleBrowser.autoLoadPreviews', value: autoLoadPreviews });
-    render();
-  });
-
-  toggleHints.addEventListener('change', event => {
-    defaults.showHierarchyHints = event.target.checked;
-    vscode.postMessage({ type: 'update-setting', key: 'python-hover.ui.moduleBrowser.showHierarchyHints', value: defaults.showHierarchyHints });
-    render();
-  });
-
-  document.addEventListener('click', event => {
-    const target = event.target instanceof Element ? event.target.closest('button') : null;
-    if (!target) {
-      const row = event.target instanceof Element ? event.target.closest('[data-select-symbol]') : null;
-      if (row) {
-        selectedSymbolName = row.getAttribute('data-select-symbol') || '';
-        render();
-      }
-      return;
-    }
-
-    const breadcrumb = target.getAttribute('data-breadcrumb');
-    if (breadcrumb !== null) {
-      currentPath = breadcrumb ? breadcrumb.split('.').filter(Boolean) : [];
-      render();
-      return;
-    }
-
-    const path = target.getAttribute('data-path');
-    if (path) {
-      currentPath = path.split('.').filter(Boolean);
-      viewMode = 'hierarchy';
-      viewFilter.value = 'hierarchy';
-      render();
-      return;
-    }
-
-    const kind = target.getAttribute('data-kind');
-    if (kind) {
-      activeKind = kind;
-      render();
-      return;
-    }
-
-    const densityValue = target.getAttribute('data-density');
-    if (densityValue) {
-      density = densityValue;
-      defaults.defaultDensity = density;
-      vscode.postMessage({ type: 'update-setting', key: 'python-hover.ui.moduleBrowser.defaultDensity', value: density });
-      render();
-      return;
-    }
-
-    if (target.hasAttribute('data-manual-preview')) {
-      queuePreviewLoad(getRenderableRows(), true);
-      return;
-    }
-
-    const openDoc = target.getAttribute('data-open-doc');
-    if (openDoc) {
-      vscode.postMessage({ type: 'open-doc', url: openDoc });
-      return;
-    }
-
-    const pinSymbol = target.getAttribute('data-pin-symbol');
-    if (pinSymbol) {
-      vscode.postMessage({ type: 'pin-symbol', symbol: decodeItem(pinSymbol) });
-      return;
-    }
-
-    const sourceSymbol = target.getAttribute('data-source-symbol');
-    if (sourceSymbol) {
-      vscode.postMessage({ type: 'open-source', symbol: decodeItem(sourceSymbol) });
-      return;
-    }
-
-    const copySymbol = target.getAttribute('data-copy-symbol');
-    if (copySymbol) {
-      vscode.postMessage({ type: 'copy-import', symbol: decodeItem(copySymbol) });
-      return;
-    }
-
-    const command = target.getAttribute('data-run-command');
-    if (command) {
-      vscode.postMessage({ type: 'run-command', command });
-      return;
-    }
-
-    if (target.hasAttribute('data-open-settings')) {
-      vscode.postMessage({ type: 'open-settings', query: target.getAttribute('data-open-settings') || undefined });
-    }
-  });
-
-  function escapeHtml(value) {
-    return String(value)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
-
-  function persistState() {
-    vscode.setState({
-      stateVersion,
-      moduleName,
-      query,
-      activeKind,
-      currentPath,
-      selectedPackage,
-      selectedSymbolName,
-      viewMode,
-      sortMode,
-      density,
-      showPrivate,
-      showDocumentedOnly,
-      autoLoadPreviews,
-    });
-  }
-
-  function normalizeKind(kind) {
-    return kind || 'symbol';
-  }
-
-  function tailName(item) {
-    return item.name.split('.').pop() || item.name;
-  }
-
-  function isPrivateSymbol(item) {
-    return /^_/.test(tailName(item));
-  }
-
-  function relativeParts(item) {
-    if (item.name === moduleName) return [];
-    if (item.name.startsWith(moduleName + '.')) {
-      return item.name.slice(moduleName.length + 1).split('.').filter(Boolean);
-    }
-    return item.name.split('.').filter(Boolean);
-  }
-
-  function pathMatches(parts) {
-    if (parts.length < currentPath.length) return false;
-    return currentPath.every((segment, index) => parts[index] === segment);
-  }
-
-  function currentPrefix() {
-    return currentPath.length > 0 ? moduleName + '.' + currentPath.join('.') : moduleName;
-  }
-
-  function initialPreview(item) {
-    return {
-      name: item.name,
-      title: item.title,
-      kind: item.kind,
-      module: item.module,
-      summary: item.summary,
-      signature: item.signature,
-      url: item.url,
-      sourceUrl: item.sourceUrl,
-    };
-  }
-
-  function hasInitialPreviewData(preview) {
-    return Boolean(preview.summary || preview.signature || preview.sourceUrl || preview.installedVersion);
-  }
-
-  function previewFor(item) {
-    return previewCache.get(item.name) || initialPreview(item);
-  }
-
-  function hasDocs(item) {
-    const preview = previewFor(item);
-    return Boolean(item.url || preview.url || preview.summary || preview.signature || preview.sourceUrl);
-  }
-
-  function truncate(text, maxLength) {
-    if (!text) return '';
-    const clean = String(text).replace(/\\s+/g, ' ').trim();
-    if (clean.length <= maxLength) return clean;
-    return clean.slice(0, maxLength - 1).trimEnd() + '…';
-  }
-
-  function getPackages(items) {
-    return [...new Set(items.map(item => item.package).filter(Boolean))].sort((a, b) => a.localeCompare(b));
-  }
-
-  function getKinds(items) {
-    const counts = new Map();
-    for (const item of items) {
-      const kind = normalizeKind(item.kind);
-      counts.set(kind, (counts.get(kind) || 0) + 1);
-    }
-    return [...counts.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-  }
-
-  function getExactRoot() {
-    return symbols.find(item => item.name === moduleName);
-  }
-
-  function buildImportStatement(item) {
-    const rawTitle = item.name;
-    if (!rawTitle || /^__\\w+__$/.test(rawTitle)) return undefined;
-    if (normalizeKind(item.kind) === 'module') {
-      return 'import ' + rawTitle;
-    }
-
-    const moduleRef = item.module || moduleName.split('.')[0] || moduleName;
-    if (!moduleRef || moduleRef === 'builtins') return undefined;
-
-    const segments = rawTitle.split('.').filter(Boolean);
-    let shortName = segments[segments.length - 1] || rawTitle;
-    if (segments.length > 1 && /^(?:method|property|field)$/i.test(normalizeKind(item.kind))) {
-      shortName = segments[0];
-    }
-    return 'from ' + moduleRef + ' import ' + shortName;
-  }
-
-  function collectSymbols(includeKind) {
-    const normalizedQuery = query.trim().toLowerCase();
-    let items = symbols.slice();
-
-    if (selectedPackage !== 'all') {
-      items = items.filter(item => item.package === selectedPackage);
-    }
-    if (!showPrivate) {
-      items = items.filter(item => !isPrivateSymbol(item));
-    }
-    if (showDocumentedOnly) {
-      items = items.filter(item => hasDocs(item));
-    }
-    if (includeKind && activeKind !== 'all') {
-      items = items.filter(item => normalizeKind(item.kind) === activeKind);
-    }
-    if (normalizedQuery) {
-      items = items.filter(item => {
-        const preview = previewFor(item);
-        return [
-          item.name,
-          item.package,
-          item.module,
-          item.kind,
-          preview.summary,
-          preview.signature,
-        ].filter(Boolean).join(' ').toLowerCase().includes(normalizedQuery);
-      });
-    } else {
-      items = items.filter(item => pathMatches(relativeParts(item)));
-    }
-
-    return sortItems(items);
-  }
-
-  function sortItems(items) {
-    return items.slice().sort((left, right) => {
-      const normalizedQuery = query.trim().toLowerCase();
-      if (normalizedQuery) {
-        const relevance = scoreMatch(right, normalizedQuery) - scoreMatch(left, normalizedQuery);
-        if (relevance !== 0) return relevance;
-      }
-      if (sortMode === 'package') {
-        const packageCmp = (left.package || '').localeCompare(right.package || '');
-        if (packageCmp !== 0) return packageCmp;
-      }
-      if (sortMode === 'kind') {
-        const kindCmp = normalizeKind(left.kind).localeCompare(normalizeKind(right.kind));
-        if (kindCmp !== 0) return kindCmp;
-      }
-      return left.name.localeCompare(right.name);
-    });
-  }
-
-  function scoreMatch(item, normalizedQuery) {
-    const fullName = item.name.toLowerCase();
-    const tail = tailName(item).toLowerCase();
-    const moduleRef = (item.module || '').toLowerCase();
-    if (fullName === normalizedQuery) return 120;
-    if (tail === normalizedQuery) return 110;
-    if (fullName.endsWith('.' + normalizedQuery)) return 100;
-    if (fullName.startsWith(normalizedQuery)) return 90;
-    if (tail.startsWith(normalizedQuery)) return 80;
-    if (moduleRef && moduleRef + '.' + tail === normalizedQuery) return 75;
-    if (fullName.includes('.' + normalizedQuery)) return 70;
-    if (tail.includes(normalizedQuery)) return 60;
-    if (fullName.includes(normalizedQuery)) return 40;
-    return 0;
-  }
-
-  function hierarchyView(items) {
-    const namespaces = new Map();
-    const leaves = [];
-
-    for (const item of items) {
-      const parts = relativeParts(item);
-      if (!pathMatches(parts)) continue;
-
-      if (parts.length <= currentPath.length + 1 || query.trim()) {
-        leaves.push(item);
-        continue;
-      }
-
-      const child = parts[currentPath.length];
-      const fullPath = currentPath.concat(child);
-      const key = fullPath.join('.');
-      const existing = namespaces.get(key) || {
-        path: fullPath,
-        name: child,
-        symbolCount: 0,
-        kinds: new Set(),
-      };
-      existing.symbolCount += 1;
-      existing.kinds.add(normalizeKind(item.kind));
-      namespaces.set(key, existing);
-    }
-
-    return {
-      branches: [...namespaces.values()].sort((a, b) => a.path.join('.').localeCompare(b.path.join('.'))),
-      leaves,
-    };
-  }
-
-  function encodeItem(item) {
-    return encodeURIComponent(JSON.stringify(item));
-  }
-
-  function decodeItem(raw) {
-    return JSON.parse(decodeURIComponent(raw));
-  }
-
-  function queuePreviewLoad(items, force) {
-    const pending = items
-      .filter(item => !previewCache.has(item.name) && (force || !requestedPreviews.has(item.name)))
-      .slice(0, defaults.previewBatchSize);
-    if (pending.length === 0) return;
-
-    const requestId = ++previewRequestId;
-    for (const item of pending) {
-      requestedPreviews.add(item.name);
-    }
-    vscode.postMessage({ type: 'load-previews', requestId, symbols: pending });
-  }
-
-  function displayName(item) {
-    const prefix = currentPrefix();
-    if (item.name.startsWith(prefix + '.')) {
-      return item.name.slice(prefix.length + 1);
-    }
-    if (item.name.startsWith(moduleName + '.')) {
-      return item.name.slice(moduleName.length + 1);
-    }
-    if (/[/#]/.test(item.name)) {
-      const anchor = item.name.split('#').pop() || item.name;
-      const parts = anchor.split('/').filter(Boolean);
-      return parts[parts.length - 1] || item.name;
-    }
-    return item.name;
-  }
-
-  function formatRowMeta(item, preview) {
-    const parts = [normalizeKind(preview.kind || item.kind), item.package || moduleName];
-    if (preview.installedVersion) {
-      parts.push('v' + preview.installedVersion);
-    }
-    parts.push(hasDocs(item) ? 'docs' : 'index only');
-    return parts.join(' · ');
-  }
-
-  function renderPackageFilter(items) {
-    const packages = getPackages(items);
-    const options = ['<option value="all">All packages (' + packages.length + ')</option>'];
-    for (const pkg of packages) {
-      const count = items.filter(item => item.package === pkg).length;
-      options.push('<option value="' + escapeHtml(pkg) + '"' + (selectedPackage === pkg ? ' selected' : '') + '>' + escapeHtml(pkg) + ' (' + count + ')</option>');
-    }
-    packageFilter.innerHTML = options.join('');
-  }
-
-  function renderDensityControls() {
-    densityRowEl.innerHTML = [
-      '<button class="segment' + (density === 'comfortable' ? ' active' : '') + '" data-density="comfortable">Comfortable</button>',
-      '<button class="segment' + (density === 'compact' ? ' active' : '') + '" data-density="compact">Compact</button>',
-    ].join('');
-  }
-
-  function renderKindFilters(items) {
-    const chips = ['<button class="kind-chip' + (activeKind === 'all' ? ' active' : '') + '" data-kind="all">All ' + items.length + '</button>'];
-    for (const entry of getKinds(items)) {
-      chips.push('<button class="kind-chip' + (activeKind === entry[0] ? ' active' : '') + '" data-kind="' + escapeHtml(entry[0]) + '">' + escapeHtml(entry[0]) + ' ' + entry[1] + '</button>');
-    }
-    kindRowEl.innerHTML = chips.join('');
-  }
-
-  function renderSidebar(filteredItems, rows, hierarchy) {
-    const exactRoot = getExactRoot();
-    const documented = filteredItems.filter(item => hasDocs(item)).length;
-    sidebarMetaEl.innerHTML = [
-      '<span class="pill">' + symbols.length + ' indexed</span>',
-      '<span class="pill">' + rows.length + ' shown</span>',
-      '<span class="pill">' + documented + ' with docs</span>',
-    ].join('');
-    currentScopeEl.textContent = currentPath.length > 0 ? currentPath.join('.') : moduleName;
-
-    const crumbs = ['<button class="crumb' + (currentPath.length === 0 ? ' current' : '') + '" data-breadcrumb="">' + escapeHtml(moduleName) + '</button>'];
-    for (let index = 0; index < currentPath.length; index++) {
-      const path = currentPath.slice(0, index + 1).join('.');
-      crumbs.push('<button class="crumb' + (index === currentPath.length - 1 ? ' current' : '') + '" data-breadcrumb="' + escapeHtml(path) + '">' + escapeHtml(currentPath[index]) + '</button>');
-    }
-    breadcrumbsEl.innerHTML = crumbs.join('');
-
-    const actions = [];
-    if (exactRoot && exactRoot.url) {
-      actions.push('<button class="primary" data-open-doc="' + escapeHtml(exactRoot.url) + '">Open docs</button>');
-    }
-    if (exactRoot) {
-      actions.push('<button class="ghost" data-pin-symbol="' + encodeItem(exactRoot) + '">Pin module</button>');
-      actions.push('<button class="ghost" data-source-symbol="' + encodeItem(exactRoot) + '">Source</button>');
-      const importStatement = buildImportStatement(exactRoot);
-      if (importStatement) {
-        actions.push('<button class="ghost" data-copy-symbol="' + encodeItem(exactRoot) + '">Copy import</button>');
-      }
-    }
-    moduleActionsBlockEl.classList.toggle('hidden', actions.length === 0);
-    moduleActionsEl.innerHTML = actions.join('');
-
-    renderSelectedDetail(rows);
-
-    if (viewMode !== 'hierarchy') {
-      namespacesBlockEl.classList.add('hidden');
-      branchMetaEl.textContent = '';
-      branchListEl.innerHTML = '';
-      return;
-    }
-
-    namespacesBlockEl.classList.remove('hidden');
-
-    if (query.trim()) {
-      branchMetaEl.textContent = 'Search active';
-      branchListEl.innerHTML = '<div class="sidebar-note">Namespace navigation is hidden while filtering. Clear the search to drill into paths again.</div>';
-      return;
-    }
-
-    branchMetaEl.textContent = hierarchy.branches.length + ' branch' + (hierarchy.branches.length === 1 ? '' : 'es');
-    if (hierarchy.branches.length === 0) {
-      branchListEl.innerHTML = '<div class="sidebar-note">No deeper namespaces are indexed at this level.</div>';
-      return;
-    }
-
-    branchListEl.innerHTML = hierarchy.branches.map(branch => {
-      const kinds = [...branch.kinds].sort().join(', ');
-      return '<button class="nav-item" data-path="' + escapeHtml(branch.path.join('.')) + '">' +
-        '<span class="nav-text"><span class="nav-title">' + escapeHtml(branch.name) + '</span>' +
-        (defaults.showHierarchyHints ? '<span class="sidebar-note">' + escapeHtml(kinds || 'symbol') + '</span>' : '') +
-        '</span>' +
-        '<span class="pill">' + branch.symbolCount + '</span>' +
-      '</button>';
-    }).join('');
-  }
-
-  function renderSelectedDetail(rows) {
-    if (!selectedSymbolName || !rows.some(item => item.name === selectedSymbolName)) {
-      selectedSymbolName = rows[0]?.name || '';
-    }
-
-    const selected = rows.find(item => item.name === selectedSymbolName);
-    if (!selected) {
-      selectedSymbolBlockEl.classList.add('hidden');
-      detailMetaEl.textContent = 'No symbol selected';
-      detailPanelEl.innerHTML = '<div class="sidebar-note">Select a symbol from the list to see its signature, summary, and actions here.</div>';
-      return;
-    }
-
-    selectedSymbolBlockEl.classList.remove('hidden');
-
-    const preview = previewFor(selected);
-    const importStatement = buildImportStatement(selected);
-    const docsUrl = preview.url || selected.url;
-    detailMetaEl.textContent = normalizeKind(preview.kind || selected.kind);
-    detailPanelEl.innerHTML =
-      '<div class="detail-title">' + escapeHtml(displayName(selected)) + '</div>' +
-      '<div class="detail-copy">' + escapeHtml(selected.name) + '</div>' +
-      (preview.signature ? '<div class="signature">' + escapeHtml(truncate(preview.signature, 220)) + '</div>' : '') +
-      '<div class="detail-copy">' + escapeHtml(truncate(preview.summary || 'Preview content loads when docs are hydrated.', 260)) + '</div>' +
-      '<div class="detail-copy">' + escapeHtml(formatRowMeta(selected, preview)) + '</div>' +
-      '<div class="stack">' +
-        (docsUrl ? '<button class="ghost" data-open-doc="' + escapeHtml(docsUrl) + '">Docs</button>' : '') +
-        '<button class="ghost" data-pin-symbol="' + encodeItem(selected) + '">Pin</button>' +
-        '<button class="ghost" data-source-symbol="' + encodeItem(selected) + '">Source</button>' +
-        (importStatement ? '<button class="ghost" data-copy-symbol="' + encodeItem(selected) + '">Copy import</button>' : '') +
-      '</div>';
-  }
-
-  function renderList(rows, hierarchy) {
-    listTitleEl.textContent = query.trim()
-      ? 'Search results'
-      : viewMode === 'hierarchy'
-        ? 'Symbols at ' + (currentPath.length > 0 ? currentPath.join('.') : moduleName)
-        : 'All matching symbols';
-
-    const metaParts = [rows.length + ' item' + (rows.length === 1 ? '' : 's')];
-    if (viewMode === 'hierarchy' && !query.trim()) {
-      metaParts.push(hierarchy.branches.length + ' branch' + (hierarchy.branches.length === 1 ? '' : 'es'));
-    }
-    if (selectedPackage !== 'all') {
-      metaParts.push(selectedPackage);
-    }
-    listMetaEl.textContent = metaParts.join(' · ');
-
-    resultsEl.className = 'results density-' + density;
-    if (rows.length === 0) {
-      resultsEl.innerHTML = '<div class="empty">' + (viewMode === 'hierarchy' && hierarchy.branches.length > 0 && !query.trim()
-        ? 'Choose a namespace from the sidebar to inspect the symbols inside it.'
-        : 'No symbols match the current filters.') + '</div>';
-      return;
-    }
-
-    resultsEl.innerHTML = rows.map(item => {
-      const preview = previewFor(item);
-      const summary = truncate(preview.summary, density === 'compact' ? 110 : 220);
-      const signature = truncate(preview.signature, density === 'compact' ? 100 : 180);
-      const docsUrl = preview.url || item.url;
-      const importStatement = buildImportStatement(item);
-
-      return '<article class="row' + (density === 'compact' ? ' compact' : '') + (selectedSymbolName === item.name ? ' active' : '') + '" data-select-symbol="' + escapeHtml(item.name) + '">' +
-        '<div class="row-head">' +
-          '<div class="row-title-group">' +
-            '<div class="row-title">' + escapeHtml(displayName(item)) + '</div>' +
-            '<div class="row-path">' + escapeHtml(item.name) + '</div>' +
-          '</div>' +
-          '<div class="actions">' +
-            (docsUrl ? '<button class="action" data-open-doc="' + escapeHtml(docsUrl) + '">Docs</button>' : '') +
-            '<button class="action" data-pin-symbol="' + encodeItem(item) + '">Pin</button>' +
-            '<button class="action" data-source-symbol="' + encodeItem(item) + '">Source</button>' +
-            (importStatement ? '<button class="action" data-copy-symbol="' + encodeItem(item) + '">Import</button>' : '') +
-          '</div>' +
-        '</div>' +
-        '<div class="row-meta">' + escapeHtml(formatRowMeta(item, preview)) + '</div>' +
-        (signature ? '<div class="signature">' + escapeHtml(signature) + '</div>' : '') +
-        (summary ? '<div class="row-summary">' + escapeHtml(summary) + '</div>' : '<div class="row-summary">Preview content loads when docs are hydrated.</div>') +
-      '</article>';
-    }).join('');
-  }
-
-  function getRenderableRows() {
-    const scopedItems = collectSymbols(false);
-    const filteredItems = activeKind === 'all'
-      ? scopedItems
-      : scopedItems.filter(item => normalizeKind(item.kind) === activeKind);
-    const hierarchy = hierarchyView(filteredItems);
-    return viewMode === 'hierarchy' && !query.trim() ? hierarchy.leaves : filteredItems;
-  }
-
-  function render() {
-    persistState();
-    sortFilter.value = sortMode;
-    viewFilter.value = viewMode;
-    togglePrivate.checked = showPrivate;
-    toggleDocumented.checked = showDocumentedOnly;
-    toggleAuto.checked = autoLoadPreviews;
-    toggleHints.checked = defaults.showHierarchyHints;
-
-    renderPackageFilter(symbols);
-    renderDensityControls();
-
-    const scopedItems = collectSymbols(false);
-    renderKindFilters(scopedItems);
-
-    const filteredItems = activeKind === 'all'
-      ? scopedItems
-      : scopedItems.filter(item => normalizeKind(item.kind) === activeKind);
-    const hierarchy = hierarchyView(filteredItems);
-    const rows = viewMode === 'hierarchy' && !query.trim() ? hierarchy.leaves : filteredItems;
-
-    renderSidebar(filteredItems, rows, hierarchy);
-    renderList(rows, hierarchy);
-
-    if (autoLoadPreviews) {
-      queuePreviewLoad(rows, false);
-    }
-  }
-
-  window.addEventListener('message', event => {
-    const message = event.data;
-    if (!message || message.type !== 'preview-data' || !Array.isArray(message.previews)) {
-      return;
-    }
-
-    let didChange = false;
-    for (const preview of message.previews) {
-      if (!preview || !preview.name) continue;
-      const previous = previewCache.get(preview.name);
-      const next = JSON.stringify(preview);
-      const current = previous ? JSON.stringify(previous) : '';
-      if (next !== current) {
-        previewCache.set(preview.name, preview);
-        didChange = true;
-      }
-    }
-
-    if (didChange) {
-      render();
-    }
-  });
-
-  render();
-</script>
+<div id="pyhover-module-browser-payload" hidden>${payloadData}</div>
+<script src="${scriptUri}"></script>
 </body>
 </html>`;
   }
@@ -1319,5 +911,14 @@ export class ModuleBrowserPanel {
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;');
+  }
+
+  private serializeForScript(value: unknown): string {
+    return JSON.stringify(value)
+      .replace(/</g, '\\u003c')
+      .replace(/>/g, '\\u003e')
+      .replace(/&/g, '\\u0026')
+      .replace(/\u2028/g, '\\u2028')
+      .replace(/\u2029/g, '\\u2029');
   }
 }

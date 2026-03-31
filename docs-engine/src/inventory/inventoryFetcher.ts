@@ -1,6 +1,6 @@
 import * as https from 'https';
 import { Logger } from '../../../extension/src/logger';
-import { DocKey, HoverDoc, IndexedSymbolSummary, ResolutionSource } from '../../../shared/types';
+import { CustomLibraryConfig, DocKey, HoverDoc, IndexedSymbolSummary, ResolutionSource } from '../../../shared/types';
 import { DiskCache } from '../cache/diskCache';
 import { PyPiClient } from '../pypi/pypiClient';
 import { InventoryParser } from './inventoryParser';
@@ -90,6 +90,8 @@ const DOCS_REQUEST_HEADERS = {
     'Accept': '*/*',
 };
 
+const PYTHON_DOTTED_NAME_RE = /^[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)*$/;
+
 export class InventoryFetcher {
     private static readonly STDLIB_INVENTORY_CACHE = '__python_stdlib__';
     private static readonly CORPUS_META_PAGE_PATTERNS = [
@@ -121,6 +123,7 @@ export class InventoryFetcher {
     private indexedPackageSummariesCache: Array<{ name: string; count: number }> | undefined;
     private indexedSymbolCountCache: number | undefined;
     private docsProviderCache = new Map<string, 'mkdocs' | 'sphinx'>();
+    private invalidPackageNames = new Set<string>();
     private diskCache: DiskCache;
     private pythonVersion: string;
     private allowNetwork: boolean;
@@ -131,7 +134,7 @@ export class InventoryFetcher {
     constructor(
         diskCache: DiskCache,
         pythonVersion: string = '3',
-        customLibraries: any[] = [],
+        customLibraries: CustomLibraryConfig[] = [],
         allowNetwork: boolean = true,
         useKnownDocsUrls = false,
     ) {
@@ -204,7 +207,9 @@ export class InventoryFetcher {
         }
 
         await Promise.all(
-            cachedPackages.map(packageName =>
+            cachedPackages
+                .filter(packageName => this.isLikelyPythonPackageName(packageName))
+                .map(packageName =>
                 this.ensurePackageLoaded(packageName, undefined, packageName === 'builtins').catch(() => undefined)
             )
         );
@@ -217,6 +222,11 @@ export class InventoryFetcher {
      * warmup + hovers never download the same objects.inv twice in parallel.
      */
     private ensureInventoryLoaded(packageName: string, version?: string, isStdlib?: boolean): Promise<void> {
+        if (!this.isLikelyPythonPackageName(packageName)) {
+            this.invalidPackageNames.add(packageName);
+            return Promise.resolve();
+        }
+
         const inventoryCacheName = this.getInventoryCacheName(packageName, isStdlib);
         if (this.cache.has(packageName) || this.cache.has(inventoryCacheName)) {
             if (!this.cache.has(packageName) && this.cache.has(inventoryCacheName)) {
@@ -237,6 +247,33 @@ export class InventoryFetcher {
         return (isStdlib || packageName === 'builtins' || packageName === 'python')
             ? InventoryFetcher.STDLIB_INVENTORY_CACHE
             : packageName;
+    }
+
+    private isLikelyPythonPackageName(packageName: string | undefined): boolean {
+        if (!packageName) {
+            return false;
+        }
+
+        return packageName === 'builtins'
+            || packageName === 'python'
+            || PYTHON_DOTTED_NAME_RE.test(packageName);
+    }
+
+    private isLikelyPythonSymbolName(name: string | undefined): boolean {
+        return !!name && PYTHON_DOTTED_NAME_RE.test(name.trim());
+    }
+
+    private sanitizeInventory(inventory: Map<string, HoverDoc>): Map<string, HoverDoc> {
+        const sanitized = new Map<string, HoverDoc>();
+
+        for (const [name, doc] of inventory) {
+            if (!this.isLikelyPythonSymbolName(name)) {
+                continue;
+            }
+            sanitized.set(name, doc);
+        }
+
+        return sanitized;
     }
 
     private buildInventoryUrl(packageName: string, baseUrl: string): string {
@@ -305,6 +342,10 @@ export class InventoryFetcher {
         // 1. Stdlib
         if (isStdlib || packageName === 'builtins' || packageName === 'python') {
             return `https://docs.python.org/${this.pythonVersion}`;
+        }
+
+        if (!this.isLikelyPythonPackageName(packageName)) {
+            throw new Error(`Invalid package name: ${packageName}`);
         }
 
         // 2. Check in-memory URL cache
@@ -398,6 +439,12 @@ export class InventoryFetcher {
         ].join('|');
         if (this.inventoryLookupCache.has(lookupKey)) {
             return this.inventoryLookupCache.get(lookupKey) ?? null;
+        }
+
+        if (!this.isLikelyPythonPackageName(packageName)) {
+            this.invalidPackageNames.add(packageName);
+            this.inventoryLookupCache.set(lookupKey, null);
+            return null;
         }
 
         // 1. Check in-memory cache; if missing, load — but share the in-flight promise so
@@ -512,7 +559,7 @@ export class InventoryFetcher {
             try {
                 const data = JSON.parse(cached) as Record<string, HoverDoc>;
                 const docsProvider = await this.resolveDocsProviderForPackage(packageName, version, isStdlib);
-                const inventory = new Map<string, HoverDoc>(
+                const inventory = this.sanitizeInventory(new Map<string, HoverDoc>(
                     Object.entries(data).map(([name, doc]) => [
                         name,
                         doc?.source === ResolutionSource.Corpus
@@ -525,7 +572,7 @@ export class InventoryFetcher {
                             }
                             : doc,
                     ]),
-                );
+                ));
                 this.cache.set(inventoryCacheName, inventory);
                 if (packageName !== inventoryCacheName) {
                     this.cache.set(packageName, inventory);
@@ -581,7 +628,7 @@ export class InventoryFetcher {
         try {
             const buffer = await this.fetchBuffer(inventoryUrl);
             const docsProvider = await this.resolveDocsProvider(baseUrl);
-            const inventory = this.parser.parse(buffer, baseUrl, docsProvider);
+            const inventory = this.sanitizeInventory(this.parser.parse(buffer, baseUrl, docsProvider));
             this.cache.set(inventoryCacheName, inventory);
             if (packageName !== inventoryCacheName) {
                 this.cache.set(packageName, inventory);
@@ -609,7 +656,7 @@ export class InventoryFetcher {
                     Logger.log(`Retrying stdlib inventory with canonical URL: ${fallbackUrl}`);
                     const buffer = await this.fetchBuffer(fallbackUrl);
                     const docsProvider = await this.resolveDocsProvider(fallbackBase).catch((): 'sphinx' => 'sphinx');
-                    const inventory = this.parser.parse(buffer, fallbackBase, docsProvider);
+                    const inventory = this.sanitizeInventory(this.parser.parse(buffer, fallbackBase, docsProvider));
                     this.cache.set(inventoryCacheName, inventory);
                     if (packageName !== inventoryCacheName) {
                         this.cache.set(packageName, inventory);
@@ -805,12 +852,11 @@ export class InventoryFetcher {
 
         for (const [pkg, inventory] of inventories) {
             for (const [name, doc] of inventory) {
-                if (name === normalized || name.startsWith(`${normalized}.`) || pkg === normalized) {
-                    const symbolKey = `${name}|${doc.url || ''}|${doc.kind || 'symbol'}`;
-                    if (seen.has(symbolKey)) continue;
-                    seen.add(symbolKey);
-                    results.push(this.toIndexedSymbolSummary(name, doc, pkg));
-                }
+                if (!this.isModuleSymbolMatch(normalized, name, doc)) continue;
+                const symbolKey = `${name}|${doc.url || ''}|${doc.kind || 'symbol'}`;
+                if (seen.has(symbolKey)) continue;
+                seen.add(symbolKey);
+                results.push(this.toIndexedSymbolSummary(name, doc, pkg));
             }
         }
 
@@ -821,6 +867,24 @@ export class InventoryFetcher {
         return finalResults;
     }
 
+    private isModuleSymbolMatch(moduleName: string, symbolName: string, doc: HoverDoc): boolean {
+        if (symbolName === moduleName || symbolName.startsWith(`${moduleName}.`)) {
+            return true;
+        }
+
+        const docModule = doc.module?.trim();
+        if (docModule === moduleName) {
+            return true;
+        }
+
+        const title = doc.title?.trim().replace(/^builtins\./, '');
+        if (title === moduleName || title?.startsWith(`${moduleName}.`)) {
+            return true;
+        }
+
+        return false;
+    }
+
     getIndexedPackages(): string[] {
         if (this.indexedPackagesCache) {
             return this.indexedPackagesCache;
@@ -828,6 +892,8 @@ export class InventoryFetcher {
 
         this.indexedPackagesCache = [...this.cache.keys()]
             .filter(name => name !== InventoryFetcher.STDLIB_INVENTORY_CACHE)
+            .filter(name => !this.invalidPackageNames.has(name))
+            .filter(name => this.isLikelyPythonPackageName(name))
             .sort((a, b) => a.localeCompare(b));
         return this.indexedPackagesCache;
     }

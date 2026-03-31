@@ -1,7 +1,18 @@
 import * as vscode from 'vscode';
 
 function getSettingsResource(): vscode.Uri | undefined {
-    return vscode.window.activeTextEditor?.document.uri ?? vscode.workspace.workspaceFolders?.[0]?.uri;
+    const activeResource = vscode.window.activeTextEditor?.document.uri;
+    if (activeResource) {
+        const folder = vscode.workspace.getWorkspaceFolder(activeResource);
+        return folder?.uri ?? activeResource;
+    }
+
+    return vscode.workspace.workspaceFolders?.[0]?.uri;
+}
+
+function isUnsupportedTargetError(error: unknown): boolean {
+    return error instanceof Error
+        && /does not support the (folder resource|workspace) scope/i.test(error.message);
 }
 
 export async function updateSettingWithPreferredTarget(
@@ -12,25 +23,47 @@ export async function updateSettingWithPreferredTarget(
     const resource = getSettingsResource();
     const scopedConfig = vscode.workspace.getConfiguration(section, resource);
     const inspect = scopedConfig.inspect(key) ?? vscode.workspace.getConfiguration(section).inspect(key);
+    const hasWorkspaceFolder = !!(resource && vscode.workspace.getWorkspaceFolder(resource));
+    const candidateTargets: vscode.ConfigurationTarget[] = [];
 
-    if (inspect?.workspaceFolderValue !== undefined && resource && vscode.workspace.getWorkspaceFolder(resource)) {
-        await scopedConfig.update(key, value, vscode.ConfigurationTarget.WorkspaceFolder);
-        return;
+    if (inspect?.workspaceFolderValue !== undefined && hasWorkspaceFolder) {
+        candidateTargets.push(vscode.ConfigurationTarget.WorkspaceFolder);
     }
 
     if (inspect?.workspaceValue !== undefined) {
-        await scopedConfig.update(key, value, vscode.ConfigurationTarget.Workspace);
-        return;
+        candidateTargets.push(vscode.ConfigurationTarget.Workspace);
     }
 
     if (inspect?.globalValue !== undefined) {
-        await scopedConfig.update(key, value, vscode.ConfigurationTarget.Global);
-        return;
+        candidateTargets.push(vscode.ConfigurationTarget.Global);
     }
 
-    if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
-        await scopedConfig.update(key, value, vscode.ConfigurationTarget.Workspace);
-        return;
+    if (candidateTargets.length === 0) {
+        if (hasWorkspaceFolder) {
+            candidateTargets.push(vscode.ConfigurationTarget.WorkspaceFolder);
+        }
+        if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
+            candidateTargets.push(vscode.ConfigurationTarget.Workspace);
+        }
+        candidateTargets.push(vscode.ConfigurationTarget.Global);
+    }
+
+    const attempted = new Set<vscode.ConfigurationTarget>();
+    for (const target of candidateTargets) {
+        if (attempted.has(target)) {
+            continue;
+        }
+        attempted.add(target);
+
+        try {
+            await scopedConfig.update(key, value, target);
+            return;
+        } catch (error) {
+            if (isUnsupportedTargetError(error)) {
+                continue;
+            }
+            throw error;
+        }
     }
 
     await scopedConfig.update(key, value, vscode.ConfigurationTarget.Global);

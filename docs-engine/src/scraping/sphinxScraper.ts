@@ -8,6 +8,13 @@ const DOCS_REQUEST_HEADERS = {
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
 };
 
+const NON_CONTENT_PAGE_PATTERNS = [
+    /\/py-modindex(?:\.html)?\/?$/i,
+    /\/genindex(?:\.html)?\/?$/i,
+    /\/modindex(?:\.html)?\/?$/i,
+    /\/search(?:\.html)?\/?$/i,
+];
+
 export class SphinxScraper {
     private diskCache: DiskCache;
     private timeout: number;
@@ -15,6 +22,7 @@ export class SphinxScraper {
      *  Capped at 30 pages (raw HTML is large) — oldest entry evicted when full. */
     private htmlCache = new Map<string, string>();
     private static readonly HTML_CACHE_MAX = 30;
+    private readonly loggedFetchSkips = new Set<string>();
 
     constructor(diskCache: DiskCache, timeout: number = 5000) {
         this.diskCache = diskCache;
@@ -28,21 +36,58 @@ export class SphinxScraper {
         return url;
     }
 
+    private normalizeCorpusUrl(url: string): string {
+        const normalized = this.normalizeToHttps(url);
+
+        try {
+            const parsed = new URL(normalized);
+            if (parsed.pathname.endsWith('.rst')) {
+                parsed.pathname = `${parsed.pathname.slice(0, -4)}.html`;
+            }
+            return parsed.toString();
+        } catch {
+            return normalized;
+        }
+    }
+
+    private shouldSkipUrl(url: string): boolean {
+        try {
+            const parsed = new URL(url);
+            return NON_CONTENT_PAGE_PATTERNS.some(pattern => pattern.test(parsed.pathname));
+        } catch {
+            return false;
+        }
+    }
+
+    private logSkippedFetch(url: string, reason: string): void {
+        const key = `${url}|${reason}`;
+        if (this.loggedFetchSkips.has(key)) {
+            return;
+        }
+        this.loggedFetchSkips.add(key);
+        Logger.debug(`SphinxScraper skipped ${url}: ${reason}`);
+    }
+
     getCachedContent(packageName: string, url: string, group?: string): string | null {
-        return this.diskCache.getCorpusEntry(packageName, this.normalizeToHttps(url), group)?.content ?? null;
+        return this.diskCache.getCorpusEntry(packageName, this.normalizeCorpusUrl(url), group)?.content ?? null;
     }
 
     getCachedStructuredContent(packageName: string, url: string, group?: string): StructuredHoverContent | null {
-        return this.diskCache.getCorpusEntry(packageName, this.normalizeToHttps(url), group)?.structuredContent ?? null;
+        return this.diskCache.getCorpusEntry(packageName, this.normalizeCorpusUrl(url), group)?.structuredContent ?? null;
     }
 
     getCachedSeeAlso(packageName: string, url: string, group?: string): string[] | null {
-        return this.diskCache.getCorpusEntry(packageName, this.normalizeToHttps(url), group)?.seeAlso ?? null;
+        return this.diskCache.getCorpusEntry(packageName, this.normalizeCorpusUrl(url), group)?.seeAlso ?? null;
     }
 
     async fetchSeeAlso(packageName: string, url: string, group?: string, forceRefresh = false): Promise<string[]> {
         try {
-            const normalizedUrl = this.normalizeToHttps(url);
+            const normalizedUrl = this.normalizeCorpusUrl(url);
+            if (this.shouldSkipUrl(normalizedUrl)) {
+                this.logSkippedFetch(normalizedUrl, 'non-content page');
+                return [];
+            }
+
             const cached = forceRefresh ? null : this.getCachedSeeAlso(packageName, normalizedUrl, group);
             if (cached) return cached;
 
@@ -94,7 +139,12 @@ export class SphinxScraper {
 
     async fetchContent(packageName: string, url: string, group?: string, forceRefresh = false): Promise<string | null> {
         try {
-            const normalizedUrl = this.normalizeToHttps(url);
+            const normalizedUrl = this.normalizeCorpusUrl(url);
+            if (this.shouldSkipUrl(normalizedUrl)) {
+                this.logSkippedFetch(normalizedUrl, 'non-content page');
+                return null;
+            }
+
             const cached = forceRefresh ? null : this.getCachedContent(packageName, normalizedUrl, group);
             if (cached) return cached;
 
@@ -121,6 +171,11 @@ export class SphinxScraper {
 
             return extracted;
         } catch (e) {
+            const message = e instanceof Error ? e.message : String(e);
+            if (/Status code 404/i.test(message) || /Request timed out/i.test(message)) {
+                this.logSkippedFetch(this.normalizeCorpusUrl(url), message);
+                return null;
+            }
             Logger.error(`SphinxScraper failed for ${url}:`, e);
             return null;
         }

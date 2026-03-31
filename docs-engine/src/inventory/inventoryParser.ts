@@ -2,14 +2,20 @@ import * as zlib from 'zlib';
 import { Logger } from '../../../extension/src/logger';
 import { HoverDoc, ResolutionSource } from '../../../shared/types';
 
-interface InventoryItem {
-    name: string;
-    domain: string;
-    role: string;
-    priority: string;
-    uri: string;
-    dispname: string;
-}
+const PYTHON_SYMBOL_NAME_RE = /^[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)*$/;
+const INCLUDED_PYTHON_ROLES = new Set([
+    'module',
+    'function',
+    'class',
+    'exception',
+    'method',
+    'staticmethod',
+    'classmethod',
+    'attribute',
+    'property',
+    'data',
+    'obj',
+]);
 
 export class InventoryParser {
     parse(buffer: Buffer, baseUrl: string, docsProvider: 'mkdocs' | 'sphinx' = 'sphinx'): Map<string, HoverDoc> {
@@ -61,13 +67,10 @@ export class InventoryParser {
 
                 const name = parts.slice(0, domainIndex).join(' ');
                 const domainRole = parts[domainIndex];
-                const priority = parts[domainIndex + 1];
                 let uri = parts[domainIndex + 2];
-                const dispname = parts.slice(domainIndex + 3).join(' ');
 
-                if (name === 'import') {
-                    Logger.log(`[InventoryParser] Found 'import': ${line}`);
-                    Logger.log(`[InventoryParser] Parsed URI: ${uri}`);
+                if (!this.shouldIncludeEntry(name, domainRole)) {
+                    continue;
                 }
 
                 // Handle relative URIs
@@ -76,13 +79,14 @@ export class InventoryParser {
                 }
 
                 const fullUrl = baseUrl.endsWith('/') ? baseUrl + uri : baseUrl + '/' + uri;
+                const kind = this.mapRoleToKind(domainRole);
 
                 // Store in map
                 // Key: fully qualified name (e.g. pandas.DataFrame)
                 inventory.set(name, {
                     title: name,
                     url: fullUrl,
-                    kind: this.mapRoleToKind(domainRole),
+                    kind,
                     source: ResolutionSource.Corpus,
                     confidence: 1.0,
                     metadata: {
@@ -96,6 +100,19 @@ export class InventoryParser {
         }
 
         return inventory;
+    }
+
+    private shouldIncludeEntry(name: string, domainRole: string): boolean {
+        const [domain = '', role = ''] = domainRole.toLowerCase().split(':', 2);
+        if (domain !== 'py') {
+            return false;
+        }
+
+        if (!INCLUDED_PYTHON_ROLES.has(role)) {
+            return false;
+        }
+
+        return PYTHON_SYMBOL_NAME_RE.test(name.trim());
     }
 
     private mapRoleToKind(domainRole: string): string | undefined {
@@ -115,6 +132,7 @@ export class InventoryParser {
             case 'attribute':
             case 'property':
             case 'data':
+            case 'obj':
                 return 'attribute';
             default:
                 return undefined;

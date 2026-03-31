@@ -7,11 +7,45 @@
  * (codicons for markdown, HTML tags for the panel) — those belong in each renderer.
  */
 
+const DOCSITE_METADATA_BLOCK_PATTERNS = [
+    /^Date:\s+.+\bVersion:\s+/i,
+    /^Download documentation:\s+/i,
+    /^Previous versions?:\s+/i,
+];
+
+const LEGAL_BOILERPLATE_PATTERNS = [
+    /^Copyright\b/im,
+    /\bAll rights reserved\b/i,
+    /\bRedistribution and use in source and binary forms\b/i,
+    /\bPermission is hereby granted, free of charge\b/i,
+    /\bTHIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS? AND CONTRIBUTORS\b/i,
+    /\bWITHOUT WARRANTIES OR CONDITIONS OF ANY KIND\b/i,
+    /\bApache License\b/i,
+    /\bTERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION\b/i,
+    /\bPython Software Foundation License Version\b/i,
+    /\bThe above copyright notice\b/i,
+    /\bNeither the name of\b/i,
+    /\bcontributors may be used to endorse or promote products derived from this software\b/i,
+];
+
+const LEGAL_BLOCK_OPENING_PATTERNS = [
+    /^Copyright\b/i,
+    /^All rights reserved\.?$/i,
+    /^Redistribution and use in source and binary forms\b/i,
+    /^Permission is hereby granted, free of charge\b/i,
+    /^THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS? AND CONTRIBUTORS\b/i,
+    /^Apache License\b/i,
+    /^TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION\b/i,
+    /^Python Software Foundation License Version\b/i,
+    /^The above copyright notice\b/i,
+    /^Neither the name of\b/i,
+];
+
 /**
  * Strip Annotated[Type, Doc('...')] wrappers, keeping only the base type.
  * Handles nested brackets and multi-line Doc() strings.
  */
-export function stripAnnotatedWrappers(sig: string): string {
+function stripAnnotatedWrappers(sig: string): string {
     let result = sig;
     let changed = true;
     let iterations = 0;
@@ -98,17 +132,7 @@ export function cleanRstArtifacts(text: string): string {
     text = text.replace(/\|([^|\n]+)\|_?/g, '$1');
     text = text.replace(/__[ \t]*$/gm, '');
     text = text.replace(/\n{3,}/g, '\n\n');
-    // Normalize Sphinx class/function signature markdown artifacts from Python docs HTML scraping.
-    // <dt class="sig"> wraps <em class="property">class</em> and <em class="sig-param">arg</em>
-    // inside <strong>, producing "***class *Name(*arg*)**" — strip to plain "class Name(arg)".
-    text = text.replace(
-        /\*{1,3}(async def|class|def)\s+\*+([A-Za-z_][A-Za-z0-9_.]*)\s*(\([^)]*\))\s*\*{0,3}/g,
-        (_, kw, name, params) => {
-            const cleanParams = params
-                .replace(/\*([^*,()]+)\*/g, '$1')  // *arg* → arg
-                .replace(/\*{2,}/g, '*');           // *** → * (positional-only separator)
-            return `${kw} ${name}${cleanParams}`;
-        });
+    text = normalizeSphinxSignatureArtifacts(text);
     return text.trim();
 }
 
@@ -130,6 +154,35 @@ export function cleanContentAnnotations(text: string): string {
     return text.trim();
 }
 
+export function stripDocumentationBoilerplate(text: string): string {
+    if (!text.trim()) {
+        return '';
+    }
+
+    const blocks = text
+        .split(/\n{2,}/)
+        .map(block => block.trim())
+        .filter(Boolean);
+    const kept: string[] = [];
+
+    for (const block of blocks) {
+        if (isDocumentationChromeBlock(block)) {
+            continue;
+        }
+
+        if (isLegalBoilerplateBlock(block)) {
+            if (kept.length > 0) {
+                break;
+            }
+            continue;
+        }
+
+        kept.push(block);
+    }
+
+    return kept.join('\n\n').trim();
+}
+
 /**
  * Clean a signature string for display.
  */
@@ -138,15 +191,7 @@ export function cleanSignature(sig: string): string {
     sig = sig.replace(/\s*\[\[source\]\]\([^\s)]+\)/gi, '');
     sig = sig.replace(/<\w[\w.]*\s+object\s+at\s+0x[0-9a-f]+>/gi, '...');
     sig = sig.replace(/<_py_warnings\.deprecated\s+object\s+at\s+0x[0-9a-f]+>/gi, '');
-    // Normalize Sphinx signature emphasis: "***class *str(*arg*)**" → "class str(arg)"
-    sig = sig.replace(
-        /\*{1,3}(async def|class|def)\s+\*+([A-Za-z_][A-Za-z0-9_.]*)\s*(\([^)]*\))\s*\*{0,3}/g,
-        (_, kw, name, params) => {
-            const cleanParams = params
-                .replace(/\*([^*,()]+)\*/g, '$1')
-                .replace(/\*{2,}/g, '*');
-            return `${kw} ${name}${cleanParams}`;
-        });
+    sig = normalizeSphinxSignatureArtifacts(sig);
     sig = sig.replace(/,\s*,/g, ',');
     sig = sig.replace(/\(\s*,/g, '(');
     sig = sig.replace(/,\s*\)/g, ')');
@@ -162,6 +207,48 @@ export function cleanContent(text: string): string {
     if (!text) return '';
     text = cleanPydocDump(text);
     text = cleanRstArtifacts(text);
+    text = stripDocumentationBoilerplate(text);
     text = cleanContentAnnotations(text);
     return text;
+}
+
+function isDocumentationChromeBlock(block: string): boolean {
+    return DOCSITE_METADATA_BLOCK_PATTERNS.some(pattern => pattern.test(block));
+}
+
+function normalizeSphinxSignatureArtifacts(text: string): string {
+    return text.replace(
+        /\*{1,3}(async def|class|def)\s+\*+([A-Za-z_][A-Za-z0-9_.]*)\s*(\([^)]*\))\s*\*{0,3}/g,
+        (_match, keyword, name, params) => `${keyword} ${name}${normalizeSphinxSignatureParams(params)}`,
+    );
+}
+
+function normalizeSphinxSignatureParams(params: string): string {
+    return params
+        .replace(/\*([^*,()]+)\*/g, '$1')
+        .replace(/\*{2,}/g, '*');
+}
+
+function isLegalBoilerplateBlock(block: string): boolean {
+    const normalized = block.replace(/\s+/g, ' ').trim();
+    if (!normalized) {
+        return false;
+    }
+
+    if (LEGAL_BLOCK_OPENING_PATTERNS.some(pattern => pattern.test(normalized))) {
+        return true;
+    }
+
+    let signalCount = 0;
+    for (const pattern of LEGAL_BOILERPLATE_PATTERNS) {
+        if (pattern.test(normalized)) {
+            signalCount++;
+        }
+    }
+
+    if (signalCount >= 2) {
+        return true;
+    }
+
+    return normalized.length > 180 && signalCount >= 1;
 }
