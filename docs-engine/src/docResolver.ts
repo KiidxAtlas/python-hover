@@ -134,7 +134,17 @@ export class DocResolver {
     private getCorpusGroupForIndexedSymbol(symbol: IndexedSymbolSummary): string | undefined {
         const root = symbol.package || symbol.name.split('.')[0] || '';
         const baseUrl = this.inventoryFetcher.getPackageBaseUrl(root) || this.inventoryFetcher.getPackageBaseUrl('builtins');
-        return baseUrl?.includes('docs.python.org') ? PYHOVER_PYTHON_STDLIB_CORPUS_GROUP : undefined;
+        if (!baseUrl) {
+            return undefined;
+        }
+
+        try {
+            const parsed = new URL(baseUrl);
+            return parsed.hostname === 'docs.python.org' ? PYHOVER_PYTHON_STDLIB_CORPUS_GROUP : undefined;
+        } catch {
+            // If baseUrl is not a valid URL, fall back to no special corpus group.
+            return undefined;
+        }
     }
 
     async buildPythonStdlibCorpus(
