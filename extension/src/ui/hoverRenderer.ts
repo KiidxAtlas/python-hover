@@ -948,7 +948,7 @@ export class HoverRenderer {
             if (!host) {
                 return null;
             }
-            return host.includes('docs.python.org') ? 'Python docs' : host;
+            return host === 'docs.python.org' ? 'Python docs' : host;
         } catch {
             return null;
         }
