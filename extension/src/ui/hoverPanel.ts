@@ -253,7 +253,7 @@ export class HoverPanel {
     try {
       const host = new URL(candidateUrl).hostname.replace(/^www\./, '');
       if (!host) return undefined;
-      return host.includes('docs.python.org') ? 'Python docs' : host;
+      return host === 'docs.python.org' ? 'Python docs' : host;
     } catch {
       return undefined;
     }
