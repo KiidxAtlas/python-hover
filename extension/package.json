@@ -679,7 +679,7 @@
         "verify": "npm run compile && npm run lint && npm run package"
     },
     "dependencies": {
-        "minimatch": "^9.0.3"
+        "minimatch": "^9.0.7"
     },
     "devDependencies": {
         "@types/vscode": "^1.85.0",
