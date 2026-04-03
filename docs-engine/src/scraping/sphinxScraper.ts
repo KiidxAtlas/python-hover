@@ -1008,6 +1008,15 @@ export class SphinxScraper {
         md = md.replace(/[ \t]+\n/g, '\n');
         md = md.replace(/\n{3,}/g, '\n\n');
 
+        // As a final safety step, strip any script tags that might have been
+        // reintroduced by HTML entity decoding above.
+        let prev: string;
+        const scriptTagPattern = /<script\b[^>]*>[\s\S]*?<\/script>/gi;
+        do {
+            prev = md;
+            md = md.replace(scriptTagPattern, '');
+        } while (md !== prev);
+
         return md.trim();
     }
 }
