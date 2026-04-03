@@ -144,6 +144,7 @@ export function cleanContentAnnotations(text: string): string {
     text = stripAnnotatedWrappers(text);
     text = text.replace(/Doc\(['"][\s\S]*?['"]\)/g, '');
     text = text.replace(/<\w[\w.]*\s+object\s+at\s+0x[0-9a-f]+>/gi, '');
+    text = text.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '');
     text = text.replace(/^\s*\*,?\s*$/gm, '');
     text = text.replace(/\\n/g, '\n');
     text = text.replace(/,\s*,/g, ',');
