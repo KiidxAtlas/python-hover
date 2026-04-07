@@ -53,7 +53,7 @@ export function activate(context: vscode.ExtensionContext) {
         context.subscriptions.push(diagnosticCollection);
 
         let hoverProvider!: HoverProvider;
-        let docsPanel: DocsPanel | undefined;
+        const docsPanel = DocsPanel.getInstance();
         let lastAutoOpenedHoverRequest: { url: string; at: number } | undefined;
         let liveRedirectIntegratedHoverToDocsPage = config.redirectIntegratedHoverToDocsPage;
         let liveAutoOpenCurrentHoverInIntegratedDocs = config.autoOpenCurrentHoverInIntegratedDocs;
@@ -62,10 +62,6 @@ export function activate(context: vscode.ExtensionContext) {
         let hoverRegistration: vscode.Disposable | undefined;
         let hoverSidebarSubscription: vscode.Disposable | undefined;
         const maybeAutoOpenCurrentHoverDocs = () => {
-            if (!docsPanel) {
-                return;
-            }
-
             if (config.docsBrowser !== 'integrated' || !liveAutoOpenCurrentHoverInIntegratedDocs) {
                 lastAutoOpenedHoverRequest = undefined;
                 return;
@@ -585,7 +581,6 @@ export function activate(context: vscode.ExtensionContext) {
         // Open a docs URL in a persistent side-panel browser (ViewColumn.Beside).
         // Uses our own WebviewPanel so the column is guaranteed — VS Code's built-in
         // simpleBrowser.show ignores viewColumn when its panel is already visible.
-        docsPanel = DocsPanel.getInstance();
         docsPanel.configure({
             autoOpenCurrentHoverInIntegratedDocs: liveAutoOpenCurrentHoverInIntegratedDocs,
             onDidToggleAutoOpenCurrentHoverInIntegratedDocs: async enabled => {

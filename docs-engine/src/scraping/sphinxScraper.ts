@@ -1002,6 +1002,10 @@ export class SphinxScraper {
             .replace(/&larr;/g, '←')
             .replace(/&hellip;/g, '…');
 
+        // Final pass: strip any tags reconstructed from decoded HTML entities
+        md = md.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '');
+        md = md.replace(/<[^>]+>/gim, '');
+
         // Normalize whitespace
         md = md.replace(/[ \t]+/g, ' ');
         md = md.replace(/\n[ \t]+/g, '\n');

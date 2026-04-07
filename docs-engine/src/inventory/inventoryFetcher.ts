@@ -192,7 +192,7 @@ export class InventoryFetcher {
         for (const pkg of packages) {
             if (this.cache.has(pkg)) {continue;}
             const isStdlibWarmup = pkg === 'typing' || pkg === 'asyncio' || pkg === 'builtins';
-            void this.ensureInventoryLoaded(pkg, undefined, isStdlibWarmup ? true : undefined).catch(() => { });
+            void this.ensureInventoryLoaded(pkg, undefined, isStdlibWarmup ? true : undefined).catch((e) => { Logger.log(`Warmup failed for ${pkg}: ${e}`); });
         }
     }
 
@@ -649,7 +649,12 @@ export class InventoryFetcher {
 
             // For stdlib, retry with the canonical /3/ URL in case the versioned URL
             // is unavailable (e.g. pre-release Python where docs aren't published yet).
-            if (isStdlib && !inventoryUrl.includes('/docs.python.org/3/')) {
+            let isPythonDocsCanonical = false;
+            try {
+                const parsed = new URL(inventoryUrl);
+                isPythonDocsCanonical = parsed.hostname === 'docs.python.org' && parsed.pathname.startsWith('/3/');
+            } catch { /* non-URL format */ }
+            if (isStdlib && !isPythonDocsCanonical) {
                 const fallbackBase = 'https://docs.python.org/3';
                 const fallbackUrl = `${fallbackBase}/objects.inv`;
                 try {

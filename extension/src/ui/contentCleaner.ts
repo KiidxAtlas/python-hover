@@ -151,6 +151,9 @@ export function cleanContentAnnotations(text: string): string {
     text = text.replace(/,\s*\)/g, ')');
     text = text.replace(/\s{2,}/g, ' ');
     text = text.replace(/\n{3,}/g, '\n\n');
+    // Final sanitization: strip any tags that may have been reconstructed after earlier replacements
+    text = text.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '');
+    text = text.replace(/<[^>]+>/gi, '');
     return text.trim();
 }
 

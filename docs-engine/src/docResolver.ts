@@ -519,7 +519,7 @@ export class DocResolver {
         for (let i = 0; i < urls.length; i += BATCH) {
             await Promise.all(
                 urls.slice(i, i + BATCH).map(url =>
-                    this.scraper.fetchContent(pkg, url).catch(() => { })
+                    this.scraper.fetchContent(pkg, url).catch((e) => { Logger.log(`[corpus] Scrape failed for ${url}: ${e}`); })
                 )
             );
             if (i + BATCH < urls.length) {
