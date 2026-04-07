@@ -243,7 +243,7 @@ export class DocResolver {
     }
 
     private isPlaceholderContent(text?: string): boolean {
-        if (!text) return false;
+        if (!text) {return false;}
         return text.startsWith('Documentation from')
             || text.startsWith('Documentation for')
             || text === 'No documentation found.'
@@ -252,13 +252,13 @@ export class DocResolver {
 
     private hasUsefulText(text?: string, minLength = 32): boolean {
         const trimmed = text?.trim();
-        if (!trimmed || this.isPlaceholderContent(trimmed)) return false;
+        if (!trimmed || this.isPlaceholderContent(trimmed)) {return false;}
         return trimmed.length >= minLength;
     }
 
     private extractSummaryFromContent(content?: string): string | undefined {
         const trimmed = content?.trim();
-        if (!trimmed) return undefined;
+        if (!trimmed) {return undefined;}
 
         const withoutLeadingLabel = trimmed
             .replace(/^`{1,3}\s*[A-Za-z_][\w.]*\s*`{0,3}\s*\n\n(?=```)/, '')
@@ -284,8 +284,8 @@ export class DocResolver {
     private getStructuredContent(packageName: string, url?: string, group?: string, content?: string): StructuredHoverContent | undefined {
         const cached = url ? this.scraper.getCachedStructuredContent(packageName, url, group) ?? undefined : undefined;
         const derived = content ? this.scraper.deriveStructuredContent(content) : undefined;
-        if (!cached) return derived;
-        if (!derived) return cached;
+        if (!cached) {return derived;}
+        if (!derived) {return cached;}
 
         return this.shouldPreferDerivedStructuredContent(cached, derived)
             ? derived
@@ -323,9 +323,9 @@ export class DocResolver {
 
     private getSeeAlso(packageName: string, url?: string, group?: string, content?: string): string[] | undefined {
         const cached = url ? this.scraper.getCachedSeeAlso(packageName, url, group) ?? undefined : undefined;
-        if (cached && cached.length > 0) return cached;
+        if (cached && cached.length > 0) {return cached;}
 
-        if (!content) return undefined;
+        if (!content) {return undefined;}
         const derived = this.scraper.deriveSeeAlsoFromMarkdown(content);
         return derived.length > 0 ? derived : undefined;
     }
@@ -336,7 +336,7 @@ export class DocResolver {
             .replace(/\s+/g, ' ')
             .trim();
 
-        if (!normalized) return false;
+        if (!normalized) {return false;}
 
         if (/^(?:class|async\s+def|def)\s+[A-Za-z_][\w.]*\s*\(.*\)\s*(?:->\s*.+)?$/i.test(normalized)) {
             return true;
@@ -395,10 +395,10 @@ export class DocResolver {
     }
 
     private prefetchInventoryEnhancements(packageName: string, url?: string): void {
-        if (!url || !this.enableDocScraping) return;
+        if (!url || !this.enableDocScraping) {return;}
 
         const prefetchKey = `${packageName}:${url}`;
-        if (this.prefetchInFlight.has(prefetchKey)) return;
+        if (this.prefetchInFlight.has(prefetchKey)) {return;}
         this.prefetchInFlight.add(prefetchKey);
 
         void Promise.all([
@@ -488,8 +488,8 @@ export class DocResolver {
     }
 
     private shouldUseImmediateBuiltinStaticPath(key: DocKey, staticDoc: HoverDoc | null): boolean {
-        if (!staticDoc?.url) return false;
-        if (key.package !== 'builtins' && key.module !== 'builtins') return false;
+        if (!staticDoc?.url) {return false;}
+        if (key.package !== 'builtins' && key.module !== 'builtins') {return false;}
         return (key.qualname || key.name).replace(/^builtins\./, '').includes('.');
     }
 
@@ -499,12 +499,12 @@ export class DocResolver {
      * session per package regardless of how many times it is called.
      */
     private triggerFullCorpusBuild(pkg: string): void {
-        if (!this.shouldBuildFullCorpus()) return;
-        if (!pkg || this.fullCorpusBuilt.has(pkg)) return;
+        if (!this.shouldBuildFullCorpus()) {return;}
+        if (!pkg || this.fullCorpusBuilt.has(pkg)) {return;}
         this.fullCorpusBuilt.add(pkg);
 
         const urls = this.inventoryFetcher.getPackageSymbolUrls(pkg);
-        if (urls.length === 0) return;
+        if (urls.length === 0) {return;}
 
         Logger.log(`[corpus] Full build triggered for ${pkg}: ${urls.length} pages`);
         void this.scrapeUrlsThrottled(pkg, urls);
@@ -542,13 +542,13 @@ export class DocResolver {
      * Skipped for builtins (C code), dunders, and bare module-level names.
      */
     private cpythonSourceUrl(key: DocKey): string | undefined {
-        if (!key.isStdlib) return undefined;
-        if (key.package === 'builtins' || key.module === 'builtins') return undefined;
+        if (!key.isStdlib) {return undefined;}
+        if (key.package === 'builtins' || key.module === 'builtins') {return undefined;}
         const qualname = key.qualname || key.name;
         const leaf = qualname.split('.').pop() ?? '';
-        if (!leaf || (leaf.startsWith('__') && leaf.endsWith('__'))) return undefined;
+        if (!leaf || (leaf.startsWith('__') && leaf.endsWith('__'))) {return undefined;}
         const rootModule = (key.module || key.package || '').split('.')[0];
-        if (!rootModule) return undefined;
+        if (!rootModule) {return undefined;}
         const query = `repo:python/cpython path:Lib/${rootModule} "def ${leaf}"`;
         return `https://github.com/search?q=${encodeURIComponent(query)}&type=code`;
     }

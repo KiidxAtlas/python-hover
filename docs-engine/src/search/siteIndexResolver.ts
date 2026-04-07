@@ -139,7 +139,7 @@ export class SiteIndexResolver {
         const entries = docs
             .map<SiteIndexEntry | null>(doc => {
                 const location = doc.location?.trim();
-                if (!location) return null;
+                if (!location) {return null;}
                 const title = doc.title?.trim() || location;
                 return {
                     title,
@@ -156,7 +156,7 @@ export class SiteIndexResolver {
 
     private parseSphinxIndex(text: string, baseUrl: string): SiteIndexEntry[] {
         const json = this.extractSphinxJson(text);
-        if (!json) return [];
+        if (!json) {return [];}
 
         const parsed = JSON.parse(json) as SphinxSearchIndex;
         const filenames = Array.isArray(parsed.filenames) ? parsed.filenames : [];
@@ -165,7 +165,7 @@ export class SiteIndexResolver {
 
         for (let index = 0; index < filenames.length; index++) {
             const filename = filenames[index];
-            if (!filename) continue;
+            if (!filename) {continue;}
             entries.push({
                 title: titles[index] || filename,
                 url: new URL(filename, this.withTrailingSlash(baseUrl)).toString(),
@@ -177,14 +177,14 @@ export class SiteIndexResolver {
 
         const objects = parsed.objects ?? {};
         for (const [prefix, value] of Object.entries(objects)) {
-            if (!value || typeof value !== 'object') continue;
+            if (!value || typeof value !== 'object') {continue;}
             for (const [name, rawMeta] of Object.entries(value as Record<string, unknown>)) {
-                if (!Array.isArray(rawMeta) || rawMeta.length === 0) continue;
+                if (!Array.isArray(rawMeta) || rawMeta.length === 0) {continue;}
                 const docIndex = typeof rawMeta[0] === 'number' ? rawMeta[0] : Number(rawMeta[0]);
-                if (!Number.isInteger(docIndex) || docIndex < 0 || docIndex >= filenames.length) continue;
+                if (!Number.isInteger(docIndex) || docIndex < 0 || docIndex >= filenames.length) {continue;}
 
                 const filename = filenames[docIndex];
-                if (!filename) continue;
+                if (!filename) {continue;}
 
                 const anchor = typeof rawMeta[3] === 'string' && rawMeta[3] && rawMeta[3] !== '-'
                     ? `#${rawMeta[3]}`
@@ -215,13 +215,13 @@ export class SiteIndexResolver {
     }
 
     private inferSphinxKind(rawType: unknown): string | undefined {
-        if (typeof rawType !== 'string') return undefined;
+        if (typeof rawType !== 'string') {return undefined;}
         const normalized = rawType.toLowerCase();
-        if (normalized.includes('class')) return 'class';
-        if (normalized.includes('function')) return 'function';
-        if (normalized.includes('method')) return 'method';
-        if (normalized.includes('module')) return 'module';
-        if (normalized.includes('attribute') || normalized.includes('property')) return 'attribute';
+        if (normalized.includes('class')) {return 'class';}
+        if (normalized.includes('function')) {return 'function';}
+        if (normalized.includes('method')) {return 'method';}
+        if (normalized.includes('module')) {return 'module';}
+        if (normalized.includes('attribute') || normalized.includes('property')) {return 'attribute';}
         return undefined;
     }
 
@@ -230,7 +230,7 @@ export class SiteIndexResolver {
         const deduped: SiteIndexEntry[] = [];
         for (const entry of entries) {
             const key = `${entry.title}|${entry.url}`;
-            if (seen.has(key)) continue;
+            if (seen.has(key)) {continue;}
             seen.add(key);
             deduped.push(entry);
         }
@@ -257,17 +257,17 @@ export class SiteIndexResolver {
         const packageName = key.package.toLowerCase();
         let score = 0;
 
-        if (symbolName === fullName || symbolName === qualname) score = Math.max(score, 1000);
-        if (title === fullName || title === qualname) score = Math.max(score, 960);
-        if (symbolName === `${moduleName}.${leaf}`) score = Math.max(score, 920);
-        if (title === `${moduleName}.${leaf}`) score = Math.max(score, 880);
-        if (symbolName === leaf || title === leaf) score = Math.max(score, 820);
-        if (leaf && (symbolName?.endsWith(`.${leaf}`) || title.endsWith(`.${leaf}`))) score = Math.max(score, 720);
-        if (qualname === packageName && (title === packageName || symbolName === packageName)) score = Math.max(score, 900);
-        if (title.includes(qualname)) score = Math.max(score, 680);
-        if (summary.includes(qualname)) score = Math.max(score, 580);
-        if (title.includes(leaf)) score = Math.max(score, 520);
-        if (summary.includes(leaf)) score = Math.max(score, 420);
+        if (symbolName === fullName || symbolName === qualname) {score = Math.max(score, 1000);}
+        if (title === fullName || title === qualname) {score = Math.max(score, 960);}
+        if (symbolName === `${moduleName}.${leaf}`) {score = Math.max(score, 920);}
+        if (title === `${moduleName}.${leaf}`) {score = Math.max(score, 880);}
+        if (symbolName === leaf || title === leaf) {score = Math.max(score, 820);}
+        if (leaf && (symbolName?.endsWith(`.${leaf}`) || title.endsWith(`.${leaf}`))) {score = Math.max(score, 720);}
+        if (qualname === packageName && (title === packageName || symbolName === packageName)) {score = Math.max(score, 900);}
+        if (title.includes(qualname)) {score = Math.max(score, 680);}
+        if (summary.includes(qualname)) {score = Math.max(score, 580);}
+        if (title.includes(leaf)) {score = Math.max(score, 520);}
+        if (summary.includes(leaf)) {score = Math.max(score, 420);}
         if (moduleName && title.includes(moduleName) && (title.includes(leaf) || summary.includes(leaf))) {
             score += 40;
         }
@@ -282,24 +282,24 @@ export class SiteIndexResolver {
         const cleaned = text
             ?.replace(/\s+/g, ' ')
             .trim();
-        if (!cleaned) return undefined;
+        if (!cleaned) {return undefined;}
         return cleaned.length > 320 ? `${cleaned.slice(0, 317).trimEnd()}...` : cleaned;
     }
 
     private inferKindFromTitle(title: string): string | undefined {
         const normalized = title.trim();
-        if (!normalized) return undefined;
-        if (/\bmodule\b/i.test(normalized)) return 'module';
-        if (/^[A-Z][A-Za-z0-9_]+(?:\.[A-Z][A-Za-z0-9_]+)*$/.test(normalized)) return 'class';
-        if (/\(\)$/.test(normalized) || /\bfunction\b/i.test(normalized)) return 'function';
+        if (!normalized) {return undefined;}
+        if (/\bmodule\b/i.test(normalized)) {return 'module';}
+        if (/^[A-Z][A-Za-z0-9_]+(?:\.[A-Z][A-Za-z0-9_]+)*$/.test(normalized)) {return 'class';}
+        if (/\(\)$/.test(normalized) || /\bfunction\b/i.test(normalized)) {return 'function';}
         return undefined;
     }
 
     private extractSymbolName(title: string): string | undefined {
         const normalized = title.trim();
-        if (!normalized) return undefined;
+        if (!normalized) {return undefined;}
         const codeMatch = /`([^`]+)`/.exec(normalized);
-        if (codeMatch) return codeMatch[1];
+        if (codeMatch) {return codeMatch[1];}
         const leadingWord = /^([A-Za-z_][\w.]+)/.exec(normalized);
         return leadingWord?.[1];
     }

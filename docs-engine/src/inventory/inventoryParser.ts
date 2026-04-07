@@ -42,14 +42,14 @@ export class InventoryParser {
             // 3. Parse lines
             const lines = content.split('\n');
             for (const line of lines) {
-                if (!line.trim()) continue;
+                if (!line.trim()) {continue;}
 
                 // Format: name domain:role priority uri dispname
                 // Example: pandas.DataFrame py:class 1 api/pandas.DataFrame.html -
                 // Example with spaces: import path std:term -1 glossary.html#term-import-path -
 
                 const parts = line.split(/\s+/);
-                if (parts.length < 4) continue;
+                if (parts.length < 4) {continue;}
 
                 // Find the domain:role column (heuristic: contains ':' and followed by a number)
                 let domainIndex = -1;

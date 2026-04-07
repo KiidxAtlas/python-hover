@@ -44,17 +44,17 @@ export class HoverPanel {
   }
 
   static goBack(): boolean {
-    if (!HoverPanel.currentPanel) return false;
+    if (!HoverPanel.currentPanel) {return false;}
     return HoverPanel.currentPanel.moveHistory(-1);
   }
 
   static goForward(): boolean {
-    if (!HoverPanel.currentPanel) return false;
+    if (!HoverPanel.currentPanel) {return false;}
     return HoverPanel.currentPanel.moveHistory(1);
   }
 
   static jumpTo(index: number): boolean {
-    if (!HoverPanel.currentPanel) return false;
+    if (!HoverPanel.currentPanel) {return false;}
     return HoverPanel.currentPanel.jumpToHistory(index);
   }
 
@@ -97,7 +97,7 @@ export class HoverPanel {
 
     this.navigationIndex = nextIndex;
     const doc = this.currentDoc();
-    if (!doc) return false;
+    if (!doc) {return false;}
     this.update(doc);
     return true;
   }
@@ -109,7 +109,7 @@ export class HoverPanel {
 
     this.navigationIndex = index;
     const doc = this.currentDoc();
-    if (!doc) return false;
+    if (!doc) {return false;}
     this.update(doc);
     return true;
   }
@@ -160,7 +160,7 @@ export class HoverPanel {
 
   private buildDocsHref(url: string, kind: 'docs' | 'devdocs' = 'docs'): string {
     const trimmed = url.trim();
-    if (!trimmed) return '';
+    if (!trimmed) {return '';}
     if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
       return `command:python-hover.openDocLink?${this.encodeCommandArgs({ url: trimmed, kind })}`;
     }
@@ -189,7 +189,7 @@ export class HoverPanel {
     }
 
     const text = this.markdownish(this.escape(cleanContent(section.content)));
-    if (!text.trim()) return '';
+    if (!text.trim()) {return '';}
 
     if (isNoteSection) {
       return `<div class="structured-block kind-note${roleClass}">${title}<div class="callout">${text}</div></div>`;
@@ -219,8 +219,8 @@ export class HoverPanel {
 
     switch (doc.source) {
       case 'SearchIndex':
-        if (provider === 'mkdocs') return 'MkDocs index';
-        if (provider === 'sphinx') return 'Sphinx index';
+        if (provider === 'mkdocs') {return 'MkDocs index';}
+        if (provider === 'sphinx') {return 'Sphinx index';}
         return 'Site index';
       case 'Corpus': return 'Corpus';
       case 'Static': return 'Static docs';
@@ -252,7 +252,7 @@ export class HoverPanel {
 
     try {
       const host = new URL(candidateUrl).hostname.replace(/^www\./, '');
-      if (!host) return undefined;
+      if (!host) { return undefined; }
       return host === 'docs.python.org' ? 'Python docs' : host;
     } catch {
       return undefined;
@@ -477,7 +477,7 @@ export class HoverPanel {
         let signatureHtml = '';
         if (doc.signature) {
             let sig = cleanSignature(doc.signature);
-          if (sig.startsWith('(')) sig = `${displayTitle}${sig}`;
+          if (sig.startsWith('(')) {sig = `${displayTitle}${sig}`;}
           signatureHtml = `<section class="card signature-card"><div class="section-kicker">Signature</div>${this.renderSignatureBody(sig)}</section>`;
         } else if (doc.overloads && doc.overloads.length > 0) {
           signatureHtml = `<section class="card signature-card"><div class="section-kicker">Overloads</div><div class="signature-stack">${doc.overloads
@@ -949,7 +949,7 @@ export class HoverPanel {
     }
 
   private formatKindLabel(kind?: string): string {
-    if (!kind) return 'Function';
+    if (!kind) {return 'Function';}
     return kind.charAt(0).toUpperCase() + kind.slice(1).toLowerCase();
   }
 }

@@ -53,7 +53,7 @@ function stripAnnotatedWrappers(sig: string): string {
         changed = false;
         iterations++;
         const idx = result.indexOf('Annotated[');
-        if (idx === -1) break;
+        if (idx === -1) {break;}
 
         const start = idx + 'Annotated['.length;
         let depth = 1;
@@ -61,7 +61,7 @@ function stripAnnotatedWrappers(sig: string): string {
         let end = -1;
         for (let i = start; i < result.length; i++) {
             const ch = result[i];
-            if (ch === '[' || ch === '(') depth++;
+            if (ch === '[' || ch === '(') {depth++;}
             else if (ch === ']' || ch === ')') {
                 depth--;
                 if (depth === 0) { end = i; break; }
@@ -72,7 +72,7 @@ function stripAnnotatedWrappers(sig: string): string {
                 const quote = ch;
                 i++;
                 while (i < result.length && result[i] !== quote) {
-                    if (result[i] === '\\') i++;
+                    if (result[i] === '\\') {i++;}
                     i++;
                 }
             }
@@ -204,7 +204,7 @@ export function cleanSignature(sig: string): string {
  * Returns cleaned content ready for format-specific rendering.
  */
 export function cleanContent(text: string): string {
-    if (!text) return '';
+    if (!text) {return '';}
     text = cleanPydocDump(text);
     text = cleanRstArtifacts(text);
     text = stripDocumentationBoilerplate(text);

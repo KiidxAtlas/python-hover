@@ -73,15 +73,15 @@ export class Config {
     get customLibraries(): CustomLibraryConfig[] {
         const raw = this.config.get<unknown[]>('customLibraries', []);
         return raw.flatMap(entry => {
-            if (!entry || typeof entry !== 'object') return [];
+            if (!entry || typeof entry !== 'object') {return [];}
 
             const candidate = entry as { name?: unknown; baseUrl?: unknown; inventoryUrl?: unknown };
-            if (typeof candidate.name !== 'string' || typeof candidate.baseUrl !== 'string') return [];
+            if (typeof candidate.name !== 'string' || typeof candidate.baseUrl !== 'string') {return [];}
 
             const name = candidate.name.trim();
             const baseUrl = candidate.baseUrl.trim();
             const inventoryUrl = typeof candidate.inventoryUrl === 'string' ? candidate.inventoryUrl.trim() : undefined;
-            if (!name || !baseUrl) return [];
+            if (!name || !baseUrl) {return [];}
 
             try {
                 new URL(baseUrl);
@@ -155,7 +155,7 @@ export class Config {
      */
     get interpreterCacheFingerprint(): string {
         const p = this.pythonPath;
-        if (this._fingerprintCache?.path === p) return this._fingerprintCache.fingerprint;
+        if (this._fingerprintCache?.path === p) {return this._fingerprintCache.fingerprint;}
         const fingerprint = crypto.createHash('sha256').update(p).digest('hex').slice(0, 16);
         this._fingerprintCache = { path: p, fingerprint };
         return fingerprint;

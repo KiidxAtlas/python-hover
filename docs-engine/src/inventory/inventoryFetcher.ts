@@ -190,7 +190,7 @@ export class InventoryFetcher {
      */
     warmup(packages: string[] = WARMUP_PACKAGES): void {
         for (const pkg of packages) {
-            if (this.cache.has(pkg)) continue;
+            if (this.cache.has(pkg)) {continue;}
             const isStdlibWarmup = pkg === 'typing' || pkg === 'asyncio' || pkg === 'builtins';
             void this.ensureInventoryLoaded(pkg, undefined, isStdlibWarmup ? true : undefined).catch(() => { });
         }
@@ -384,7 +384,7 @@ export class InventoryFetcher {
                 const baseUrl = await Promise.any(
                     candidates.map(url =>
                         this.checkUrlExists(url).then(exists => {
-                            if (!exists) throw new Error('not found');
+                            if (!exists) {throw new Error('not found');}
                             return url.replace('/objects.inv', '');
                         })
                     )
@@ -723,7 +723,7 @@ export class InventoryFetcher {
      */
     getModuleExports(packageName: string, limit = 16): string[] {
         const inventory = this.cache.get(packageName);
-        if (!inventory) return [];
+        if (!inventory) {return [];}
 
         const seen = new Set<string>();
         const entries: Array<{ label: string; depth: number; kindScore: number }> = [];
@@ -731,10 +731,10 @@ export class InventoryFetcher {
         for (const [name, doc] of inventory) {
             const parts = name.split('.');
             const label = parts[parts.length - 1];
-            if (!label || label.startsWith('_')) continue;
+            if (!label || label.startsWith('_')) {continue;}
             // Skip C-extension macros / constants: all-caps with underscores (e.g. NPY_ARRAY_C_CONTIGUOUS)
-            if (/^[A-Z][A-Z0-9_]{2,}$/.test(label)) continue;
-            if (seen.has(label)) continue;
+            if (/^[A-Z][A-Z0-9_]{2,}$/.test(label)) {continue;}
+            if (seen.has(label)) {continue;}
             seen.add(label);
             const kindScore = doc.kind === 'class' ? 0 : doc.kind === 'function' ? 1 : 2;
             entries.push({ label, depth: parts.length, kindScore });
@@ -755,7 +755,7 @@ export class InventoryFetcher {
 
     searchSymbols(query: string): IndexedSymbolSummary[] {
         const q = query.toLowerCase().trim();
-        if (!q) return [];
+        if (!q) {return [];}
         const cached = this.searchCache.get(q);
         if (cached) {
             return cached;
@@ -766,7 +766,7 @@ export class InventoryFetcher {
             for (const [name, doc] of inventory) {
                 if (name.toLowerCase().includes(q)) {
                     const key = `${name}|${doc.url || ''}|${doc.kind || 'symbol'}`;
-                    if (seen.has(key)) continue;
+                    if (seen.has(key)) {continue;}
                     seen.add(key);
                     results.push(this.toIndexedSymbolSummary(name, doc, pkg));
                 }
@@ -775,11 +775,11 @@ export class InventoryFetcher {
         const finalResults = results
             .sort((a, b) => {
                 const aq = a.name.toLowerCase(), bq = b.name.toLowerCase();
-                if (aq === q && bq !== q) return -1;
-                if (bq === q && aq !== q) return 1;
-                if (aq.startsWith(q) && !bq.startsWith(q)) return -1;
-                if (bq.startsWith(q) && !aq.startsWith(q)) return 1;
-                if (a.name.length !== b.name.length) return a.name.length - b.name.length;
+                if (aq === q && bq !== q) {return -1;}
+                if (bq === q && aq !== q) {return 1;}
+                if (aq.startsWith(q) && !bq.startsWith(q)) {return -1;}
+                if (bq.startsWith(q) && !aq.startsWith(q)) {return 1;}
+                if (a.name.length !== b.name.length) {return a.name.length - b.name.length;}
                 return a.name.localeCompare(b.name);
             })
             .slice(0, 200);
@@ -796,7 +796,7 @@ export class InventoryFetcher {
     }): IndexedSymbolSummary | null {
         const label = reference.label.trim();
         const url = reference.url?.trim();
-        if (!label && !url) return null;
+        if (!label && !url) {return null;}
 
         const preferredPackage = reference.currentPackage?.trim();
         const currentModule = reference.currentModule?.trim();
@@ -821,7 +821,7 @@ export class InventoryFetcher {
                     name,
                     doc,
                 });
-                if (score <= 0) continue;
+                if (score <= 0) {continue;}
 
                 const summary = this.toIndexedSymbolSummary(name, doc, pkg);
                 if (!best || score > best.score || (score === best.score && summary.name.length < best.summary.name.length)) {
@@ -835,7 +835,7 @@ export class InventoryFetcher {
 
     getModuleSymbols(moduleName: string, maxSymbols = 5000): IndexedSymbolSummary[] {
         const normalized = moduleName.trim();
-        if (!normalized) return [];
+        if (!normalized) {return [];}
 
         const cacheKey = `${normalized}:${maxSymbols}`;
         const cached = this.moduleSymbolsCache.get(cacheKey);
@@ -852,9 +852,9 @@ export class InventoryFetcher {
 
         for (const [pkg, inventory] of inventories) {
             for (const [name, doc] of inventory) {
-                if (!this.isModuleSymbolMatch(normalized, name, doc)) continue;
+                if (!this.isModuleSymbolMatch(normalized, name, doc)) {continue;}
                 const symbolKey = `${name}|${doc.url || ''}|${doc.kind || 'symbol'}`;
-                if (seen.has(symbolKey)) continue;
+                if (seen.has(symbolKey)) {continue;}
                 seen.add(symbolKey);
                 results.push(this.toIndexedSymbolSummary(name, doc, pkg));
             }
@@ -926,10 +926,10 @@ export class InventoryFetcher {
 
     private extractOwnerName(title?: string): string | undefined {
         const normalized = title?.trim().replace(/^builtins\./, '');
-        if (!normalized) return undefined;
+        if (!normalized) {return undefined;}
 
         const parts = normalized.split('.').filter(Boolean);
-        if (parts.length < 2) return undefined;
+        if (parts.length < 2) {return undefined;}
         return parts[parts.length - 2];
     }
 
@@ -951,8 +951,8 @@ export class InventoryFetcher {
         const titleLeaf = normalizedTitle.split('.').pop() || normalizedTitle;
         let score = 0;
 
-        if (url && doc.url === url) score = Math.max(score, 1000);
-        if (url && doc.url?.split('#')[0] === url.split('#')[0]) score = Math.max(score, 550);
+        if (url && doc.url === url) {score = Math.max(score, 1000);}
+        if (url && doc.url?.split('#')[0] === url.split('#')[0]) {score = Math.max(score, 550);}
 
         if (!normalizedLabel) {
             return score;
@@ -995,7 +995,7 @@ export class InventoryFetcher {
             .replace(/\s+/g, ' ')
             .trim();
 
-        if (!cleaned) return undefined;
+        if (!cleaned) {return undefined;}
         if (
             cleaned.startsWith('Documentation for')
             || cleaned.startsWith('Documentation from')
@@ -1014,7 +1014,7 @@ export class InventoryFetcher {
         }
 
         let n = 0;
-        for (const inv of this.cache.values()) n += inv.size;
+        for (const inv of this.cache.values()) {n += inv.size;}
         this.indexedSymbolCountCache = n;
         return n;
     }
@@ -1027,15 +1027,15 @@ export class InventoryFetcher {
      */
     getPackageSymbolUrls(packageName: string, maxPages = 500): string[] {
         const inventory = this.cache.get(packageName);
-        if (!inventory) return [];
+        if (!inventory) {return [];}
 
         const pages = new Set<string>();
         for (const doc of inventory.values()) {
-            if (!doc.url) continue;
+            if (!doc.url) {continue;}
             const pageUrl = doc.url.split('#')[0];
-            if (!pageUrl || this.shouldSkipCorpusPageUrl(pageUrl)) continue;
-            if (pageUrl) pages.add(pageUrl);
-            if (pages.size >= maxPages) break;
+            if (!pageUrl || this.shouldSkipCorpusPageUrl(pageUrl)) {continue;}
+            if (pageUrl) {pages.add(pageUrl);}
+            if (pages.size >= maxPages) {break;}
         }
 
         return [...pages];
@@ -1043,20 +1043,20 @@ export class InventoryFetcher {
 
     getPackageSymbolTargets(packageName: string, maxTargets = 20_000): Array<{ corpusPackage: string; url: string }> {
         const inventory = this.cache.get(packageName);
-        if (!inventory) return [];
+        if (!inventory) {return [];}
 
         const targets: Array<{ corpusPackage: string; url: string }> = [];
         const seen = new Set<string>();
 
         for (const [name, doc] of inventory) {
-            if (!doc.url || this.shouldSkipCorpusPageUrl(doc.url.split('#')[0])) continue;
+            if (!doc.url || this.shouldSkipCorpusPageUrl(doc.url.split('#')[0])) {continue;}
 
             const corpusPackage = name.includes('.') ? name.split('.')[0] : packageName;
             const targetKey = `${corpusPackage}:${doc.url}`;
-            if (seen.has(targetKey)) continue;
+            if (seen.has(targetKey)) {continue;}
             seen.add(targetKey);
             targets.push({ corpusPackage, url: doc.url });
-            if (targets.length >= maxTargets) break;
+            if (targets.length >= maxTargets) {break;}
         }
 
         return targets;

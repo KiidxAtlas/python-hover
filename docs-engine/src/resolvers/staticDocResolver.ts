@@ -108,7 +108,7 @@ export class StaticDocResolver {
 
     private resolveBuiltinKind(key: DocKey): string | undefined {
         const qualname = (key.qualname || key.name).replace(/^builtins\./, '');
-        if (!qualname) return undefined;
+        if (!qualname) {return undefined;}
 
         if (qualname.includes('.')) {
             return 'method';

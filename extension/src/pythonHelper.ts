@@ -81,7 +81,7 @@ class PythonProcess {
     ) {}
 
     start(): void {
-        if (this.proc) return;
+        if (this.proc) {return;}
         this.dead = false;
         this.buffer = '';
 
@@ -94,7 +94,7 @@ class PythonProcess {
 
             this.proc.stderr!.on('data', (data: Buffer) => {
                 const msg = data.toString().trim();
-                if (msg) Logger.log(`[PythonProcess stderr] ${msg}`);
+                if (msg) {Logger.log(`[PythonProcess stderr] ${msg}`);}
             });
 
             this.proc.on('error', (err) => {
@@ -120,14 +120,14 @@ class PythonProcess {
 
         for (const line of lines) {
             const trimmed = line.trim();
-            if (!trimmed) continue;
+            if (!trimmed) {continue;}
             try {
                 const msg = JSON.parse(trimmed) as { id?: unknown; result?: unknown; error?: unknown };
                 if (typeof msg.id !== 'number') {
                     continue;
                 }
                 const pending = this.pending.get(msg.id);
-                if (!pending) continue;
+                if (!pending) {continue;}
                 this.pending.delete(msg.id);
                 clearTimeout(pending.timer);
                 if (typeof msg.error === 'string' && msg.error) {
@@ -251,9 +251,9 @@ export class PythonHelper {
     }
 
     private isProbablyIncompatibleWithHost(p: string): boolean {
-        if (!p) return true;
-        if (process.platform !== 'win32' && this.looksLikeWindowsPath(p)) return true;
-        if (process.platform === 'win32' && this.looksLikePosixPath(p)) return true;
+        if (!p) {return true;}
+        if (process.platform !== 'win32' && this.looksLikeWindowsPath(p)) {return true;}
+        if (process.platform === 'win32' && this.looksLikePosixPath(p)) {return true;}
         return false;
     }
 
@@ -263,7 +263,7 @@ export class PythonHelper {
 
     private getCandidateInterpreters(): string[] {
         const candidates: string[] = [];
-        if (this.pythonPath) candidates.push(this.pythonPath);
+        if (this.pythonPath) {candidates.push(this.pythonPath);}
         if (process.platform === 'win32') {
             candidates.push('python', 'py');
         } else {
@@ -279,7 +279,7 @@ export class PythonHelper {
             });
             let done = false;
             const timeout = setTimeout(() => {
-                if (done) return;
+                if (done) {return;}
                 done = true;
                 try { proc.kill(); } catch { /* ignore */ }
                 resolve(false);
@@ -290,7 +290,7 @@ export class PythonHelper {
     }
 
     private async ensurePythonPathResolved(): Promise<string | null> {
-        if (this.resolvedPath) return this.resolvedPath;
+        if (this.resolvedPath) {return this.resolvedPath;}
 
         this.resolvedPath = (async () => {
             const candidates = this.getCandidateInterpreters();
@@ -362,7 +362,7 @@ export class PythonHelper {
 
     private async send<T extends PythonCommandName>(cmd: PythonCommandFor<T>, timeoutMs = 3000): Promise<PythonCommandResultMap[T] | null> {
         const proc = await this.getProcess();
-        if (!proc) return null;
+        if (!proc) {return null;}
 
         try {
             return await proc.send(cmd, timeoutMs);
@@ -410,7 +410,7 @@ export class PythonHelper {
             Logger.log(`PythonHelper: resolve failed for ${symbol}: ${result?.error}`);
             if (this.sessionCache.size >= PythonHelper.SESSION_CACHE_MAX) {
                 const oldest = this.sessionCache.keys().next().value;
-                if (oldest !== undefined) this.sessionCache.delete(oldest);
+                if (oldest !== undefined) {this.sessionCache.delete(oldest);}
             }
             this.sessionCache.set(symbol, null);
             return null;
@@ -430,7 +430,7 @@ export class PythonHelper {
         // Evict oldest entry if the cap is reached.
         if (this.sessionCache.size >= PythonHelper.SESSION_CACHE_MAX) {
             const oldest = this.sessionCache.keys().next().value;
-            if (oldest !== undefined) this.sessionCache.delete(oldest);
+            if (oldest !== undefined) {this.sessionCache.delete(oldest);}
         }
         this.sessionCache.set(symbol, info);
         this.diskCache.set(cacheKey, JSON.stringify(info));
@@ -454,7 +454,7 @@ export class PythonHelper {
             return null;
         }
         const result = await this.send({ cmd: 'get_docstring', source, symbol }, 2000);
-        if (!result || this.isErrorResult(result)) return null;
+        if (!result || this.isErrorResult(result)) {return null;}
         return {
             name: symbol,
             module: result.module ?? 'user',
@@ -482,7 +482,7 @@ export class PythonHelper {
             module: moduleName,
         }, 2500);
 
-        if (!result || this.isErrorResult(result)) return null;
+        if (!result || this.isErrorResult(result)) {return null;}
 
         return {
             name: candidates[0],
@@ -522,7 +522,7 @@ export class PythonHelper {
             let out = '';
             let settled = false;
             const done = (v: string) => {
-                if (settled) return;
+                if (settled) {return;}
                 settled = true;
                 clearTimeout(timer);
                 resolve(v);

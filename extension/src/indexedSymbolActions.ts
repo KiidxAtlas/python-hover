@@ -105,19 +105,19 @@ async function findWorkspaceSymbolLocation(symbolName: string): Promise<vscode.L
 
 function scoreWorkspaceSymbolCandidate(candidateName: string, target: string, leaf: string): number {
     const normalized = candidateName.toLowerCase();
-    if (!normalized) return 0;
-    if (normalized === target) return 100;
-    if (normalized.endsWith(`.${target}`)) return 95;
-    if (normalized === leaf) return 85;
-    if (normalized.endsWith(`.${leaf}`)) return 75;
-    if (normalized.includes(target)) return 50;
-    if (normalized.includes(leaf)) return 30;
+    if (!normalized) {return 0;}
+    if (normalized === target) {return 100;}
+    if (normalized.endsWith(`.${target}`)) {return 95;}
+    if (normalized === leaf) {return 85;}
+    if (normalized.endsWith(`.${leaf}`)) {return 75;}
+    if (normalized.includes(target)) {return 50;}
+    if (normalized.includes(leaf)) {return 30;}
     return 0;
 }
 
 function extractLocation(candidate: WorkspaceSymbolCandidate): vscode.Location | undefined {
     const location = candidate.location;
-    if (!location) return undefined;
+    if (!location) {return undefined;}
     if (location instanceof vscode.Location) {
         return location;
     }

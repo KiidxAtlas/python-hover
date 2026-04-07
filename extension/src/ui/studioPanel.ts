@@ -130,7 +130,7 @@ export class StudioPanel {
     }
 
     update(state: StudioState): void {
-        if (!this.panel) return;
+        if (!this.panel) {return;}
         this.panel.title = 'PyHover Studio';
         this.panel.webview.html = this.renderHtml(this.panel.webview, state);
     }

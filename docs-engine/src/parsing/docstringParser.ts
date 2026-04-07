@@ -13,7 +13,7 @@ export interface ParsedDocstring {
 
 export class DocstringParser {
     parse(docstring: string): ParsedDocstring {
-        if (!docstring) return {};
+        if (!docstring) {return {};}
 
         // Heuristic detection
         if (this.isNumpyStyle(docstring)) {
@@ -42,7 +42,7 @@ export class DocstringParser {
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i];
             const trimmed = line.trim();
-            if (!trimmed) continue;
+            if (!trimmed) {continue;}
 
             // Check for underline header
             if (i + 1 < lines.length && /^[-=*]+$/.test(lines[i + 1].trim()) && lines[i + 1].trim().length >= trimmed.length) {
@@ -59,7 +59,7 @@ export class DocstringParser {
             }
         }
 
-        if (minIndent === Infinity) minIndent = 0;
+        if (minIndent === Infinity) {minIndent = 0;}
 
         // 3. Process lines
         const processedLines: string[] = [];
@@ -71,7 +71,7 @@ export class DocstringParser {
         for (let i = 0; i < lines.length; i++) {
             if (isHeader[i]) {
                 // If it's the underline, skip
-                if (/^[-=*]+$/.test(lines[i].trim())) continue;
+                if (/^[-=*]+$/.test(lines[i].trim())) {continue;}
 
                 // It's the title
                 if (inCodeBlock) {
@@ -85,14 +85,14 @@ export class DocstringParser {
                 // Determine level based on underline char (peek next line)
                 const underline = lines[i + 1].trim();
                 let level = '###';
-                if (underline.includes('=')) level = '##';
-                if (underline.includes('*')) level = '###';
+                if (underline.includes('=')) {level = '##';}
+                if (underline.includes('*')) {level = '###';}
 
                 processedLines.push(`\n${level} ${lines[i].trim()}\n`);
                 continue;
             }
 
-            let line = lines[i];
+            const line = lines[i];
             if (line.trim().length === 0) {
                 if (inCodeBlock) {
                     processedLines.push(line);
@@ -144,7 +144,7 @@ export class DocstringParser {
                     // Standard block
                     isCode = currentIndent >= 4 || isGrammar || isPythonPrompt || isContinuation || (inExampleSection && currentIndent >= 2);
                     // Also keep open if indented same as start (e.g. grammar blocks starting at 3)
-                    if (currentIndent >= codeBlockIndent && codeBlockIndent > 0) isCode = true;
+                    if (currentIndent >= codeBlockIndent && codeBlockIndent > 0) {isCode = true;}
                 }
             } else {
                 // Start logic
@@ -160,7 +160,7 @@ export class DocstringParser {
                 }
 
                 // Consistent dedent based on block start
-                let dedentAmount = codeBlockIndent;
+                const dedentAmount = codeBlockIndent;
                 // Cap dedent at 4 for standard blocks to avoid stripping too much if they are deeply indented?
                 // Actually, for grammar blocks at 3, we want to strip 3.
                 // For standard code at 4, strip 4.
@@ -211,7 +211,7 @@ export class DocstringParser {
 
         // Extract summary (first paragraph)
         let i = 0;
-        while (i < lines.length && lines[i].trim() === '') i++;
+        while (i < lines.length && lines[i].trim() === '') {i++;}
         const summaryLines = [];
         while (i < lines.length && lines[i].trim() !== '') {
             summaryLines.push(lines[i].trim());
@@ -239,7 +239,7 @@ export class DocstringParser {
                 // description
                 const match = /^\s*(\w+)\s*:\s*(.*)$/.exec(line);
                 if (match) {
-                    if (!result.parameters) result.parameters = [];
+                    if (!result.parameters) {result.parameters = [];}
                     result.parameters.push({
                         name: match[1],
                         type: match[2],
@@ -251,7 +251,7 @@ export class DocstringParser {
             } else if (currentSection === 'Returns') {
                 // Parse returns: type
                 // description
-                if (!result.returns) result.returns = {};
+                if (!result.returns) {result.returns = {};}
                 if (trimmed !== '') {
                     if (!result.returns.type) {
                         result.returns.type = trimmed;
@@ -260,10 +260,10 @@ export class DocstringParser {
                     }
                 }
             } else if (currentSection === 'Examples') {
-                if (!result.examples) result.examples = [];
+                if (!result.examples) {result.examples = [];}
                 // Collect example lines
                 if (trimmed !== '') {
-                    if (result.examples.length === 0) result.examples.push('');
+                    if (result.examples.length === 0) {result.examples.push('');}
                     result.examples[0] += line + '\n';
                 }
             }
@@ -279,7 +279,7 @@ export class DocstringParser {
 
         // Extract summary
         let i = 0;
-        while (i < lines.length && lines[i].trim() === '') i++;
+        while (i < lines.length && lines[i].trim() === '') {i++;}
         const summaryLines = [];
         while (i < lines.length && lines[i].trim() !== '' && !lines[i].endsWith(':')) {
             summaryLines.push(lines[i].trim());
@@ -311,7 +311,7 @@ export class DocstringParser {
                 // name (type): description
                 const match = /^\s*(\w+)\s*(\((.*)\))?\s*:\s*(.*)$/.exec(line);
                 if (match) {
-                    if (!result.parameters) result.parameters = [];
+                    if (!result.parameters) {result.parameters = [];}
                     result.parameters.push({
                         name: match[1],
                         type: match[3],
@@ -333,7 +333,7 @@ export class DocstringParser {
 
         // Extract summary
         let i = 0;
-        while (i < lines.length && lines[i].trim() === '') i++;
+        while (i < lines.length && lines[i].trim() === '') {i++;}
         const summaryLines = [];
         while (i < lines.length && lines[i].trim() !== '' && !lines[i].trim().startsWith(':')) {
             const line = lines[i].trim();
@@ -356,7 +356,7 @@ export class DocstringParser {
             // :type name: type
             const paramMatch = /^\s*:param\s+(\w+):\s*(.*)$/.exec(line);
             if (paramMatch) {
-                if (!result.parameters) result.parameters = [];
+                if (!result.parameters) {result.parameters = [];}
                 result.parameters.push({
                     name: paramMatch[1],
                     description: paramMatch[2]

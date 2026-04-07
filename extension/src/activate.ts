@@ -166,14 +166,14 @@ export function activate(context: vscode.ExtensionContext) {
         // Only applies to real user files (file: scheme) — Pylance opens many
         // virtual/internal type-stub documents that we must not try to warmup.
         const warmupImportsForDocument = (document: vscode.TextDocument | undefined) => {
-            if (!document || document.languageId !== 'python') return;
-            if (!config.warmupImports || !config.onlineDiscovery) return;
-            if (document.uri.scheme !== 'file') return;
+            if (!document || document.languageId !== 'python') {return;}
+            if (!config.warmupImports || !config.onlineDiscovery) {return;}
+            if (document.uri.scheme !== 'file') {return;}
             hoverProvider.warmupDocumentImports(document);
         };
 
         const warmupConfiguredPackages = () => {
-            if (!config.onlineDiscovery || config.preloadPackages.length === 0) return;
+            if (!config.onlineDiscovery || config.preloadPackages.length === 0) {return;}
             hoverProvider.warmupPackages(config.preloadPackages);
         };
 
@@ -276,7 +276,7 @@ export function activate(context: vscode.ExtensionContext) {
                 let text = importStatement;
                 if (!text) {
                     const doc = hoverProvider.getLastDoc();
-                    if (doc) text = buildImportStatementForDoc(doc);
+                    if (doc) {text = buildImportStatementForDoc(doc);}
                 }
                 if (text) {
                     await vscode.env.clipboard.writeText(text);
@@ -1333,7 +1333,7 @@ export function activate(context: vscode.ExtensionContext) {
 
         context.subscriptions.push(
             vscode.commands.registerCommand('python-hover.openDocsSide', (url: string) => {
-                if (!url) return;
+                if (!url) {return;}
                 docsPanel.show(url);
             })
         );
@@ -1341,7 +1341,7 @@ export function activate(context: vscode.ExtensionContext) {
         context.subscriptions.push(
             vscode.commands.registerCommand('python-hover.openDocLink', async (payload?: string | { url?: string; kind?: string }) => {
                 const { url, kind } = parseDocLinkPayload(payload);
-                if (!url) return;
+                if (!url) {return;}
                 await openConfiguredLink(url, kind);
             })
         );
@@ -1443,7 +1443,7 @@ export function activate(context: vscode.ExtensionContext) {
 
         context.subscriptions.push(
             vscode.commands.registerCommand('python-hover.pinPanelJump', (index?: number) => {
-                if (typeof index !== 'number') return;
+                if (typeof index !== 'number') {return;}
                 HoverPanel.jumpTo(index);
             })
         );
@@ -1456,7 +1456,7 @@ export function activate(context: vscode.ExtensionContext) {
 
         context.subscriptions.push(
             vscode.commands.registerCommand('python-hover.pinIndexedSymbol', async (symbol: IndexedSymbolSummary) => {
-                if (!symbol?.name) return;
+                if (!symbol?.name) {return;}
 
                 const doc = await hoverProvider.resolveIndexedSymbolDoc(symbol);
                 if (!doc) {
@@ -1470,7 +1470,7 @@ export function activate(context: vscode.ExtensionContext) {
 
         context.subscriptions.push(
             vscode.commands.registerCommand('python-hover.openIndexedSymbolSource', async (symbol: IndexedSymbolSummary) => {
-                if (!symbol?.name) return;
+                if (!symbol?.name) {return;}
 
                 const opened = await openIndexedSymbolSource(
                     symbol,
@@ -1552,9 +1552,9 @@ export function activate(context: vscode.ExtensionContext) {
                         }
                     );
 
-                    if (!picked) return;
+                    if (!picked) {return;}
                     const selectedModuleName = (picked as ModulePickItem).moduleName;
-                    if (!selectedModuleName) return;
+                    if (!selectedModuleName) {return;}
                     targetModule = selectedModuleName;
                 }
 
@@ -1624,7 +1624,7 @@ export function activate(context: vscode.ExtensionContext) {
             'PyHover failed to activate. Check the output panel for details.',
             'Show Output'
         ).then(action => {
-            if (action === 'Show Output') Logger.show();
+            if (action === 'Show Output') {Logger.show();}
         });
     }
 }

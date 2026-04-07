@@ -218,7 +218,7 @@
     }
 
     function relativeParts(item) {
-        if (item.name === moduleName) return [];
+        if (item.name === moduleName) {return [];}
         if (item.name.startsWith(moduleName + '.')) {
             return item.name.slice(moduleName.length + 1).split('.').filter(Boolean);
         }
@@ -226,7 +226,7 @@
     }
 
     function pathMatches(parts) {
-        if (parts.length < currentPath.length) return false;
+        if (parts.length < currentPath.length) {return false;}
         return currentPath.every((segment, index) => parts[index] === segment);
     }
 
@@ -261,9 +261,9 @@
     }
 
     function truncate(text, maxLength) {
-        if (!text) return '';
+        if (!text) {return '';}
         const clean = String(text).replace(/\s+/g, ' ').trim();
-        if (clean.length <= maxLength) return clean;
+        if (clean.length <= maxLength) {return clean;}
         return clean.slice(0, maxLength - 1).trimEnd() + '…';
     }
 
@@ -286,13 +286,13 @@
 
     function buildImportStatement(item) {
         const rawTitle = item.name;
-        if (!rawTitle || /^__\w+__$/.test(rawTitle)) return undefined;
+        if (!rawTitle || /^__\w+__$/.test(rawTitle)) {return undefined;}
         if (normalizeKind(item.kind) === 'module') {
             return 'import ' + rawTitle;
         }
 
         const moduleRef = item.module || moduleName.split('.')[0] || moduleName;
-        if (!moduleRef || moduleRef === 'builtins') return undefined;
+        if (!moduleRef || moduleRef === 'builtins') {return undefined;}
 
         const segments = rawTitle.split('.').filter(Boolean);
         let shortName = segments[segments.length - 1] || rawTitle;
@@ -307,15 +307,15 @@
             const normalizedQuery = query.trim().toLowerCase();
             if (normalizedQuery) {
                 const relevance = scoreMatch(right, normalizedQuery) - scoreMatch(left, normalizedQuery);
-                if (relevance !== 0) return relevance;
+                if (relevance !== 0) {return relevance;}
             }
             if (sortMode === 'package') {
                 const packageCmp = (left.package || '').localeCompare(right.package || '');
-                if (packageCmp !== 0) return packageCmp;
+                if (packageCmp !== 0) {return packageCmp;}
             }
             if (sortMode === 'kind') {
                 const kindCmp = normalizeKind(left.kind).localeCompare(normalizeKind(right.kind));
-                if (kindCmp !== 0) return kindCmp;
+                if (kindCmp !== 0) {return kindCmp;}
             }
             return left.name.localeCompare(right.name);
         });
@@ -325,15 +325,15 @@
         const fullName = item.name.toLowerCase();
         const tail = tailName(item).toLowerCase();
         const moduleRef = (item.module || '').toLowerCase();
-        if (fullName === normalizedQuery) return 120;
-        if (tail === normalizedQuery) return 110;
-        if (fullName.endsWith('.' + normalizedQuery)) return 100;
-        if (fullName.startsWith(normalizedQuery)) return 90;
-        if (tail.startsWith(normalizedQuery)) return 80;
-        if (moduleRef && moduleRef + '.' + tail === normalizedQuery) return 75;
-        if (fullName.includes('.' + normalizedQuery)) return 70;
-        if (tail.includes(normalizedQuery)) return 60;
-        if (fullName.includes(normalizedQuery)) return 40;
+        if (fullName === normalizedQuery) {return 120;}
+        if (tail === normalizedQuery) {return 110;}
+        if (fullName.endsWith('.' + normalizedQuery)) {return 100;}
+        if (fullName.startsWith(normalizedQuery)) {return 90;}
+        if (tail.startsWith(normalizedQuery)) {return 80;}
+        if (moduleRef && moduleRef + '.' + tail === normalizedQuery) {return 75;}
+        if (fullName.includes('.' + normalizedQuery)) {return 70;}
+        if (tail.includes(normalizedQuery)) {return 60;}
+        if (fullName.includes(normalizedQuery)) {return 40;}
         return 0;
     }
 
@@ -378,7 +378,7 @@
 
         for (const item of items) {
             const parts = relativeParts(item);
-            if (!pathMatches(parts)) continue;
+            if (!pathMatches(parts)) {continue;}
 
             if (parts.length <= currentPath.length + 1 || query.trim()) {
                 leaves.push(item);
@@ -417,7 +417,7 @@
         const pending = items
             .filter(item => !previewCache.has(item.name) && (force || !requestedPreviews.has(item.name)))
             .slice(0, defaults.previewBatchSize);
-        if (pending.length === 0) return;
+        if (pending.length === 0) {return;}
 
         const requestId = ++previewRequestId;
         for (const item of pending) {
@@ -482,7 +482,7 @@
     }
 
     function reconcileScopedItems() {
-        let scopedItems = collectSymbols(false);
+        const scopedItems = collectSymbols(false);
         if (scopedItems.length > 0) {
             return scopedItems;
         }
@@ -1003,7 +1003,7 @@
 
             let didChange = false;
             for (const preview of message.previews) {
-                if (!preview || !preview.name) continue;
+                if (!preview || !preview.name) {continue;}
                 const previous = previewCache.get(preview.name);
                 const next = JSON.stringify(preview);
                 const current = previous ? JSON.stringify(previous) : '';

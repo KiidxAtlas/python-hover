@@ -201,7 +201,7 @@ export class HoverRenderer {
 
     private renderDescription(md: vscode.MarkdownString, doc: HoverDoc): void {
         let content = buildDescriptionContent(doc);
-        if (!content) return;
+        if (!content) {return;}
 
         if (doc.kind?.toLowerCase() !== 'keyword') {
             md.appendMarkdown(`**$(book) Overview**\n\n`);
@@ -226,7 +226,7 @@ export class HoverRenderer {
         this.renderVersionCompatibility(md, content);
 
         content = this.cleanContent(content);
-        if (!content.trim()) return;
+        if (!content.trim()) {return;}
 
         content = this.enhanceContent(content);
         content = this.formatDescriptionParagraphs(content);
@@ -253,13 +253,13 @@ export class HoverRenderer {
 
     private renderStructuredDescription(md: vscode.MarkdownString, doc: HoverDoc): boolean {
         const sections = getVisibleStructuredDescriptionSections(doc);
-        if (sections.length === 0) return false;
+        if (sections.length === 0) {return false;}
 
         const blocks = sections
             .filter(section => !this.isDuplicateSignatureSection(section, doc.signature))
             .map(section => this.renderStructuredSection(section))
             .filter(Boolean);
-        if (blocks.length === 0) return false;
+        if (blocks.length === 0) {return false;}
         const maxLen = this.config.maxContentLength;
         let remaining = maxLen;
         let wasTruncated = false;
@@ -314,7 +314,7 @@ export class HoverRenderer {
             const items = (section.items ?? [])
                 .map(item => this.enhanceContent(this.cleanContentAnnotations(this.cleanRstArtifacts(item)).trim()))
                 .filter(Boolean);
-            if (items.length === 0) return '';
+            if (items.length === 0) {return '';}
             const listBody = items.map(item => `- ${item}`).join('\n');
             if (isNoteSection) {
                 const label = displayTitle ? `$(info) **${this.escapeMarkdown(displayTitle)}**\n\n` : '$(info) **Note**\n\n';
@@ -330,7 +330,7 @@ export class HoverRenderer {
         text = this.enhanceContent(text);
         text = section.kind === 'note' ? text : this.formatDescriptionParagraphs(text);
         text = this.balanceCodeFences(text).trim();
-        if (!text) return '';
+        if (!text) {return '';}
 
         if (section.role === 'summary') {
             return this.rewriteMarkdownLinks(text);
@@ -345,8 +345,8 @@ export class HoverRenderer {
     }
 
     private getStructuredSectionDisplayTitle(section: StructuredHoverSection): string | undefined {
-        if (!section.title) return undefined;
-        if (section.role === 'summary') return undefined;
+        if (!section.title) {return undefined;}
+        if (section.role === 'summary') {return undefined;}
         if (/^(?:overview|summary|description|details?)$/i.test(section.title.trim())) {
             return undefined;
         }
@@ -354,20 +354,20 @@ export class HoverRenderer {
     }
 
     private isDuplicateSignatureSection(section: StructuredHoverSection, signature?: string): boolean {
-        if (section.kind !== 'code' || !signature) return false;
+        if (section.kind !== 'code' || !signature) {return false;}
 
         const sectionCode = section.content.trim();
         const normalizedSignature = this.normalizeDisplaySignature(signature).trim();
-        if (!sectionCode || !normalizedSignature) return false;
+        if (!sectionCode || !normalizedSignature) {return false;}
 
         const firstLine = sectionCode.split('\n').map(line => line.trim()).find(Boolean) ?? '';
         return firstLine === normalizedSignature || sectionCode === normalizedSignature;
     }
 
     private renderVersionCompatibility(md: vscode.MarkdownString, content: string): void {
-        if (!this.detectedVersion) return;
+        if (!this.detectedVersion) {return;}
         const match = content.match(/(?:New|Added) in version (\d+\.\d+)/i);
-        if (!match) return;
+        if (!match) {return;}
         const [reqMaj, reqMin] = match[1].split('.').map(Number);
         const [userMaj, userMin] = this.detectedVersion.split('.').map(Number);
         if ((userMaj ?? 0) < (reqMaj ?? 0) ||
@@ -527,11 +527,11 @@ export class HoverRenderer {
                     const currentTrimmed = line.trim();
                     const currentIndent = line.search(/\S/);
                     if (!currentTrimmed) {
-                        if (blockLines.length > 0) break;
+                        if (blockLines.length > 0) {break;}
                         index += 1;
                         continue;
                     }
-                    if (currentIndent < 3) break;
+                    if (currentIndent < 3) {break;}
                     blockLines.push(line.replace(/^\s{3}/, ''));
                     index += 1;
                 }
@@ -551,9 +551,9 @@ export class HoverRenderer {
                 const line = lines[index];
                 const currentTrimmed = line.trim();
                 const currentIndent = line.search(/\S/);
-                if (!currentTrimmed) break;
-                if (currentIndent >= 3) break;
-                if (/^(?:See also|Related help topics?):?\s*/i.test(currentTrimmed)) break;
+                if (!currentTrimmed) {break;}
+                if (currentIndent >= 3) {break;}
+                if (/^(?:See also|Related help topics?):?\s*/i.test(currentTrimmed)) {break;}
                 paragraphLines.push(currentTrimmed);
                 index += 1;
             }
@@ -585,17 +585,17 @@ export class HoverRenderer {
 
     private isKeywordSyntaxContinuation(line: string): boolean {
         const trimmed = line.trim();
-        if (!trimmed) return false;
-        if (line.search(/\S/) < 1) return false;
-        if (trimmed.includes('::=')) return true;
+        if (!trimmed) {return false;}
+        if (line.search(/\S/) < 1) {return false;}
+        if (trimmed.includes('::=')) {return true;}
         return /^[()[\]{}|"'A-Za-z0-9_:.+*\s,-]+$/.test(trimmed) && !this.looksLikePythonCode(trimmed);
     }
 
     private isKeywordSyntaxBlock(block: string): boolean {
         const lines = block.split('\n').map(line => line.trim()).filter(Boolean);
-        if (lines.length === 0) return false;
-        if (lines[0].includes('::=')) return true;
-        if (/^[a-z][a-z0-9_]+:\s+["[(]/.test(lines[0])) return true;
+        if (lines.length === 0) {return false;}
+        if (lines[0].includes('::=')) {return true;}
+        if (/^[a-z][a-z0-9_]+:\s+["[(]/.test(lines[0])) {return true;}
         return lines.every(line => /^[()[\]{}|"'\s\w:.*,+-]+$/.test(line) && !this.looksLikePythonCode(line));
     }
 
@@ -622,23 +622,23 @@ export class HoverRenderer {
      * Heuristic: does this line look like a Python code example?
      */
     private looksLikePythonCode(line: string): boolean {
-        if (!line || line.length < 3) return false;
+        if (!line || line.length < 3) {return false;}
         // Python prompts
-        if (/^>>>/.test(line) || /^\.\.\.\s/.test(line)) return true;
+        if (/^>>>/.test(line) || /^\.\.\.\s/.test(line)) {return true;}
         // Common code patterns with enough syntax to distinguish from prose.
-        if (/^(?:class|def|for|if|elif|while)\s/.test(line)) return true;
-        if (/^with\s.+:\s*$/.test(line)) return true;
-        if (/^import\s+[A-Za-z_]/.test(line)) return true;
-        if (/^from\s+[A-Za-z_.]+\s+import\s+/.test(line)) return true;
-        if (/^(?:try:|except\b.*:|finally:|assert\s|pass$|break$|continue$|del\s|lambda\b)/.test(line)) return true;
-        if (/^(?:return|raise|yield)\s+[A-Za-z_([{]/.test(line)) return true;
-        if (/^(?:else|try|finally|pass|break|continue):?\s*$/.test(line)) return true;
+        if (/^(?:class|def|for|if|elif|while)\s/.test(line)) {return true;}
+        if (/^with\s.+:\s*$/.test(line)) {return true;}
+        if (/^import\s+[A-Za-z_]/.test(line)) {return true;}
+        if (/^from\s+[A-Za-z_.]+\s+import\s+/.test(line)) {return true;}
+        if (/^(?:try:|except\b.*:|finally:|assert\s|pass$|break$|continue$|del\s|lambda\b)/.test(line)) {return true;}
+        if (/^(?:return|raise|yield)\s+[A-Za-z_([{]/.test(line)) {return true;}
+        if (/^(?:else|try|finally|pass|break|continue):?\s*$/.test(line)) {return true;}
         // Assignment: `x = ...`, `foo.bar = ...`
-        if (/^[a-zA-Z_]\w*(?:\.\w+)*\s*=[^=]/.test(line)) return true;
+        if (/^[a-zA-Z_]\w*(?:\.\w+)*\s*=[^=]/.test(line)) {return true;}
         // Function call on its own line: `print(...)`, `foo.bar(...)`
-        if (/^[a-zA-Z_]\w*(?:\.\w+)*\(/.test(line) && line.endsWith(')')) return true;
+        if (/^[a-zA-Z_]\w*(?:\.\w+)*\(/.test(line) && line.endsWith(')')) {return true;}
         // Decorator
-        if (/^@\w+/.test(line)) return true;
+        if (/^@\w+/.test(line)) {return true;}
         return false;
     }
 
@@ -701,7 +701,7 @@ export class HoverRenderer {
     }
 
     private renderParameterTable(md: vscode.MarkdownString, params: HoverDoc['parameters'], doc: HoverDoc): void {
-        if (!params) return;
+        if (!params) {return;}
         const maxItems = this.config.maxParameters;
         const rows = params.slice(0, maxItems).map((p, index) => {
             const active = isActiveParameterMatch(doc.parameterLens, p, index);
@@ -727,7 +727,7 @@ export class HoverRenderer {
 
     private renderParameterLens(md: vscode.MarkdownString, doc: HoverDoc): void {
         const lens = doc.parameterLens;
-        if (!lens) return;
+        if (!lens) {return;}
 
         const details: string[] = [`slot ${lens.parameterIndex + 1}/${lens.parameterCount}`];
         if (lens.parameter.type) {
@@ -799,7 +799,7 @@ export class HoverRenderer {
             : undefined;
         md.appendMarkdown(`---\n\n`);
         md.appendMarkdown(`**$(arrow-right) Returns** \`${ret.type || 'unspecified'}\``);
-        if (cleanedDescription) md.appendMarkdown(` — ${cleanedDescription}`);
+        if (cleanedDescription) {md.appendMarkdown(` — ${cleanedDescription}`);}
         md.appendMarkdown('\n\n');
     }
 
@@ -811,7 +811,7 @@ export class HoverRenderer {
                 ? this.rewriteMarkdownLinks(this.enhanceContent(this.cleanContentAnnotations(this.cleanRstArtifacts(exc.description)).replace(/\s+/g, ' ').trim()))
                 : undefined;
             md.appendMarkdown(`- \`${exc.type}\``);
-            if (cleanedDescription) md.appendMarkdown(` — ${cleanedDescription}`);
+            if (cleanedDescription) {md.appendMarkdown(` — ${cleanedDescription}`);}
             md.appendMarkdown('\n');
         });
         md.appendMarkdown('\n');
@@ -1168,12 +1168,12 @@ export class HoverRenderer {
             case ResolutionSource.Runtime: return 'Runtime';
             case ResolutionSource.Static: return 'Static docs';
             case ResolutionSource.SearchIndex:
-                if (provider === 'mkdocs') return 'MkDocs index';
-                if (provider === 'sphinx') return 'Sphinx index';
+                if (provider === 'mkdocs') {return 'MkDocs index';}
+                if (provider === 'sphinx') {return 'Sphinx index';}
                 return 'Site index';
             case ResolutionSource.Corpus:
-                if (provider === 'mkdocs') return 'MkDocs docs';
-                if (provider === 'sphinx') return 'Sphinx docs';
+                if (provider === 'mkdocs') {return 'MkDocs docs';}
+                if (provider === 'sphinx') {return 'Sphinx docs';}
                 return 'Library docs';
             default: return null;
         }
@@ -1206,20 +1206,20 @@ export class HoverRenderer {
      * Truncate a signature at a sensible boundary (closing paren or comma).
      */
     private truncateSignature(sig: string, maxLen: number): string {
-        if (sig.length <= maxLen) return sig;
+        if (sig.length <= maxLen) {return sig;}
 
         // Find the last comma before maxLen
         let cut = sig.lastIndexOf(',', maxLen);
-        if (cut < maxLen * 0.5) cut = maxLen; // if comma is too early, just cut
+        if (cut < maxLen * 0.5) {cut = maxLen;} // if comma is too early, just cut
 
         const truncated = sig.substring(0, cut).trimEnd();
         // Count unclosed parens/brackets and close them
         let parens = 0, brackets = 0;
         for (const ch of truncated) {
-            if (ch === '(') parens++;
-            else if (ch === ')') parens--;
-            else if (ch === '[') brackets++;
-            else if (ch === ']') brackets--;
+            if (ch === '(') {parens++;}
+            else if (ch === ')') {parens--;}
+            else if (ch === '[') {brackets++;}
+            else if (ch === ']') {brackets--;}
         }
         return truncated + ', …' + ']'.repeat(Math.max(0, brackets)) + ')'.repeat(Math.max(0, parens));
     }
@@ -1249,7 +1249,7 @@ export class HoverRenderer {
      */
     private buildLinkUrl(url: string, mode: 'integrated' | 'external', kind: 'docs' | 'devdocs' = 'docs'): string {
         const sanitized = this.sanitizeUrl(url);
-        if (!sanitized.startsWith('http')) return sanitized;
+        if (!sanitized.startsWith('http')) {return sanitized;}
         if (mode === 'external') {
             return sanitized; // VS Code will open http links in external browser
         }
@@ -1274,9 +1274,9 @@ export class HoverRenderer {
     }
 
     private sanitizeUrl(url: string): string {
-        if (!url) return '';
-        if (/^[a-zA-Z]:\\/.test(url)) return vscode.Uri.file(url).toString();
-        if (url.startsWith('/')) return vscode.Uri.file(url).toString();
+        if (!url) {return '';}
+        if (/^[a-zA-Z]:\\/.test(url)) {return vscode.Uri.file(url).toString();}
+        if (url.startsWith('/')) {return vscode.Uri.file(url).toString();}
         if (!url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('file://')) {
             return `https://${url}`;
         }
@@ -1364,7 +1364,7 @@ export class HoverRenderer {
                         (next === '' && i + 1 < lines.length && this.looksLikePythonCode(lines[i + 1]?.trim()))) {
                         codeLines.push(next);
                         i++;
-                    } else break;
+                    } else {break;}
                 }
                 // Only wrap if not a single short token that might be inline
                 if (codeLines.length > 1 || codeLines[0].length > 30) {
@@ -1395,21 +1395,21 @@ export class HoverRenderer {
             [/Deprecated since version (\d+\.\d+)/g, '$(error) **Deprecated since $1:**'],
             [/Added in version (\d+\.\d+)/g, '$(sparkle) **Added in $1:**'],
         ];
-        for (const [p, r] of replacements) content = content.replace(p, r);
+        for (const [p, r] of replacements) {content = content.replace(p, r);}
         return content;
     }
 
     private smartTruncate(content: string, maxLen: number): string {
-        if (content.length <= maxLen) return content;
+        if (content.length <= maxLen) {return content;}
         let truncated = content.substring(0, maxLen).trim();
         const breakPoints = ['. ', '.\n', '! ', '?\n', '\n\n'];
         let best = -1;
         const min = maxLen * 0.6;
         for (const bp of breakPoints) {
             const idx = truncated.lastIndexOf(bp);
-            if (idx > min && idx > best) best = idx + bp.length - 1;
+            if (idx > min && idx > best) {best = idx + bp.length - 1;}
         }
-        if (best > 0) truncated = truncated.substring(0, best);
+        if (best > 0) {truncated = truncated.substring(0, best);}
         return truncated.trimEnd() + ' …';
     }
 
@@ -1459,7 +1459,7 @@ export class HoverRenderer {
     }
 
     private formatKindLabel(kind?: string): string {
-        if (!kind) return 'Function';
+        if (!kind) {return 'Function';}
         return kind.charAt(0).toUpperCase() + kind.slice(1).toLowerCase();
     }
 

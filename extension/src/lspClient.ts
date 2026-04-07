@@ -63,7 +63,7 @@ export class LspClient {
         position: vscode.Position,
     ): Promise<LspSymbol | null> {
         const ctx = this.buildContext(document, position);
-        if (!ctx) return null;
+        if (!ctx) {return null;}
 
         const { expression, segmentRange, queryChar, rightExtended } = ctx;
         // Pylance can return different definitions when the column sits on the last
@@ -122,7 +122,7 @@ export class LspClient {
         const segmentRange = document.getWordRangeAtPosition(
             position, /[A-Za-z_][A-Za-z0-9_]*/,
         );
-        if (!segmentRange) return null;
+        if (!segmentRange) {return null;}
 
         const line = document.lineAt(position.line).text;
         if (this.isDanglingAttributeAccess(line, segmentRange.start.character)) {
@@ -134,27 +134,27 @@ export class LspClient {
         let cursor = segmentRange.start.character;
         while (cursor > 0) {
             let i = cursor - 1;
-            while (i >= 0 && line[i] === ' ') i--;
-            if (i < 0 || line[i] !== '.') break;
+            while (i >= 0 && line[i] === ' ') {i--;}
+            if (i < 0 || line[i] !== '.') {break;}
             i--;
-            while (i >= 0 && line[i] === ' ') i--;
-            if (i < 0) break;
+            while (i >= 0 && line[i] === ' ') {i--;}
+            if (i < 0) {break;}
 
             // Skip balanced brackets (e.g. "foo()[bar].method")
             if (line[i] === ')' || line[i] === ']') {
                 i = this.scanPastBalanced(line, i);
-                if (i < 0) break;
-                while (i >= 0 && line[i] === ' ') i--;
-                if (i < 0) break;
+                if (i < 0) {break;}
+                while (i >= 0 && line[i] === ' ') {i--;}
+                if (i < 0) {break;}
             }
 
             const end = i + 1;
-            while (i >= 0 && /[A-Za-z0-9_]/.test(line[i])) i--;
+            while (i >= 0 && /[A-Za-z0-9_]/.test(line[i])) {i--;}
             const start = i + 1;
-            if (start >= end) break;
+            if (start >= end) {break;}
 
             const ident = line.slice(start, end);
-            if (!/^[A-Za-z_]/.test(ident)) break;
+            if (!/^[A-Za-z_]/.test(ident)) {break;}
             segments.unshift(ident);
             cursor = start;
         }
@@ -199,19 +199,19 @@ export class LspClient {
         definitions: (vscode.Location[] | vscode.LocationLink[] | undefined)[],
     ): void {
         const hoverList = hovers.find(h => h && h.length > 0);
-        if (!hoverList) return;
+        if (!hoverList) {return;}
 
         for (const hover of hoverList) {
             for (const c of hover.contents) {
                 const text = typeof c === 'string' ? c : (c as vscode.MarkdownString).value;
                 const block = /```python\n([\s\S]*?)\n```/.exec(text);
-                if (!block) continue;
+                if (!block) {continue;}
 
                 const raw = block[1].trim();
 
                 // Extract kind prefix: (method), (function), (class), etc.
                 const kindMatch = /^\(([a-z]+)\)\s/.exec(raw);
-                if (kindMatch) result.kind = kindMatch[1];
+                if (kindMatch) {result.kind = kindMatch[1];}
 
                 // For "(method) ClassName.method(...)" — use the Pylance-qualified name.
                 // For builtin types (str, list, …) always prefer this since the definition
@@ -238,7 +238,7 @@ export class LspClient {
                         .filter(l => !l.trim().startsWith('<!--'))
                         .join('\n')
                         .trim();
-                    if (docstring) result.docstring = docstring;
+                    if (docstring) {result.docstring = docstring;}
                 }
 
                 return; // first code block wins
@@ -261,14 +261,14 @@ export class LspClient {
         definitions: (vscode.Location[] | vscode.LocationLink[] | undefined)[],
     ): Promise<void> {
         const loc = this.firstLocation(definitions);
-        if (!loc) return;
+        if (!loc) {return;}
 
         result.path = loc.uri.fsPath;
 
         const symbolAtDef = await this.resolveSymbolAtLocation(loc);
         const module = this.moduleFromPath(loc.uri.fsPath);
 
-        if (!symbolAtDef) return;
+        if (!symbolAtDef) {return;}
 
         const leaf = symbolAtDef.split('.').pop()!;
 
@@ -282,7 +282,7 @@ export class LspClient {
             result.name = module ? `${module}.${symbolAtDef}` : symbolAtDef;
         }
 
-        if (module) result.module = module;
+        if (module) {result.module = module;}
     }
 
     private async hydrateFromDefinitionHover(
@@ -290,13 +290,13 @@ export class LspClient {
         definitions: (vscode.Location[] | vscode.LocationLink[] | undefined)[],
     ): Promise<void> {
         const loc = this.firstLocation(definitions);
-        if (!loc) return;
+        if (!loc) {return;}
 
         const hovers = await this.executeExternalHoverQuery(
             loc.uri,
             loc.range.start,
         );
-        if (!hovers || hovers.length === 0) return;
+        if (!hovers || hovers.length === 0) {return;}
 
         const hydrated: LspSymbol = { name: result.name };
         this.applyHoverInfo(hydrated, [hovers], []);
@@ -368,9 +368,9 @@ export class LspClient {
         results: (vscode.Location[] | vscode.LocationLink[] | undefined)[],
     ): vscode.Location | undefined {
         for (const list of results) {
-            if (!list || list.length === 0) continue;
+            if (!list || list.length === 0) {continue;}
             const first = list[0];
-            if ('uri' in first) return first;
+            if ('uri' in first) {return first;}
             if ('targetUri' in first) {
                 return new vscode.Location(first.targetUri, first.targetRange);
             }
@@ -381,11 +381,11 @@ export class LspClient {
     private async resolveSymbolAtLocation(loc: vscode.Location): Promise<string | null> {
         try {
             const symbols = await this.getDocumentSymbols(loc.uri);
-            if (!symbols) return null;
+            if (!symbols) {return null;}
 
             const findPath = (list: vscode.DocumentSymbol[]): string[] | null => {
                 for (const s of list) {
-                    if (!s.range.contains(loc.range.start)) continue;
+                    if (!s.range.contains(loc.range.start)) {continue;}
                     const child = findPath(s.children);
                     return child ? [s.name, ...child] : [s.name];
                 }
@@ -413,19 +413,19 @@ export class LspClient {
 
         for (const marker of markers) {
             const idx = p.lastIndexOf(marker);
-            if (idx === -1) continue;
+            if (idx === -1) {continue;}
 
             let rel = p.slice(idx + marker.length);
             rel = rel.replace(/^python\d+(?:\.\d+)?\//, '');
             rel = rel.replace(/^\d+\.\d+\//, '');
             rel = rel.replace(/\.(py|pyi)$/, '');
-            if (rel.endsWith('/__init__')) rel = rel.slice(0, -9);
+            if (rel.endsWith('/__init__')) {rel = rel.slice(0, -9);}
 
             let mod = rel.replace(/\//g, '.');
             // Stub package suffix (pandas-stubs → pandas)
             mod = mod.replace(/^([^.]+)-stubs/, '$1');
             // Platform path aliases
-            if (['ntpath', 'posixpath', 'macpath'].includes(mod)) mod = 'os.path';
+            if (['ntpath', 'posixpath', 'macpath'].includes(mod)) {mod = 'os.path';}
 
             return mod || null;
         }
@@ -507,8 +507,8 @@ export class LspClient {
         const open = close === ')' ? '(' : '[';
         let depth = 0;
         for (let i = index; i >= 0; i--) {
-            if (line[i] === close) depth++;
-            else if (line[i] === open) { if (--depth === 0) return i - 1; }
+            if (line[i] === close) {depth++;}
+            else if (line[i] === open) { if (--depth === 0) {return i - 1;} }
         }
         return -1;
     }
@@ -519,12 +519,12 @@ export class LspClient {
      */
     private isDanglingAttributeAccess(line: string, segmentStart: number): boolean {
         let cursor = segmentStart - 1;
-        while (cursor >= 0 && line[cursor] === ' ') cursor--;
-        if (cursor < 0 || line[cursor] !== '.') return false;
+        while (cursor >= 0 && line[cursor] === ' ') {cursor--;}
+        if (cursor < 0 || line[cursor] !== '.') {return false;}
 
         cursor--;
-        while (cursor >= 0 && line[cursor] === ' ') cursor--;
-        if (cursor < 0) return true;
+        while (cursor >= 0 && line[cursor] === ' ') {cursor--;}
+        if (cursor < 0) {return true;}
 
         return !/[A-Za-z0-9_)\]}"']/.test(line[cursor]);
     }

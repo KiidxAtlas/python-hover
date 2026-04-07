@@ -17,13 +17,13 @@ interface PyPiPackageResponse {
 
 function normalizeUrl(value: string | null | undefined): string | null {
     const trimmed = value?.trim();
-    if (!trimmed) return null;
+    if (!trimmed) {return null;}
     return /^https?:\/\//i.test(trimmed) ? trimmed : null;
 }
 
 function isLikelyRepositoryUrl(value: string | null | undefined): boolean {
     const normalized = normalizeUrl(value);
-    if (!normalized) return false;
+    if (!normalized) {return false;}
 
     try {
         const parsed = new URL(normalized);
@@ -50,7 +50,7 @@ function isLikelyRepositoryUrl(value: string | null | undefined): boolean {
 
 function canonicalizeRepositoryUrl(value: string | null | undefined): string | null {
     const normalized = normalizeUrl(value);
-    if (!normalized) return null;
+    if (!normalized) {return null;}
 
     try {
         const parsed = new URL(normalized);
@@ -78,7 +78,7 @@ function canonicalizeRepositoryUrl(value: string | null | undefined): string | n
 
 function scoreRepoCandidate(label: string, url: string): number {
     const normalizedUrl = normalizeUrl(url);
-    if (!normalizedUrl) return Number.NEGATIVE_INFINITY;
+    if (!normalizedUrl) {return Number.NEGATIVE_INFINITY;}
 
     const lowerLabel = label.toLowerCase();
     let score = 0;
@@ -112,7 +112,7 @@ function pickRepoUrlFromLinks(links: Record<string, string>): string | null {
 
     for (const [label, value] of Object.entries(links)) {
         const url = normalizeUrl(value);
-        if (!url) continue;
+        if (!url) {continue;}
         const score = scoreRepoCandidate(label, url);
         if (score > bestScore) {
             bestScore = score;
@@ -127,12 +127,12 @@ function pickBestProjectUrl(links: Record<string, string>, homePage: string | nu
     const entries = Object.entries(links).filter(([, v]) => typeof v === 'string' && v.trim().length > 0);
     const labelScore = (label: string): number => {
         const l = label.toLowerCase();
-        if (l === 'documentation' || l === 'docs') return 0;
-        if (l.includes('documentation') || l.includes('doc ') || l === 'doc') return 1;
-        if (l.includes('readthedocs') || l.includes('rtd')) return 2;
-        if (l.includes('homepage') || l === 'home' || l === 'home page' || l === 'website') return 3;
-        if (l.includes('changelog') || l.includes('release')) return 6;
-        if (l.includes('repository') || l.includes('source') || l.includes('github') || l.includes('gitlab')) return 8;
+        if (l === 'documentation' || l === 'docs') {return 0;}
+        if (l.includes('documentation') || l.includes('doc ') || l === 'doc') {return 1;}
+        if (l.includes('readthedocs') || l.includes('rtd')) {return 2;}
+        if (l.includes('homepage') || l === 'home' || l === 'home page' || l === 'website') {return 3;}
+        if (l.includes('changelog') || l.includes('release')) {return 6;}
+        if (l.includes('repository') || l.includes('source') || l.includes('github') || l.includes('gitlab')) {return 8;}
         return 5;
     };
     if (entries.length > 0) {
@@ -156,7 +156,7 @@ export class PyPiClient {
         if (this.diskCache) {
             const cached = this.diskCache.getCorpusPackageMetadata(packageName);
             if (cached) {
-                if (cached.negative) return EMPTY;
+                if (cached.negative) {return EMPTY;}
                 return {
                     url: cached.url ?? null,
                     summary: cached.summary ?? null,
@@ -182,7 +182,7 @@ export class PyPiClient {
 
             if (info.project_urls) {
                 for (const [key, value] of Object.entries(info.project_urls)) {
-                    if (typeof value === 'string') links[key] = value;
+                    if (typeof value === 'string') {links[key] = value;}
                 }
             }
 
@@ -229,7 +229,7 @@ export class PyPiClient {
     }
 
     async getPackageRepoUrl(packageName: string | undefined): Promise<string | null> {
-        if (!packageName) return null;
+        if (!packageName) {return null;}
 
         const cached = this.getCachedRepoUrl(packageName);
         if (cached) {
@@ -260,9 +260,9 @@ export class PyPiClient {
     }
 
     getCachedRepoUrl(packageName: string | undefined): string | null {
-        if (!this.diskCache || !packageName) return null;
+        if (!this.diskCache || !packageName) {return null;}
         const meta = this.diskCache.getCorpusPackageMetadata(packageName);
-        if (!meta?.links) return null;
+        if (!meta?.links) {return null;}
         return pickRepoUrlFromLinks(meta.links);
     }
 

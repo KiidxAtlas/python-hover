@@ -97,16 +97,16 @@ export function isMeaningfullyOutdated(installed: string, latest: string): boole
 }
 
 export function buildImportStatement(doc: Pick<HoverDoc, 'source' | 'title' | 'kind' | 'module'>): string | undefined {
-    if (doc.source === 'Local') return undefined;
+    if (doc.source === 'Local') {return undefined;}
 
     const rawTitle = getDisplayTitle(doc.title);
-    if (!rawTitle || /^__\w+__$/.test(rawTitle)) return undefined;
+    if (!rawTitle || /^__\w+__$/.test(rawTitle)) {return undefined;}
 
     if (doc.kind === 'module') {
         return rawTitle === 'builtins' ? undefined : `import ${rawTitle}`;
     }
 
-    if (!doc.module || doc.module === 'builtins') return undefined;
+    if (!doc.module || doc.module === 'builtins') {return undefined;}
 
     const titleSegments = rawTitle.split('.').filter(Boolean);
     const moduleSegments = doc.module.split('.').filter(Boolean);
@@ -155,9 +155,9 @@ export function getVisibleStructuredDescriptionSections(doc: HoverDoc): Structur
 
         const sectionField = getStructuredFieldKind(cleanedSection.title) ?? inferStructuredFieldKind(cleanedSection, doc.parameters);
 
-        if (sectionField === 'parameters' && doc.parameters?.length) continue;
-        if (sectionField === 'returns' && doc.returns) continue;
-        if (sectionField === 'raises' && doc.raises?.length) continue;
+        if (sectionField === 'parameters' && doc.parameters?.length) {continue;}
+        if (sectionField === 'returns' && doc.returns) {continue;}
+        if (sectionField === 'raises' && doc.raises?.length) {continue;}
 
         const dedupeKey = getStructuredSectionDedupKey(cleanedSection);
         if (seen.has(dedupeKey)) {
@@ -239,10 +239,10 @@ export function getCompactExample(doc: HoverDoc): string | undefined {
 }
 
 function getStructuredFieldKind(title?: string): 'parameters' | 'returns' | 'raises' | undefined {
-    if (!title) return undefined;
-    if (/^(?:Parameters|Args|Arguments)$/i.test(title)) return 'parameters';
-    if (/^Returns?$/i.test(title)) return 'returns';
-    if (/^Raises?$/i.test(title)) return 'raises';
+    if (!title) {return undefined;}
+    if (/^(?:Parameters|Args|Arguments)$/i.test(title)) {return 'parameters';}
+    if (/^Returns?$/i.test(title)) {return 'returns';}
+    if (/^Raises?$/i.test(title)) {return 'raises';}
     return undefined;
 }
 

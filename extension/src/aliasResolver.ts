@@ -64,7 +64,7 @@ export class AliasResolver {
                     const imports = importList.split(',');
                     for (const imp of imports) {
                         const cleanImp = imp.trim();
-                        if (!cleanImp) continue;
+                        if (!cleanImp) {continue;}
 
                         // Handle "A as B" inside the list
                         const asMatch = /^([\w.]+)\s+as\s+([\w.]+)$/.exec(cleanImp);

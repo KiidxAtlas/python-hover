@@ -40,7 +40,7 @@ const STDLIB_TOP_LEVEL_MODULES = new Set([
 ]);
 
 export function isStdlibTopLevelModule(name: string | undefined): boolean {
-    if (!name) return false;
+    if (!name) {return false;}
     return STDLIB_TOP_LEVEL_MODULES.has(name.split('.')[0]);
 }
 
@@ -107,11 +107,11 @@ export function extractImportedRoots(text: string): string[] {
     const roots = new Set<string>();
     const addRoot = (value: string) => {
         const trimmed = value.trim();
-        if (!trimmed || trimmed.startsWith('.')) return;
+        if (!trimmed || trimmed.startsWith('.')) {return;}
 
         const root = trimmed.split('.')[0];
-        if (!root || root.startsWith('_')) return;
-        if (isStdlibTopLevelModule(root)) return;
+        if (!root || root.startsWith('_')) {return;}
+        if (isStdlibTopLevelModule(root)) {return;}
         roots.add(root);
     };
 

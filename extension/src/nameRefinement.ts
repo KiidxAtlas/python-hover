@@ -13,19 +13,19 @@ export class NameRefinement {
      * E.g. signature "def join(self: str, ...)" tells us it's str.join, not builtins.join.
      */
     static fromSignature(name: string, signature: string | undefined): string {
-        if (!signature) return name;
+        if (!signature) {return name;}
 
         const selfMatch = /\bself\s*:\s*([a-zA-Z0-9_.]+(?:@[a-zA-Z0-9_.]+)?)/.exec(signature);
-        if (!selfMatch) return name;
+        if (!selfMatch) {return name;}
 
         let className = selfMatch[1];
-        if (className.includes('@')) className = className.split('@')[1];
+        if (className.includes('@')) {className = className.split('@')[1];}
         className = this.normalizeSelfType(className);
-        if (className === 'Unknown') return name;
+        if (className === 'Unknown') {return name;}
 
         const methodName = name.split('.').pop();
         const expectedSuffix = `${className}.${methodName}`;
-        if (name.endsWith(expectedSuffix)) return name;
+        if (name.endsWith(expectedSuffix)) {return name;}
 
         const lastDot = name.lastIndexOf('.');
         const useBuiltinOwner = BUILTIN_OWNER_TYPES.has(className);

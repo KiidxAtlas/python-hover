@@ -81,8 +81,8 @@ export class HoverDocBuilder {
         const name = symbolInfo.name;
         const qualname = symbolInfo.qualname;
 
-        if (!qualname) return name;
-        if (!name || name === qualname) return qualname;
+        if (!qualname) {return name;}
+        if (!name || name === qualname) {return qualname;}
 
         const nameParts = name.split('.');
         const qualnameParts = qualname.split('.');
@@ -228,11 +228,11 @@ export class HoverDocBuilder {
     }
 
     private isDeprecatedDocstring(docstring: string): boolean {
-        if (!docstring.trim()) return false;
+        if (!docstring.trim()) {return false;}
 
         for (const rawLine of docstring.split('\n')) {
             const line = rawLine.trim().toLowerCase();
-            if (!line) continue;
+            if (!line) {continue;}
 
             if (line.includes('.. deprecated::')) {
                 return true;
@@ -251,10 +251,10 @@ export class HoverDocBuilder {
     }
 
     private shouldPreferRawDocstring(summary: string, rawDocstring?: string): boolean {
-        if (!rawDocstring?.trim()) return false;
+        if (!rawDocstring?.trim()) {return false;}
 
         const normalizedSummary = summary.trim();
-        if (!normalizedSummary) return true;
+        if (!normalizedSummary) {return true;}
 
         if (/^Help on\s+\w+\s+object:/i.test(normalizedSummary)) {
             return true;
@@ -268,7 +268,7 @@ export class HoverDocBuilder {
     }
 
     private extractUsefulSummary(text?: string): string | undefined {
-        if (!text?.trim()) return undefined;
+        if (!text?.trim()) {return undefined;}
 
         if (this.isUnhelpfulRuntimeFallback(text)) {
             return undefined;
@@ -301,22 +301,22 @@ export class HoverDocBuilder {
             }
 
             if (this.isSummarySectionBoundary(trimmed, nextTrimmed)) {
-                if (collected.length > 0) break;
+                if (collected.length > 0) {break;}
                 continue;
             }
 
             if (this.isMarkdownSectionBoundary(trimmed)) {
-                if (collected.length > 0) break;
+                if (collected.length > 0) {break;}
                 continue;
             }
 
             if (this.looksLikeSignatureLine(trimmed)) {
-                if (collected.length > 0) break;
+                if (collected.length > 0) {break;}
                 continue;
             }
 
             const normalized = this.normalizeSummaryLine(trimmed);
-            if (!normalized) continue;
+            if (!normalized) {continue;}
 
             collected.push(normalized);
 
@@ -326,22 +326,22 @@ export class HoverDocBuilder {
             }
         }
 
-        if (collected.length === 0) return undefined;
+        if (collected.length === 0) {return undefined;}
         return this.normalizeSummaryText(collected.join(' '));
     }
 
     private isGoodSummary(summary: string): boolean {
         const normalized = summary.trim();
-        if (!normalized) return false;
-        if (normalized.length < 24) return false;
-        if (/^(?:documentation|module|package|class|function)\b$/i.test(normalized)) return false;
-        if (this.isUnhelpfulRuntimeFallback(normalized)) return false;
+        if (!normalized) {return false;}
+        if (normalized.length < 24) {return false;}
+        if (/^(?:documentation|module|package|class|function)\b$/i.test(normalized)) {return false;}
+        if (this.isUnhelpfulRuntimeFallback(normalized)) {return false;}
         return true;
     }
 
     private isUnhelpfulRuntimeFallback(text: string): boolean {
         const normalized = text.trim();
-        if (!normalized) return false;
+        if (!normalized) {return false;}
 
         return /^No Python documentation found for\s+/i.test(normalized)
             || /^Use help\(\) to get the interactive help utility\.?/i.test(normalized)
@@ -350,22 +350,22 @@ export class HoverDocBuilder {
 
     private extractPydocSummary(text: string): string | undefined {
         const match = text.match(/^Help on \w+ object:\s*[\r\n]+\s*class\s+\w+[^|]*\|\s*(.+?)(?:\s*\||$)/s);
-        if (!match?.[1]) return undefined;
+        if (!match?.[1]) {return undefined;}
 
         const summary = match[1].trim().replace(/\|/g, '').trim();
-        if (!summary || summary.startsWith('Methods defined')) return undefined;
+        if (!summary || summary.startsWith('Methods defined')) {return undefined;}
         return this.normalizeSummaryText(summary);
     }
 
     private normalizeSummaryLine(line: string): string | undefined {
         const trimmed = line.trim();
-        if (!trimmed) return undefined;
-        if (/^[-=~^#*]{3,}$/.test(trimmed)) return undefined;
-        if (/^```/.test(trimmed)) return undefined;
-        if (/^`{1,3}\s*[A-Za-z_][\w.]*\s*`{0,3}$/.test(trimmed)) return undefined;
-        if (/^``\s+[A-Za-z_][\w.]*$/.test(trimmed)) return undefined;
-        if (this.isUnhelpfulRuntimeFallback(trimmed)) return undefined;
-        if (/^:(?:param|type|returns?|raises?|rtype|yield|ytype|example|examples)\b/i.test(trimmed)) return undefined;
+        if (!trimmed) {return undefined;}
+        if (/^[-=~^#*]{3,}$/.test(trimmed)) {return undefined;}
+        if (/^```/.test(trimmed)) {return undefined;}
+        if (/^`{1,3}\s*[A-Za-z_][\w.]*\s*`{0,3}$/.test(trimmed)) {return undefined;}
+        if (/^``\s+[A-Za-z_][\w.]*$/.test(trimmed)) {return undefined;}
+        if (this.isUnhelpfulRuntimeFallback(trimmed)) {return undefined;}
+        if (/^:(?:param|type|returns?|raises?|rtype|yield|ytype|example|examples)\b/i.test(trimmed)) {return undefined;}
 
         const directiveTransforms: Array<[RegExp, string]> = [
             [/^\.\.\s+note::\s*/i, 'Note: '],
@@ -386,7 +386,7 @@ export class HoverDocBuilder {
             }
         }
 
-        if (/^\.\.\s+[\w-]+::/.test(normalized)) return undefined;
+        if (/^\.\.\s+[\w-]+::/.test(normalized)) {return undefined;}
         return this.processInlineLinks(normalized).trim();
     }
 
@@ -437,15 +437,15 @@ export class HoverDocBuilder {
     }
 
     private extractSignatureFromContent(content?: string, title?: string): string | undefined {
-        if (!content?.trim()) return undefined;
+        if (!content?.trim()) {return undefined;}
 
         const fenceMatch = content.match(/```(?:python)?\n([\s\S]*?)\n```/i);
         const firstLine = fenceMatch?.[1]
             ?.split('\n')
             .map(line => line.trim())
             .find(Boolean);
-        if (!firstLine) return undefined;
-        if (firstLine.length > 240) return undefined;
+        if (!firstLine) {return undefined;}
+        if (firstLine.length > 240) {return undefined;}
 
         const leaf = title?.split('.').pop();
         if (leaf && firstLine.startsWith(`${leaf}(`)) {
@@ -460,33 +460,33 @@ export class HoverDocBuilder {
     }
 
     private inferKind(symbolInfo: SymbolInfo, docs?: HoverDoc | null): string {
-        if (symbolInfo.kind) return symbolInfo.kind;
-        if (docs?.kind) return docs.kind;
+        if (symbolInfo.kind) {return symbolInfo.kind;}
+        if (docs?.kind) {return docs.kind;}
 
-        if (symbolInfo.name === symbolInfo.module) return 'package';
+        if (symbolInfo.name === symbolInfo.module) {return 'package';}
 
         if (symbolInfo.signature) {
-            if (symbolInfo.signature.startsWith('class')) return 'class';
-            if (symbolInfo.signature.includes('def ')) return 'function';
+            if (symbolInfo.signature.startsWith('class')) {return 'class';}
+            if (symbolInfo.signature.includes('def ')) {return 'function';}
         }
 
         if (symbolInfo.qualname) {
             const parts = symbolInfo.qualname.split('.');
             const name = parts[parts.length - 1];
-            if (name && name[0] === name[0].toUpperCase()) return 'class';
-            if (name && name[0] === name[0].toLowerCase()) return 'function';
+            if (name && name[0] === name[0].toUpperCase()) {return 'class';}
+            if (name && name[0] === name[0].toLowerCase()) {return 'function';}
         }
 
         return 'symbol';
     }
 
     private sanitizeSignature(signature?: string): string | undefined {
-        if (!signature) return undefined;
+        if (!signature) {return undefined;}
         return signature.replace(/\s*\[\[source\]\]\([^\s)]+\)/gi, '').trim();
     }
 
     private extractParametersFromStructuredContent(structuredContent?: HoverDoc['structuredContent']) {
-        if (!structuredContent?.sections?.length) return undefined;
+        if (!structuredContent?.sections?.length) {return undefined;}
 
         const parameters: NonNullable<HoverDoc['parameters']> = [];
         let currentField: 'parameters' | 'returns' | 'raises' | undefined;
@@ -499,15 +499,15 @@ export class HoverDocBuilder {
                 currentField = undefined;
             }
 
-            if (currentField !== 'parameters') continue;
+            if (currentField !== 'parameters') {continue;}
             if (section.kind === 'list' && section.items && section.items.length > 0) {
                 for (const item of section.items) {
                     const parameter = this.parseStructuredParameter(item);
-                    if (parameter) parameters.push(parameter);
+                    if (parameter) {parameters.push(parameter);}
                 }
             } else {
                 const parameter = this.parseStructuredParameter(section.content);
-                if (parameter) parameters.push(parameter);
+                if (parameter) {parameters.push(parameter);}
             }
         }
 
@@ -515,7 +515,7 @@ export class HoverDocBuilder {
     }
 
     private extractReturnFromStructuredContent(structuredContent?: HoverDoc['structuredContent']) {
-        if (!structuredContent?.sections?.length) return undefined;
+        if (!structuredContent?.sections?.length) {return undefined;}
 
         let currentField: 'parameters' | 'returns' | 'raises' | undefined;
         for (const section of structuredContent.sections) {
@@ -526,7 +526,7 @@ export class HoverDocBuilder {
                 currentField = undefined;
             }
 
-            if (currentField !== 'returns') continue;
+            if (currentField !== 'returns') {continue;}
             const parsed = this.parseStructuredTypedEntry(section.content);
             if (parsed) {
                 return {
@@ -540,7 +540,7 @@ export class HoverDocBuilder {
     }
 
     private extractRaisesFromStructuredContent(structuredContent?: HoverDoc['structuredContent']) {
-        if (!structuredContent?.sections?.length) return undefined;
+        if (!structuredContent?.sections?.length) {return undefined;}
 
         const raises: NonNullable<HoverDoc['raises']> = [];
         let currentField: 'parameters' | 'returns' | 'raises' | undefined;
@@ -553,7 +553,7 @@ export class HoverDocBuilder {
                 currentField = undefined;
             }
 
-            if (currentField !== 'raises') continue;
+            if (currentField !== 'raises') {continue;}
             const parsed = this.parseStructuredTypedEntry(section.content);
             if (parsed) {
                 raises.push({
@@ -567,16 +567,16 @@ export class HoverDocBuilder {
     }
 
     private getStructuredFieldKind(title?: string): 'parameters' | 'returns' | 'raises' | undefined {
-        if (!title) return undefined;
-        if (/^(?:Parameters|Args|Arguments)$/i.test(title)) return 'parameters';
-        if (/^Returns?$/i.test(title)) return 'returns';
-        if (/^Raises?$/i.test(title)) return 'raises';
+        if (!title) {return undefined;}
+        if (/^(?:Parameters|Args|Arguments)$/i.test(title)) {return 'parameters';}
+        if (/^Returns?$/i.test(title)) {return 'returns';}
+        if (/^Raises?$/i.test(title)) {return 'raises';}
         return undefined;
     }
 
     private parseStructuredParameter(content: string): NonNullable<HoverDoc['parameters']>[number] | undefined {
         const parsed = this.parseStructuredTypedEntry(content);
-        if (!parsed) return undefined;
+        if (!parsed) {return undefined;}
 
         return {
             name: parsed.label,
@@ -587,14 +587,14 @@ export class HoverDocBuilder {
 
     private parseStructuredTypedEntry(content: string): { label: string; type?: string; description?: string } | undefined {
         const normalized = content.trim().replace(/\[\[source\]\]\([^\s)]+\)/gi, '');
-        if (!normalized) return undefined;
+        if (!normalized) {return undefined;}
 
         const lines = normalized.split('\n').map(line => line.trim()).filter(Boolean);
-        if (lines.length === 0) return undefined;
+        if (lines.length === 0) {return undefined;}
 
         const heading = lines[0];
         const parsedHeading = this.parseStructuredHeading(heading);
-        if (!parsedHeading) return undefined;
+        if (!parsedHeading) {return undefined;}
 
         const description = lines.slice(1).join(' ').trim() || undefined;
         return {

@@ -37,7 +37,7 @@ export class StatusBarManager {
 
         this.context.subscriptions.push(
             vscode.workspace.onDidChangeConfiguration(e => {
-                if (e.affectsConfiguration('python-hover')) this.render();
+                if (e.affectsConfiguration('python-hover')) {this.render();}
             })
         );
     }
@@ -257,7 +257,7 @@ export class StatusBarManager {
     // ─────────────────────────────────────────────────────────────────────────
 
     private getVersion(): string {
-        if (this.cachedVersion !== undefined) return this.cachedVersion;
+        if (this.cachedVersion !== undefined) {return this.cachedVersion;}
         try {
             const pkg = JSON.parse(
                 fs.readFileSync(path.join(this.context.extensionPath, 'package.json'), 'utf8')
@@ -276,8 +276,8 @@ export class StatusBarManager {
      */
     private getCacheSizeInMB(): string {
         const now = Date.now();
-        if (now < this.cacheSizeExpiry) return this.cacheSizeLabel;
-        if (this.cacheSizeWalking) return this.cacheSizeLabel;
+        if (now < this.cacheSizeExpiry) {return this.cacheSizeLabel;}
+        if (this.cacheSizeWalking) {return this.cacheSizeLabel;}
 
         this.cacheSizeWalking = true;
         const p = this.getCachePath();

@@ -89,12 +89,12 @@ export class SphinxScraper {
             }
 
             const cached = forceRefresh ? null : this.getCachedSeeAlso(packageName, normalizedUrl, group);
-            if (cached) return cached;
+            if (cached) {return cached;}
 
             const [baseUrl, anchor] = normalizedUrl.split('#');
             const cachedHtml = this.htmlCache.get(baseUrl);
             const html = cachedHtml ?? await this.fetchHtml(baseUrl).then(h => { this.setHtmlCache(baseUrl, h); return h; });
-            if (!anchor || !html) return [];
+            if (!anchor || !html) {return [];}
 
             const extracted = this.extractSeeAlso(html, anchor, baseUrl);
             this.diskCache.setCorpusEntry(packageName, normalizedUrl, { seeAlso: extracted }, group);
@@ -110,7 +110,7 @@ export class SphinxScraper {
         // Find anchor position in HTML
         const idRegex = new RegExp(`id=["']${escapeRegExp(anchor)}["']`, 'i');
         const anchorMatch = idRegex.exec(html);
-        if (!anchorMatch) return results;
+        if (!anchorMatch) {return results;}
 
         // Search within 5000 chars after the anchor for seealso blocks
         const region = html.substring(anchorMatch.index, anchorMatch.index + 5000);
@@ -124,12 +124,12 @@ export class SphinxScraper {
             while ((linkMatch = linkRegex.exec(seealsoMatch[1])) !== null) {
                 const text = linkMatch[2].replace(/<[^>]+>/g, '').trim();
                 const href = linkMatch[1];
-                if (!text || !href) continue;
+                if (!text || !href) {continue;}
                 try {
                     const abs = new URL(href, pageUrl).toString();
                     results.push(`[${text}](${abs})`);
                 } catch {
-                    if (text) results.push(text);
+                    if (text) {results.push(text);}
                 }
             }
         }
@@ -146,7 +146,7 @@ export class SphinxScraper {
             }
 
             const cached = forceRefresh ? null : this.getCachedContent(packageName, normalizedUrl, group);
-            if (cached) return cached;
+            if (cached) {return cached;}
 
             const [baseUrl, anchor] = normalizedUrl.split('#');
 
@@ -183,7 +183,7 @@ export class SphinxScraper {
 
     deriveStructuredContent(markdown: string): StructuredHoverContent | undefined {
         const trimmed = this.stripOrphanFenceLines(markdown.trim());
-        if (!trimmed) return undefined;
+        if (!trimmed) {return undefined;}
 
         const blocks = this.splitMarkdownBlocks(trimmed);
         const sections: StructuredHoverSection[] = [];
@@ -219,7 +219,7 @@ export class SphinxScraper {
             const fenced = this.parseFencedCodeBlock(block);
             if (fenced) {
                 const code = fenced.code.trim();
-                if (!code) continue;
+                if (!code) {continue;}
 
                 if (!signature) {
                     const candidate = this.extractSignatureFromCodeBlock(code);
@@ -392,9 +392,9 @@ export class SphinxScraper {
     }
 
     private inferSectionRole(title?: string): StructuredHoverSection['role'] {
-        if (!title) return 'description';
+        if (!title) {return 'description';}
 
-        if (/^(?:Examples?|Usage|Demo)\b/i.test(title)) return 'example';
+        if (/^(?:Examples?|Usage|Demo)\b/i.test(title)) {return 'example';}
         if (/^(?:Note|Notes|Warning|Warnings|Caution|Important|Tip|Tips|Changed in version|New in version|Deprecated)\b/i.test(title)) {
             return 'note';
         }
@@ -407,7 +407,7 @@ export class SphinxScraper {
             .split('\n')
             .map(line => line.trim())
             .filter(Boolean);
-        if (lines.length === 0) return undefined;
+        if (lines.length === 0) {return undefined;}
 
         const items: string[] = [];
         for (const line of lines) {
@@ -441,7 +441,7 @@ export class SphinxScraper {
         const sectionMatch = /<section[^>]*id=["']module-[^"']*["'][^>]*>([\s\S]*?)<\/section>/i.exec(html);
         if (sectionMatch) {
             const paragraphs = this.extractParagraphs(sectionMatch[1], pageUrl, 3);
-            if (paragraphs) return paragraphs;
+            if (paragraphs) {return paragraphs;}
         }
 
         // Strategy 2: first paragraphs after <h1>
@@ -451,7 +451,7 @@ export class SphinxScraper {
             const h1End = afterH1.indexOf('</h1>');
             if (h1End !== -1) {
                 const paragraphs = this.extractParagraphs(afterH1.substring(h1End + 5), pageUrl, 3);
-                if (paragraphs) return paragraphs;
+                if (paragraphs) {return paragraphs;}
             }
         }
 
@@ -460,7 +460,7 @@ export class SphinxScraper {
         let pMatch;
         while ((pMatch = pRegex.exec(html)) !== null) {
             const text = this.htmlToMarkdown(pMatch[1], pageUrl).trim();
-            if (text && text.length > 50) return text;
+            if (text && text.length > 50) {return text;}
         }
 
         return null;
@@ -472,7 +472,7 @@ export class SphinxScraper {
         let pMatch;
         while ((pMatch = pRegex.exec(html)) !== null && paragraphs.length < max) {
             const text = this.htmlToMarkdown(pMatch[1], pageUrl).trim();
-            if (text && text.length > 20) paragraphs.push(text);
+            if (text && text.length > 20) {paragraphs.push(text);}
         }
         return paragraphs.length > 0 ? paragraphs.join('\n\n') : null;
     }
@@ -485,7 +485,7 @@ export class SphinxScraper {
 
         const flush = () => {
             const block = current.join('\n').trim();
-            if (block) blocks.push(block);
+            if (block) {blocks.push(block);}
             current.length = 0;
         };
 
@@ -534,10 +534,10 @@ export class SphinxScraper {
     private extractSeeAlsoItems(block: string): string[] | undefined {
         const trimmed = block.trim();
         const match = /^See also\s+([\s\S]+)$/i.exec(trimmed);
-        if (!match) return undefined;
+        if (!match) {return undefined;}
 
         const raw = match[1].trim();
-        if (!raw) return undefined;
+        if (!raw) {return undefined;}
 
         const links = [...raw.matchAll(/\[([^\]]+)\]\(([^)]+)\)/g)].map(([, text, href]) => `[${text}](${href})`);
         if (links.length > 0) {
@@ -555,17 +555,17 @@ export class SphinxScraper {
             .split('\n')
             .map(line => line.trim())
             .filter(Boolean);
-        if (lines.length === 0) return false;
+        if (lines.length === 0) {return false;}
 
         const promptLines = lines.filter(line => /^>>>\s/.test(line) || /^\.\.\.\s/.test(line)).length;
-        if (promptLines === 0) return false;
+        if (promptLines === 0) {return false;}
 
         return promptLines >= 1;
     }
 
     private stripExampleLeadIn(text: string, nextBlock?: string): string {
-        if (!nextBlock) return text;
-        if (!/(?:For example|Examples?)\s*:\s*$/i.test(text)) return text;
+        if (!nextBlock) {return text;}
+        if (!/(?:For example|Examples?)\s*:\s*$/i.test(text)) {return text;}
         if (!this.isDoctestTranscriptBlock(nextBlock) && !this.parseFencedCodeBlock(nextBlock)) {
             return text;
         }
@@ -583,7 +583,7 @@ export class SphinxScraper {
 
     private parseFencedCodeBlock(block: string): { language: string; code: string } | null {
         const match = /^```([A-Za-z0-9_-]*)\n([\s\S]*?)\n```$/.exec(block.trim());
-        if (!match) return null;
+        if (!match) {return null;}
         return {
             language: match[1] || '',
             code: match[2],
@@ -595,16 +595,16 @@ export class SphinxScraper {
             .split('\n')
             .map(line => line.trim())
             .filter(Boolean);
-        if (lines.length !== 1) return undefined;
+        if (lines.length !== 1) {return undefined;}
 
         const candidate = lines[0];
-        if (candidate.includes('#')) return undefined;
+        if (candidate.includes('#')) {return undefined;}
         return this.isSignatureLikeParagraph(candidate) ? candidate : undefined;
     }
 
     private isSignatureLikeParagraph(text: string): boolean {
         const normalized = text.replace(/[`*_]/g, '').trim();
-        if (!normalized) return false;
+        if (!normalized) {return false;}
 
         return /^(?:class|async\s+def|def)\s+[A-Za-z_][\w.]*\s*\(.*\)\s*(?:->\s*.+)?$/i.test(normalized)
             || /^[A-Za-z_][\w.]*\s*\(.*\)\s*(?:->\s*.+)?$/.test(normalized);
@@ -620,7 +620,7 @@ export class SphinxScraper {
     private setHtmlCache(url: string, html: string): void {
         if (this.htmlCache.size >= SphinxScraper.HTML_CACHE_MAX) {
             const oldest = this.htmlCache.keys().next().value;
-            if (oldest !== undefined) this.htmlCache.delete(oldest);
+            if (oldest !== undefined) {this.htmlCache.delete(oldest);}
         }
         this.htmlCache.set(url, html);
     }
@@ -652,21 +652,21 @@ export class SphinxScraper {
         // Find the element with the target id
         const idRegex = new RegExp(`id=["']${escapeRegExp(id)}["']`, 'i');
         const match = idRegex.exec(html);
-        if (!match) return null;
+        if (!match) {return null;}
 
         // Find start of the tag containing the id
         let tagStart = -1;
         let cursor = match.index;
         while (cursor >= 0) {
             const openBracket = html.lastIndexOf('<', cursor);
-            if (openBracket === -1) break;
+            if (openBracket === -1) {break;}
             if (html[openBracket + 1] === '/') { cursor = openBracket - 1; continue; }
             const closeBracket = html.indexOf('>', openBracket);
             if (closeBracket !== -1 && closeBracket < match.index) { cursor = openBracket - 1; continue; }
             tagStart = openBracket;
             break;
         }
-        if (tagStart === -1) return null;
+        if (tagStart === -1) {return null;}
 
         const tagMatch = html.substring(tagStart).match(/^<(\w+)/);
         const tagName = tagMatch ? tagMatch[1].toLowerCase() : 'span';
@@ -759,7 +759,7 @@ export class SphinxScraper {
     }
 
     private normalizeExtractedMarkdown(markdown: string): string {
-        if (!markdown) return markdown;
+        if (!markdown) {return markdown;}
 
         let cleaned = markdown.trim();
         cleaned = cleaned.replace(/^`{1,3}\s*[A-Za-z_][\w.]*\s*`{0,3}\s*\n\n(?=```)/, '');
@@ -818,22 +818,22 @@ export class SphinxScraper {
     }
 
     private looksLikeFenceContent(line: string): boolean {
-        if (!line) return false;
-        if (line.startsWith('```')) return true;
-        if (this.isSignatureLikeParagraph(line)) return true;
-        if (this.isGrammarLikeParagraph(line)) return true;
-        if (line.includes('::=')) return true;
-        if (/^[A-Za-z_][\w]*\s*:\s*["'[(]/.test(line)) return true;
+        if (!line) {return false;}
+        if (line.startsWith('```')) {return true;}
+        if (this.isSignatureLikeParagraph(line)) {return true;}
+        if (this.isGrammarLikeParagraph(line)) {return true;}
+        if (line.includes('::=')) {return true;}
+        if (/^[A-Za-z_][\w]*\s*:\s*["'[(]/.test(line)) {return true;}
         if (/^(?:>>>|\.\.\.|class\s|def\s|async\s+def\s|for\s|if\s|elif\s|while\s|with\s|try:|except\b|finally:|return\s|raise\s|yield\s|import\s|from\s)/.test(line)) {
             return true;
         }
-        if (/^[A-Za-z_]\w*(?:\.\w+)*\s*=\s*[^=]/.test(line)) return true;
+        if (/^[A-Za-z_]\w*(?:\.\w+)*\s*=\s*[^=]/.test(line)) {return true;}
         return false;
     }
 
     private isGrammarLikeParagraph(text: string): boolean {
         const normalized = text.replace(/[*`]/g, '').trim();
-        if (!normalized) return false;
+        if (!normalized) {return false;}
 
         return normalized.includes('::=')
             || /^[A-Za-z_][\w]*(?:_[A-Za-z_][\w]*)?\s*:\s*["'[(]/.test(normalized);
@@ -857,7 +857,7 @@ export class SphinxScraper {
 
         // Skip past the opening tag
         const openEnd = html.indexOf('>', start);
-        if (openEnd === -1) return -1;
+        if (openEnd === -1) {return -1;}
 
         let depth = 1;
         let i = openEnd + 1;
@@ -870,7 +870,7 @@ export class SphinxScraper {
             // Closing tag?
             if (sub.startsWith(closeTag)) {
                 depth--;
-                if (depth === 0) return i; // return start of closing tag so caller can exclude it
+                if (depth === 0) {return i;} // return start of closing tag so caller can exclude it
                 i += closeTag.length;
                 continue;
             }
@@ -937,7 +937,7 @@ export class SphinxScraper {
         // Links — make absolute
         md = md.replace(/<a[^>]+href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gim, (_, href, text) => {
             const cleanText = text.replace(/<[^>]+>/g, '').trim();
-            if (!cleanText) return '';
+            if (!cleanText) {return '';}
             try {
                 const abs = new URL(href, pageUrl).toString();
                 return `[${cleanText}](${abs})`;
@@ -970,7 +970,7 @@ export class SphinxScraper {
         });
         md = md.replace(/<dt[^>]*>([\s\S]*?)<\/dt>/gim, (_, inner) => {
             const text = inner.replace(/<[^>]+>/g, '').trim();
-            if (!text || text === ':') return '';
+            if (!text || text === ':') {return '';}
             return `\n**${text}**\n`;
         });
         md = md.replace(/<dd[^>]*>/gim, '');
