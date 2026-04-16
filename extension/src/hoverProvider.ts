@@ -674,7 +674,7 @@ export class HoverProvider implements vscode.HoverProvider {
         )
       }
 
-      const hoverPromise = (;async () => {
+      const hoverPromise = (async () => {
         // ── Structural keyword fast-path ──────────────────────────────────────
         // When the cursor is directly on a structural keyword (class, def, for, …)
         // we bypass LSP entirely — Pylance would otherwise resolve the *following*
