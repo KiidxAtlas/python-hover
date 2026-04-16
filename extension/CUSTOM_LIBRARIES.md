@@ -11,6 +11,7 @@ Python Hover allows you to add documentation for any Python library that uses Sp
 ### How Auto-Detection Works
 
 When you import a third-party library, the extension:
+
 1. Detects the import statement (e.g., `from jupyter_client import KernelManager`)
 2. Checks if the library is installed in your Python environment
 3. Automatically searches for and downloads the library's Intersphinx inventory
@@ -19,6 +20,7 @@ When you import a third-party library, the extension:
 ### Supported Libraries
 
 Auto-detection works with any library that:
+
 - Has Sphinx-generated documentation
 - Publishes an `objects.inv` file (Intersphinx inventory)
 - Is installed in your Python environment
@@ -29,24 +31,25 @@ Common examples: `jupyter_client`, `jupyter_core`, `black`, `mypy`, `httpx`, and
 
 ```json
 {
-  "python-hover.onlineDiscovery": true  // Default: true
+  "python-hover.onlineDiscovery": true // Default: true
 }
 ```
 
 **When to disable:**
+
 - You're working with many third-party imports and notice performance issues
 - You only want to see documentation for specific libraries (use custom libraries instead)
 - You're working offline
 
 ### Custom Libraries vs Auto-Detect
 
-| Feature | Auto-Detect | Custom Libraries |
-|---------|------------|------------------|
-| Setup | Automatic | Manual configuration |
-| Coverage | Any installed library with docs | Only configured libraries |
-| Performance | May impact with many imports | Fast, pre-configured |
-| Offline | Requires initial internet connection | Works offline after cache |
-| Use Case | General development | Company libraries, specific versions |
+| Feature     | Auto-Detect                          | Custom Libraries                     |
+| ----------- | ------------------------------------ | ------------------------------------ |
+| Setup       | Automatic                            | Manual configuration                 |
+| Coverage    | Any installed library with docs      | Only configured libraries            |
+| Performance | May impact with many imports         | Fast, pre-configured                 |
+| Offline     | Requires initial internet connection | Works offline after cache            |
+| Use Case    | General development                  | Company libraries, specific versions |
 
 **Pro tip:** Use both! Configure custom libraries for your internal/company libraries, and let auto-detect handle public libraries.
 
@@ -106,6 +109,7 @@ https://yourproject.readthedocs.io/en/latest/
 ```
 
 Or for specific versions:
+
 ```
 https://yourproject.readthedocs.io/en/stable/objects.inv
 https://yourproject.readthedocs.io/en/v2.0/objects.inv
@@ -114,6 +118,7 @@ https://yourproject.readthedocs.io/en/v2.0/objects.inv
 ### Testing if Intersphinx is Available
 
 Try accessing the `objects.inv` URL in your browser:
+
 - If it downloads a binary file → ✅ Correct URL
 - If you get 404 → ❌ Wrong URL or Intersphinx not enabled
 
@@ -202,12 +207,16 @@ You can override the built-in library configurations. For example, to use a diff
 ## Workspace vs User Settings
 
 ### User Settings (Global)
+
 Configure in: **Settings → Python Hover → Custom Libraries**
+
 - Applies to all projects
 - Good for: Company libraries, personal utilities
 
 ### Workspace Settings (Project-specific)
+
 Add to `.vscode/settings.json` in your project:
+
 - Only applies to this project
 - Good for: Project-specific dependencies
 - Committed to version control for team sharing
@@ -243,11 +252,13 @@ Add to `.vscode/settings.json` in your project:
    - Example: Use `"PIL"` not `"pillow"` if you import as `from PIL import Image`
 
 4. **Enable debug logging**
+
    ```json
    {
-       "python-hover.enableDebugLogging": true
+     "python-hover.enableDebugLogging": true
    }
    ```
+
    Then check **Output → Python Hover** for diagnostic messages
 
 5. **Clear cache**

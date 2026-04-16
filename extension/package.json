@@ -1,692 +1,757 @@
 {
-    "name": "python-hover",
-    "displayName": "🐍 Python Hover - Enhanced Documentation",
-    "description": "Instant Python documentation on hover. Covers 300+ constructs, all keywords/operators with correct anchors, NumPy, Pandas, FastAPI, Django, PyTorch, Flask, Pydantic, SQLAlchemy, Requests and more. Scoped DevDocs links, smart context detection, zero config.",
-    "version": "0.7.4",
-    "publisher": "KiidxAtlas",
-    "author": {
-        "name": "KiidxAtlas",
-        "url": "https://github.com/KiidxAtlas"
-    },
-    "license": "MIT",
-    "repository": {
-        "type": "git",
-        "url": "https://github.com/KiidxAtlas/python-hover.git"
-    },
-    "bugs": {
-        "url": "https://github.com/KiidxAtlas/python-hover/issues"
-    },
-    "homepage": "https://github.com/KiidxAtlas/python-hover#readme",
-    "icon": "media/icon.png",
-    "engines": {
-        "vscode": "^1.85.0"
-    },
-    "galleryBanner": {
-        "color": "#1e415e",
-        "theme": "dark"
-    },
-    "categories": [
-        "Programming Languages",
-        "Education",
-        "Data Science",
-        "Snippets",
-        "Other"
+  "name": "python-hover",
+  "displayName": "🐍 Python Hover - Enhanced Documentation",
+  "description": "Instant Python documentation on hover. Covers 300+ constructs, all keywords/operators with correct anchors, NumPy, Pandas, FastAPI, Django, PyTorch, Flask, Pydantic, SQLAlchemy, Requests and more. Scoped DevDocs links, smart context detection, zero config.",
+  "version": "0.7.5",
+  "publisher": "KiidxAtlas",
+  "author": {
+    "name": "KiidxAtlas",
+    "url": "https://github.com/KiidxAtlas"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/KiidxAtlas/python-hover.git"
+  },
+  "bugs": {
+    "url": "https://github.com/KiidxAtlas/python-hover/issues"
+  },
+  "homepage": "https://github.com/KiidxAtlas/python-hover#readme",
+  "icon": "media/icon.png",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "galleryBanner": {
+    "color": "#1e415e",
+    "theme": "dark"
+  },
+  "categories": [
+    "Programming Languages",
+    "Education",
+    "Data Science",
+    "Snippets",
+    "Other"
+  ],
+  "keywords": [
+    "python",
+    "hover",
+    "documentation",
+    "intellisense",
+    "autocomplete",
+    "examples",
+    "learning",
+    "reference",
+    "methods",
+    "built-ins",
+    "type-hints",
+    "typing",
+    "education",
+    "productivity",
+    "numpy",
+    "pandas",
+    "matplotlib",
+    "flask",
+    "django",
+    "fastapi",
+    "pytorch",
+    "pydantic",
+    "sqlalchemy",
+    "requests",
+    "devdocs",
+    "sphinx"
+  ],
+  "activationEvents": [
+    "onLanguage:python"
+  ],
+  "main": "./out/extension/src/activate.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "python-hover.copyImport",
+        "title": "Copy Import Statement",
+        "category": "Python Hover"
+      },
+      {
+        "command": "python-hover.openSidebarHistoryEntry",
+        "title": "Open Sidebar History Entry",
+        "category": "Python Hover"
+      },
+      {
+        "command": "python-hover.toggleSavedHover",
+        "title": "Save Hover To Saved Docs",
+        "category": "Python Hover"
+      },
+      {
+        "command": "python-hover.openSavedHoverEntry",
+        "title": "Open Saved Doc Entry",
+        "category": "Python Hover"
+      },
+      {
+        "command": "python-hover.removeSavedHover",
+        "title": "Remove Saved Doc",
+        "category": "Python Hover"
+      },
+      {
+        "command": "python-hover.pinLast",
+        "title": "Pin Last Hover",
+        "category": "Python Hover"
+      },
+      {
+        "command": "python-hover.showStatusNotification",
+        "title": "Open PyHover Command Center",
+        "category": "Python Hover"
+      },
+      {
+        "command": "python-hover.openStudio",
+        "title": "Open PyHover Studio",
+        "category": "Python Hover"
+      },
+      {
+        "command": "python-hover.toggleOnlineDiscovery",
+        "title": "Toggle Online Discovery",
+        "category": "Python Hover"
+      },
+      {
+        "command": "python-hover.clearCache",
+        "title": "Clear Documentation Cache (Keep Python Corpus)",
+        "category": "Python Hover"
+      },
+      {
+        "command": "python-hover.clearStdlibCorpus",
+        "title": "Clear Python Stdlib Corpus",
+        "category": "Python Hover"
+      },
+      {
+        "command": "python-hover.clearAllCache",
+        "title": "Clear All PyHover Cache",
+        "category": "Python Hover"
+      },
+      {
+        "command": "python-hover.buildPythonCorpus",
+        "title": "Build Python Stdlib Corpus",
+        "category": "Python Hover"
+      },
+      {
+        "command": "python-hover.cancelPythonCorpusBuild",
+        "title": "Cancel Python Stdlib Corpus Build",
+        "category": "Python Hover"
+      },
+      {
+        "command": "python-hover.searchDocs",
+        "title": "Search Python Docs…",
+        "category": "Python Hover"
+      },
+      {
+        "command": "python-hover.pinHover",
+        "title": "Pin Documentation Panel",
+        "category": "Python Hover"
+      },
+      {
+        "command": "python-hover.debugPinHover",
+        "title": "Debug Pin Current Hover",
+        "category": "Python Hover"
+      },
+      {
+        "command": "python-hover.browseModule",
+        "title": "Browse Module Symbols",
+        "category": "Python Hover"
+      },
+      {
+        "command": "python-hover.openDocsSide",
+        "title": "Open Docs in Side Panel",
+        "category": "Python Hover"
+      },
+      {
+        "command": "python-hover.showLogs",
+        "title": "Show PyHover Logs",
+        "category": "Python Hover"
+      },
+      {
+        "command": "python-hover.showHistory",
+        "title": "Show Hover History",
+        "category": "Python Hover"
+      },
+      {
+        "command": "python-hover.openCacheFolder",
+        "title": "Open Cache Folder",
+        "category": "Python Hover"
+      }
     ],
-    "keywords": [
-        "python",
-        "hover",
-        "documentation",
-        "intellisense",
-        "autocomplete",
-        "examples",
-        "learning",
-        "reference",
-        "methods",
-        "built-ins",
-        "type-hints",
-        "typing",
-        "education",
-        "productivity",
-        "numpy",
-        "pandas",
-        "matplotlib",
-        "flask",
-        "django",
-        "fastapi",
-        "pytorch",
-        "pydantic",
-        "sqlalchemy",
-        "requests",
-        "devdocs",
-        "sphinx"
-    ],
-    "activationEvents": [
-        "onLanguage:python"
-    ],
-    "main": "./out/extension/src/activate.js",
-    "contributes": {
-        "commands": [
-            {
-                "command": "python-hover.copyImport",
-                "title": "Copy Import Statement",
-                "category": "Python Hover"
-            },
-            {
-                "command": "python-hover.openSidebarHistoryEntry",
-                "title": "Open Sidebar History Entry",
-                "category": "Python Hover"
-            },
-            {
-                "command": "python-hover.toggleSavedHover",
-                "title": "Save Hover To Saved Docs",
-                "category": "Python Hover"
-            },
-            {
-                "command": "python-hover.openSavedHoverEntry",
-                "title": "Open Saved Doc Entry",
-                "category": "Python Hover"
-            },
-            {
-                "command": "python-hover.removeSavedHover",
-                "title": "Remove Saved Doc",
-                "category": "Python Hover"
-            },
-            {
-                "command": "python-hover.pinLast",
-                "title": "Pin Last Hover",
-                "category": "Python Hover"
-            },
-            {
-                "command": "python-hover.showStatusNotification",
-                "title": "Open PyHover Command Center",
-                "category": "Python Hover"
-            },
-            {
-                "command": "python-hover.openStudio",
-                "title": "Open PyHover Studio",
-                "category": "Python Hover"
-            },
-            {
-                "command": "python-hover.toggleOnlineDiscovery",
-                "title": "Toggle Online Discovery",
-                "category": "Python Hover"
-            },
-            {
-                "command": "python-hover.clearCache",
-                "title": "Clear Documentation Cache (Keep Python Corpus)",
-                "category": "Python Hover"
-            },
-            {
-                "command": "python-hover.clearStdlibCorpus",
-                "title": "Clear Python Stdlib Corpus",
-                "category": "Python Hover"
-            },
-            {
-                "command": "python-hover.clearAllCache",
-                "title": "Clear All PyHover Cache",
-                "category": "Python Hover"
-            },
-            {
-                "command": "python-hover.buildPythonCorpus",
-                "title": "Build Python Stdlib Corpus",
-                "category": "Python Hover"
-            },
-            {
-                "command": "python-hover.cancelPythonCorpusBuild",
-                "title": "Cancel Python Stdlib Corpus Build",
-                "category": "Python Hover"
-            },
-            {
-                "command": "python-hover.searchDocs",
-                "title": "Search Python Docs…",
-                "category": "Python Hover"
-            },
-            {
-                "command": "python-hover.pinHover",
-                "title": "Pin Documentation Panel",
-                "category": "Python Hover"
-            },
-            {
-                "command": "python-hover.debugPinHover",
-                "title": "Debug Pin Current Hover",
-                "category": "Python Hover"
-            },
-            {
-                "command": "python-hover.browseModule",
-                "title": "Browse Module Symbols",
-                "category": "Python Hover"
-            },
-            {
-                "command": "python-hover.openDocsSide",
-                "title": "Open Docs in Side Panel",
-                "category": "Python Hover"
-            },
-            {
-                "command": "python-hover.showLogs",
-                "title": "Show PyHover Logs",
-                "category": "Python Hover"
-            },
-            {
-                "command": "python-hover.showHistory",
-                "title": "Show Hover History",
-                "category": "Python Hover"
-            },
-            {
-                "command": "python-hover.openCacheFolder",
-                "title": "Open Cache Folder",
-                "category": "Python Hover"
-            }
-        ],
-        "viewsContainers": {
-            "activitybar": [
-                {
-                    "id": "pyhover",
-                    "title": "PyHover",
-                    "icon": "media/pyhover-activity.svg"
-                }
-            ]
-        },
-        "views": {
-            "pyhover": [
-                {
-                    "id": "pyhover.inspector",
-                    "name": "Inspector"
-                },
-                {
-                    "id": "pyhover.saved",
-                    "name": "Saved Docs"
-                },
-                {
-                    "id": "pyhover.history",
-                    "name": "History"
-                },
-                {
-                    "id": "pyhover.packages",
-                    "name": "Recent Packages"
-                }
-            ]
-        },
-        "viewsWelcome": [
-            {
-                "view": "pyhover.inspector",
-                "contents": "Inspect the current hover target here after you hover a Python symbol.\n\n[Search docs](command:python-hover.searchDocs)\n[Browse modules](command:python-hover.browseModule)\n[Open Studio](command:python-hover.openStudio)"
-            },
-            {
-                "view": "pyhover.saved",
-                "contents": "Build a reusable reading list from the hover and pinned docs surfaces.\n\nUse **Save** from a hover card or pinned panel, then reopen entries here.\n\n[Search docs](command:python-hover.searchDocs)\n[Open Studio](command:python-hover.openStudio)"
-            },
-            {
-                "view": "pyhover.history",
-                "contents": "Recent hover targets appear here as you move through Python code.\n\nLive session entries reopen in the inspector; stored links reopen docs when the session copy is gone.\n\n[Browse modules](command:python-hover.browseModule)\n[Search docs](command:python-hover.searchDocs)"
-            },
-            {
-                "view": "pyhover.packages",
-                "contents": "Recently explored packages and indexed libraries show up here for quick return visits.\n\n[Browse modules](command:python-hover.browseModule)\n[Search docs](command:python-hover.searchDocs)"
-            }
-        ],
-        "menus": {
-            "editor/context": [
-                {
-                    "command": "python-hover.searchDocs",
-                    "when": "editorLangId == python && pyhover.contextMenu.enabled && pyhover.contextMenu.searchDocs",
-                    "group": "navigation@10"
-                },
-                {
-                    "command": "python-hover.browseModule",
-                    "when": "editorLangId == python && pyhover.contextMenu.enabled && pyhover.contextMenu.browseModule",
-                    "group": "navigation@11"
-                },
-                {
-                    "command": "python-hover.pinHover",
-                    "when": "editorLangId == python && pyhover.contextMenu.enabled && pyhover.contextMenu.pinHover",
-                    "group": "navigation@12"
-                },
-                {
-                    "command": "python-hover.debugPinHover",
-                    "when": "editorLangId == python && pyhover.contextMenu.enabled && pyhover.contextMenu.debugPinHover",
-                    "group": "navigation@13"
-                },
-                {
-                    "command": "python-hover.openStudio",
-                    "when": "editorLangId == python && pyhover.contextMenu.enabled && pyhover.contextMenu.openStudio",
-                    "group": "navigation@14"
-                }
-            ],
-            "view/item/context": [
-                {
-                    "command": "python-hover.removeSavedHover",
-                    "when": "view == pyhover.saved && viewItem == pyhoverSavedDocEntry",
-                    "group": "inline@1"
-                }
-            ]
-        },
-        "keybindings": [
-            {
-                "command": "python-hover.searchDocs",
-                "key": "ctrl+k ctrl+d",
-                "mac": "cmd+k cmd+d",
-                "when": "editorLangId == python"
-            },
-            {
-                "command": "python-hover.pinHover",
-                "key": "ctrl+k ctrl+p",
-                "mac": "cmd+k cmd+p",
-                "when": "editorLangId == python"
-            },
-            {
-                "command": "python-hover.showHistory",
-                "key": "ctrl+k ctrl+h",
-                "mac": "cmd+k cmd+h",
-                "when": "editorLangId == python"
-            },
-            {
-                "command": "python-hover.openStudio",
-                "key": "ctrl+k ctrl+o",
-                "mac": "cmd+k cmd+o",
-                "when": "editorLangId == python"
-            },
-            {
-                "command": "python-hover.copyImport",
-                "key": "ctrl+k ctrl+i",
-                "mac": "cmd+k cmd+i",
-                "when": "editorLangId == python"
-            },
-            {
-                "command": "python-hover.toggleSavedHover",
-                "key": "ctrl+k ctrl+s",
-                "mac": "cmd+k cmd+s",
-                "when": "editorLangId == python"
-            }
-        ],
-        "configuration": {
-            "title": "Python Hover",
-            "properties": {
-                "python-hover.enable": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Enable Python Hover documentation lookups."
-                },
-                "python-hover.runtimeHelper": {
-                    "type": "boolean",
-                    "default": true,
-                    "markdownDescription": "Run the persistent Python helper for runtime introspection, keyword help, installed-version detection, and better symbol identity. Enabled by default because it substantially improves hover quality."
-                },
-                "python-hover.docScraping": {
-                    "type": "boolean",
-                    "default": false,
-                    "markdownDescription": "Fetch and structure third-party documentation HTML in the background. Leave this off for a lighter experience, or enable it when you want richer narrative sections, examples, and see-also links in hovers and pinned panels."
-                },
-                "python-hover.astFallback": {
-                    "type": "boolean",
-                    "default": true,
-                    "markdownDescription": "When the language server returns an incomplete symbol target, use AST-based fallback identification. Enabled by default to improve local chains, literal receivers, and partially resolved names."
-                },
-                "python-hover.onlineDiscovery": {
-                    "type": "boolean",
-                    "default": true,
-                    "markdownDescription": "Allow PyHover to fetch inventories and docs from the web. Disable this to keep the extension cache-only."
-                },
-                "python-hover.warmupImports": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "When online discovery is on, pre-load objects.inv for packages imported in the active editor. Off by default — inventories load on first hover instead."
-                },
-                "python-hover.useKnownDocsUrls": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "Use the extension's bundled package→documentation base URL map (faster for popular libs). When false, docs roots come from PyPI project URLs + objects.inv probing + ReadTheDocs-style fallback only."
-                },
-                "python-hover.buildFullCorpus": {
-                    "type": "boolean",
-                    "default": false,
-                    "markdownDescription": "On the first hover from a package, build that package’s local corpus in the background instead of caching one symbol at a time. Requires `python-hover.onlineDiscovery`."
-                },
-                "python-hover.docsVersion": {
-                    "type": "string",
-                    "default": "auto",
-                    "description": "Python documentation version. 'auto' detects from your interpreter; or specify e.g. '3.11'."
-                },
-                "python-hover.maxSnippetLines": {
-                    "type": "number",
-                    "default": 12,
-                    "minimum": 1,
-                    "maximum": 100,
-                    "description": "Maximum lines shown in hover code snippets."
-                },
-                "python-hover.showPracticalExamples": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Show code examples in hover documentation."
-                },
-                "python-hover.requestTimeout": {
-                    "type": "number",
-                    "default": 10000,
-                    "minimum": 1000,
-                    "maximum": 60000,
-                    "description": "HTTP timeout (ms) for fetching documentation pages."
-                },
-                "python-hover.cacheTTL.inventoryDays": {
-                    "type": "number",
-                    "default": 7,
-                    "minimum": 1,
-                    "description": "Retention hint for Sphinx inventory downloads. Cached inventory files persist until you clear the PyHover cache."
-                },
-                "python-hover.cacheTTL.snippetHours": {
-                    "type": "number",
-                    "default": 48,
-                    "minimum": 1,
-                    "description": "Retention hint for scraped documentation pages. Cached corpus entries persist until you clear the PyHover cache."
-                },
-                "python-hover.docsBrowser": {
-                    "type": "string",
-                    "enum": ["integrated", "external"],
-                    "default": "integrated",
-                    "enumDescriptions": [
-                        "Open in VS Code side panel",
-                        "Open in system browser"
-                    ],
-                    "markdownDescription": "Where to open official docs links from hovers, pins, and Studio."
-                },
-                "python-hover.devdocsBrowser": {
-                    "type": "string",
-                    "enum": ["integrated", "external"],
-                    "default": "external",
-                    "enumDescriptions": [
-                        "Open in VS Code side panel",
-                        "Open in system browser"
-                    ],
-                    "markdownDescription": "Where to open DevDocs searches from hovers and Studio."
-                },
-                "python-hover.customLibraries": {
-                    "type": "array",
-                    "default": [],
-                    "description": "Custom Sphinx documentation sources. Each entry needs a name and baseUrl; set inventoryUrl when objects.inv lives elsewhere.",
-                    "items": {
-                        "type": "object",
-                        "required": [
-                            "name",
-                            "baseUrl"
-                        ],
-                        "properties": {
-                            "name": { "type": "string", "description": "Library name (e.g. 'mylib')" },
-                            "inventoryUrl": {
-                                "type": "string",
-                                "description": "Optional URL to the objects.inv file when it is not served from baseUrl/objects.inv"
-                            },
-                            "baseUrl": { "type": "string", "description": "Base docs URL" }
-                        }
-                    }
-                },
-                "python-hover.enableDebugLogging": {
-                    "type": "boolean",
-                    "default": false,
-                    "markdownDescription": "Enable verbose debug logging and surface richer troubleshooting details in the output channel and debug panels."
-                },
-                "python-hover.ui.showSignatures": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Show function/method signatures at the top of hovers."
-                },
-                "python-hover.ui.showReturnTypes": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Show return type information in hover tooltips."
-                },
-                "python-hover.ui.showDebugPinButton": {
-                    "type": "boolean",
-                    "default": false,
-                    "markdownDescription": "Show a Debug button in the hover toolbar so users can jump straight into the pinned debug view."
-                },
-                "python-hover.ui.showStatusBar": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Show the PyHover status bar entry for quick actions and cache status."
-                },
-                "python-hover.ui.contextMenu.enabled": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Show PyHover commands in the Python editor context menu."
-                },
-                "python-hover.ui.contextMenu.searchDocs": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Show the Search Docs command in the Python editor context menu."
-                },
-                "python-hover.ui.contextMenu.browseModule": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Show the Browse Module command in the Python editor context menu."
-                },
-                "python-hover.ui.contextMenu.pinHover": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Show the Pin Hover command in the Python editor context menu."
-                },
-                "python-hover.ui.contextMenu.debugPinHover": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Show the Debug Pin Hover command in the Python editor context menu."
-                },
-                "python-hover.ui.contextMenu.openStudio": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Show the Open Studio command in the Python editor context menu."
-                },
-                "python-hover.ui.maxContentLength": {
-                    "type": "number",
-                    "default": 800,
-                    "minimum": 200,
-                    "maximum": 2000,
-                    "description": "Maximum characters of hover content before truncation with a 'Read more…' link."
-                },
-                "python-hover.ui.compactMode": {
-                    "type": "boolean",
-                    "default": false,
-                    "markdownDescription": "Show only the signature and first sentence of the description. Overrides `showPracticalExamples`, `showReturnTypes`, and sets a short content length."
-                },
-                "python-hover.ui.showBadges": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Show the badge row (deprecated, async, property, overloaded) in hover tooltips."
-                },
-                "python-hover.ui.showMetadataChips": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Show the metadata chips row under the hover title (kind, source, module, version, badges)."
-                },
-                "python-hover.ui.showProvenance": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Show the source provenance line under the hover title so docs origin stays visible at a glance."
-                },
-                "python-hover.ui.showToolbar": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Show the hover action toolbar with the core pin, docs, source, and browse links."
-                },
-                "python-hover.ui.showCallouts": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Show deprecation, update, protocol hint, and note callouts in hovers."
-                },
-                "python-hover.ui.showParameters": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Show the parameters table in hover tooltips."
-                },
-                "python-hover.ui.maxParameters": {
-                    "type": "number",
-                    "default": 6,
-                    "minimum": 1,
-                    "maximum": 20,
-                    "description": "Maximum number of parameters shown in the hover parameters table before a 'more in docs' link."
-                },
-                "python-hover.ui.showSeeAlso": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Show the 'See also' section at the bottom of hovers."
-                },
-                "python-hover.ui.showRaises": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Show the 'Raises' section when documentation includes exception information."
-                },
-                "python-hover.ui.showModuleExports": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Show module export lists for import/module hovers."
-                },
-                "python-hover.ui.showModuleStats": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Show module summary stats such as installed version, export count, license, and Python requirement."
-                },
-                "python-hover.ui.showFooter": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Show the compact footer line with import hints for non-local symbols."
-                },
-                "python-hover.ui.showImportHints": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Show import suggestions in the hover footer for non-local symbols."
-                },
-                "python-hover.ui.maxExamples": {
-                    "type": "number",
-                    "default": 2,
-                    "minimum": 1,
-                    "maximum": 10,
-                    "description": "Maximum number of examples rendered in a hover before the rest are left in docs."
-                },
-                "python-hover.ui.maxModuleExports": {
-                    "type": "number",
-                    "default": 20,
-                    "minimum": 1,
-                    "maximum": 100,
-                    "description": "Maximum number of exported names shown in module hover summaries."
-                },
-                "python-hover.ui.maxSeeAlsoItems": {
-                    "type": "number",
-                    "default": 8,
-                    "minimum": 1,
-                    "maximum": 30,
-                    "description": "Maximum number of see-also items shown before the rest stay in docs."
-                },
-                "python-hover.ui.showUpdateWarning": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Show an 'Update available' callout when the installed package is behind the latest PyPI release."
-                },
-                "python-hover.ui.redirectIntegratedHoverToDocsPage": {
-                    "type": "boolean",
-                    "default": false,
-                    "markdownDescription": "When `python-hover.docsBrowser` is set to `integrated`, open the hover's Docs and Continue Reading actions in the PyHover docs page instead of the side browser panel."
-                },
-                "python-hover.ui.autoOpenCurrentHoverInIntegratedDocs": {
-                    "type": "boolean",
-                    "default": false,
-                    "markdownDescription": "When `python-hover.docsBrowser` is set to `integrated` and the docs panel is already open, replace its current page with the current hover target as hover results resolve."
-                },
-                "python-hover.ui.moduleBrowser.defaultView": {
-                    "type": "string",
-                    "enum": [
-                        "hierarchy",
-                        "flat"
-                    ],
-                    "default": "flat",
-                    "description": "Default module browser view mode when opening indexed modules. Flat is better for dotted method discovery; hierarchy is available when you want path drilldown."
-                },
-                "python-hover.ui.moduleBrowser.defaultSort": {
-                    "type": "string",
-                    "enum": [
-                        "name",
-                        "kind",
-                        "package"
-                    ],
-                    "default": "name",
-                    "description": "Default module browser sort mode."
-                },
-                "python-hover.ui.moduleBrowser.defaultDensity": {
-                    "type": "string",
-                    "enum": [
-                        "comfortable",
-                        "compact"
-                    ],
-                    "default": "comfortable",
-                    "description": "Default card density for the module browser."
-                },
-                "python-hover.ui.moduleBrowser.showPrivateSymbols": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "Show names that look private or dunder-style by default in the module browser."
-                },
-                "python-hover.ui.moduleBrowser.showHierarchyHints": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Show hierarchy and branch hints in the module browser when navigating large modules."
-                },
-                "python-hover.ui.moduleBrowser.autoLoadPreviews": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Automatically hydrate module browser cards with richer summaries and signatures in the background."
-                },
-                "python-hover.ui.moduleBrowser.previewBatchSize": {
-                    "type": "number",
-                    "default": 18,
-                    "minimum": 4,
-                    "maximum": 50,
-                    "description": "How many symbol previews the module browser hydrates per background batch."
-                },
-                "python-hover.diagnostics.enabled": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Show inline warnings for deprecated symbols (squiggles in the editor)."
-                },
-                "python-hover.hoverActivationDelay": {
-                    "type": "number",
-                    "default": 75,
-                    "minimum": 0,
-                    "maximum": 2000,
-                    "description": "Extra delay in ms before PyHover triggers resolution. Useful on slow machines or large projects to reduce unnecessary hover calls. 0 = no delay."
-                },
-                "python-hover.preloadPackages": {
-                    "type": "array",
-                    "default": [],
-                    "items": {
-                        "type": "string"
-                    },
-                    "markdownDescription": "Package names to pre-warm documentation inventories for on activation, regardless of what file is open (e.g. `[\"numpy\", \"pandas\"]`). Requires `onlineDiscovery`."
-                },
-                "python-hover.excludePatterns": {
-                    "type": "array",
-                    "default": [],
-                    "items": {
-                        "type": "string"
-                    },
-                    "markdownDescription": "Glob patterns for files where hover resolution is skipped entirely (e.g. `[\"**/migrations/**\", \"**/_generated/**\"]`)."
-                }
-            }
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "pyhover",
+          "title": "PyHover",
+          "icon": "media/pyhover-activity.svg"
         }
+      ]
     },
-    "scripts": {
-        "vscode:prepublish": "npm run compile",
-        "compile": "tsc -p ./",
-        "audit:hover": "npm run compile && node ./scripts/renderHoverAudit.cjs",
-        "smoke:parameter-lens": "npm run compile && node ./scripts/parameterLensSmoke.cjs",
-        "watch": "tsc -watch -p ./",
-        "lint": "eslint src --ext ts",
-        "package": "vsce package",
-        "verify": "npm run compile && npm run lint && npm run package"
+    "views": {
+      "pyhover": [
+        {
+          "id": "pyhover.inspector",
+          "name": "Inspector"
+        },
+        {
+          "id": "pyhover.saved",
+          "name": "Saved Docs"
+        },
+        {
+          "id": "pyhover.history",
+          "name": "History"
+        },
+        {
+          "id": "pyhover.packages",
+          "name": "Recent Packages"
+        }
+      ]
     },
-    "dependencies": {
-        "minimatch": "^9.0.7"
+    "viewsWelcome": [
+      {
+        "view": "pyhover.inspector",
+        "contents": "Inspect the current hover target here after you hover a Python symbol.\n\n[Search docs](command:python-hover.searchDocs)\n[Browse modules](command:python-hover.browseModule)\n[Open Studio](command:python-hover.openStudio)"
+      },
+      {
+        "view": "pyhover.saved",
+        "contents": "Build a reusable reading list from the hover and pinned docs surfaces.\n\nUse **Save** from a hover card or pinned panel, then reopen entries here.\n\n[Search docs](command:python-hover.searchDocs)\n[Open Studio](command:python-hover.openStudio)"
+      },
+      {
+        "view": "pyhover.history",
+        "contents": "Recent hover targets appear here as you move through Python code.\n\nLive session entries reopen in the inspector; stored links reopen docs when the session copy is gone.\n\n[Browse modules](command:python-hover.browseModule)\n[Search docs](command:python-hover.searchDocs)"
+      },
+      {
+        "view": "pyhover.packages",
+        "contents": "Recently explored packages and indexed libraries show up here for quick return visits.\n\n[Browse modules](command:python-hover.browseModule)\n[Search docs](command:python-hover.searchDocs)"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "python-hover.searchDocs",
+          "when": "editorLangId == python && pyhover.contextMenu.enabled && pyhover.contextMenu.searchDocs",
+          "group": "navigation@10"
+        },
+        {
+          "command": "python-hover.browseModule",
+          "when": "editorLangId == python && pyhover.contextMenu.enabled && pyhover.contextMenu.browseModule",
+          "group": "navigation@11"
+        },
+        {
+          "command": "python-hover.pinHover",
+          "when": "editorLangId == python && pyhover.contextMenu.enabled && pyhover.contextMenu.pinHover",
+          "group": "navigation@12"
+        },
+        {
+          "command": "python-hover.debugPinHover",
+          "when": "editorLangId == python && pyhover.contextMenu.enabled && pyhover.contextMenu.debugPinHover",
+          "group": "navigation@13"
+        },
+        {
+          "command": "python-hover.openStudio",
+          "when": "editorLangId == python && pyhover.contextMenu.enabled && pyhover.contextMenu.openStudio",
+          "group": "navigation@14"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "python-hover.removeSavedHover",
+          "when": "view == pyhover.saved && viewItem == pyhoverSavedDocEntry",
+          "group": "inline@1"
+        }
+      ]
     },
-    "devDependencies": {
-        "@types/vscode": "^1.85.0",
-        "@types/node": "18.x",
-        "@typescript-eslint/eslint-plugin": "^6.15.0",
-        "@typescript-eslint/parser": "^6.15.0",
-        "eslint": "^8.56.0",
-        "typescript": "^5.3.3"
+    "keybindings": [
+      {
+        "command": "python-hover.searchDocs",
+        "key": "ctrl+k ctrl+d",
+        "mac": "cmd+k cmd+d",
+        "when": "editorLangId == python"
+      },
+      {
+        "command": "python-hover.pinHover",
+        "key": "ctrl+k ctrl+p",
+        "mac": "cmd+k cmd+p",
+        "when": "editorLangId == python"
+      },
+      {
+        "command": "python-hover.showHistory",
+        "key": "ctrl+k ctrl+h",
+        "mac": "cmd+k cmd+h",
+        "when": "editorLangId == python"
+      },
+      {
+        "command": "python-hover.openStudio",
+        "key": "ctrl+k ctrl+o",
+        "mac": "cmd+k cmd+o",
+        "when": "editorLangId == python"
+      },
+      {
+        "command": "python-hover.copyImport",
+        "key": "ctrl+k ctrl+i",
+        "mac": "cmd+k cmd+i",
+        "when": "editorLangId == python"
+      },
+      {
+        "command": "python-hover.toggleSavedHover",
+        "key": "ctrl+k ctrl+s",
+        "mac": "cmd+k cmd+s",
+        "when": "editorLangId == python"
+      }
+    ],
+    "configuration": {
+      "title": "Python Hover",
+      "properties": {
+        "python-hover.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable Python Hover documentation lookups."
+        },
+        "python-hover.runtimeHelper": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Run the persistent Python helper for runtime introspection, keyword help, installed-version detection, and better symbol identity. Enabled by default because it substantially improves hover quality."
+        },
+        "python-hover.docScraping": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Fetch and structure third-party documentation HTML in the background. Leave this off for a lighter experience, or enable it when you want richer narrative sections, examples, and see-also links in hovers and pinned panels."
+        },
+        "python-hover.astFallback": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "When the language server returns an incomplete symbol target, use AST-based fallback identification. Enabled by default to improve local chains, literal receivers, and partially resolved names."
+        },
+        "python-hover.onlineDiscovery": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Allow PyHover to fetch inventories and docs from the web. Disable this to keep the extension cache-only."
+        },
+        "python-hover.warmupImports": {
+          "type": "boolean",
+          "default": false,
+          "description": "When online discovery is on, pre-load objects.inv for packages imported in the active editor. Off by default — inventories load on first hover instead."
+        },
+        "python-hover.useKnownDocsUrls": {
+          "type": "boolean",
+          "default": false,
+          "description": "Use the extension's bundled package→documentation base URL map (faster for popular libs). When false, docs roots come from PyPI project URLs + objects.inv probing + ReadTheDocs-style fallback only."
+        },
+        "python-hover.buildFullCorpus": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "On the first hover from a package, build that package’s local corpus in the background instead of caching one symbol at a time. Requires `python-hover.onlineDiscovery`."
+        },
+        "python-hover.docsVersion": {
+          "type": "string",
+          "default": "auto",
+          "description": "Python documentation version. 'auto' detects from your interpreter; or specify e.g. '3.11'."
+        },
+        "python-hover.maxSnippetLines": {
+          "type": "number",
+          "default": 12,
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Maximum lines shown in hover code snippets."
+        },
+        "python-hover.showPracticalExamples": {
+          "type": "boolean",
+          "default": true,
+          "description": "Deprecated: use python-hover.ui.showPracticalExamples instead."
+        },
+        "python-hover.requestTimeout": {
+          "type": "number",
+          "default": 10000,
+          "minimum": 1000,
+          "maximum": 60000,
+          "description": "HTTP timeout (ms) for fetching documentation pages."
+        },
+        "python-hover.cacheTTL.inventoryDays": {
+          "type": "number",
+          "default": 7,
+          "minimum": 1,
+          "description": "Retention hint for Sphinx inventory downloads. Cached inventory files persist until you clear the PyHover cache."
+        },
+        "python-hover.cacheTTL.snippetHours": {
+          "type": "number",
+          "default": 48,
+          "minimum": 1,
+          "description": "Retention hint for scraped documentation pages. Cached corpus entries persist until you clear the PyHover cache."
+        },
+        "python-hover.docsBrowser": {
+          "type": "string",
+          "enum": [
+            "integrated",
+            "external"
+          ],
+          "default": "integrated",
+          "enumDescriptions": [
+            "Open in VS Code side panel",
+            "Open in system browser"
+          ],
+          "markdownDescription": "Where to open official docs links from hovers, pins, and Studio."
+        },
+        "python-hover.devdocsBrowser": {
+          "type": "string",
+          "enum": [
+            "integrated",
+            "external"
+          ],
+          "default": "external",
+          "enumDescriptions": [
+            "Open in VS Code side panel",
+            "Open in system browser"
+          ],
+          "markdownDescription": "Where to open DevDocs searches from hovers and Studio."
+        },
+        "python-hover.customLibraries": {
+          "type": "array",
+          "default": [],
+          "description": "Custom Sphinx documentation sources. Each entry needs a name and baseUrl; set inventoryUrl when objects.inv lives elsewhere.",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "baseUrl"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Library name (e.g. 'mylib')"
+              },
+              "inventoryUrl": {
+                "type": "string",
+                "description": "Optional URL to the objects.inv file when it is not served from baseUrl/objects.inv"
+              },
+              "baseUrl": {
+                "type": "string",
+                "description": "Base docs URL"
+              }
+            }
+          }
+        },
+        "python-hover.enableDebugLogging": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Enable verbose debug logging and surface richer troubleshooting details in the output channel and debug panels."
+        },
+        "python-hover.ui.showSignatures": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show function/method signatures at the top of hovers."
+        },
+        "python-hover.ui.showReturnTypes": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show return type information in hover tooltips."
+        },
+        "python-hover.ui.showDebugPinButton": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Show a Debug button in the hover toolbar so users can jump straight into the pinned debug view."
+        },
+        "python-hover.ui.showStatusBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the PyHover status bar entry for quick actions and cache status."
+        },
+        "python-hover.ui.contextMenu.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show PyHover commands in the Python editor context menu."
+        },
+        "python-hover.ui.contextMenu.searchDocs": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the Search Docs command in the Python editor context menu."
+        },
+        "python-hover.ui.contextMenu.browseModule": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the Browse Module command in the Python editor context menu."
+        },
+        "python-hover.ui.contextMenu.pinHover": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the Pin Hover command in the Python editor context menu."
+        },
+        "python-hover.ui.contextMenu.debugPinHover": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the Debug Pin Hover command in the Python editor context menu."
+        },
+        "python-hover.ui.contextMenu.openStudio": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the Open Studio command in the Python editor context menu."
+        },
+        "python-hover.ui.maxContentLength": {
+          "type": "number",
+          "default": 800,
+          "minimum": 200,
+          "maximum": 2000,
+          "description": "Maximum characters of hover content before truncation with a 'Read more…' link."
+        },
+        "python-hover.ui.compactMode": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Show only the signature and first sentence of the description. Overrides `showPracticalExamples`, `showReturnTypes`, and sets a short content length."
+        },
+        "python-hover.ui.showBadges": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the badge row (deprecated, async, property, overloaded) in hover tooltips."
+        },
+        "python-hover.ui.showMetadataChips": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the metadata chips row under the hover title (kind, source, module, version, badges)."
+        },
+        "python-hover.ui.showProvenance": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the source provenance line under the hover title so docs origin stays visible at a glance."
+        },
+        "python-hover.ui.showToolbar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the hover action toolbar with the core pin, docs, source, and browse links."
+        },
+        "python-hover.ui.showCallouts": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show deprecation warnings, update notifications, Python version notes, and protocol hints at the top of hovers. Note sections are shown at the bottom and are also controlled by this setting."
+        },
+        "python-hover.ui.showDescription": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the main overview/description section in regular symbol hovers."
+        },
+        "python-hover.ui.showParameterLens": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the active-parameter detail section while editing function calls."
+        },
+        "python-hover.ui.showParameters": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the parameters table in hover tooltips."
+        },
+        "python-hover.ui.maxParameters": {
+          "type": "number",
+          "default": 6,
+          "minimum": 1,
+          "maximum": 20,
+          "description": "Maximum number of parameters shown in the hover parameters table before a 'more in docs' link."
+        },
+        "python-hover.ui.showSeeAlso": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the 'See also' section at the bottom of hovers."
+        },
+        "python-hover.ui.showRaises": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the 'Raises' section when documentation includes exception information."
+        },
+        "python-hover.ui.showNotes": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show extracted documentation notes in regular symbol hovers."
+        },
+        "python-hover.ui.showModuleExports": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show module export lists for import/module hovers."
+        },
+        "python-hover.ui.showModuleStats": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show module summary stats such as installed version, export count, license, and Python requirement."
+        },
+        "python-hover.ui.showFooter": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the compact footer line with import hints for non-local symbols."
+        },
+        "python-hover.ui.showImportHints": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show import suggestions in the hover footer for non-local symbols."
+        },
+        "python-hover.ui.maxExamples": {
+          "type": "number",
+          "default": 2,
+          "minimum": 1,
+          "maximum": 10,
+          "description": "Maximum number of examples rendered in a hover before the rest are left in docs."
+        },
+        "python-hover.ui.hoverSectionOrder": {
+          "type": "array",
+          "default": [
+            "signature",
+            "parameterLens",
+            "callouts",
+            "description",
+            "parameters",
+            "returns",
+            "raises",
+            "examples",
+            "seeAlso",
+            "notes",
+            "footer"
+          ],
+          "description": "Order of regular symbol hover sections. Header and toolbar always stay fixed at the top.",
+          "items": {
+            "type": "string",
+            "enum": [
+              "signature",
+              "parameterLens",
+              "callouts",
+              "description",
+              "parameters",
+              "returns",
+              "raises",
+              "examples",
+              "seeAlso",
+              "notes",
+              "footer"
+            ]
+          }
+        },
+        "python-hover.ui.showPracticalExamples": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show code examples in hover documentation."
+        },
+        "python-hover.ui.maxModuleExports": {
+          "type": "number",
+          "default": 20,
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Maximum number of exported names shown in module hover summaries."
+        },
+        "python-hover.ui.maxSeeAlsoItems": {
+          "type": "number",
+          "default": 8,
+          "minimum": 1,
+          "maximum": 30,
+          "description": "Maximum number of see-also items shown before the rest stay in docs."
+        },
+        "python-hover.ui.showUpdateWarning": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show an 'Update available' callout when the installed package is behind the latest PyPI release."
+        },
+        "python-hover.ui.redirectIntegratedHoverToDocsPage": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "When `python-hover.docsBrowser` is set to `integrated`, open the hover's Docs and Continue Reading actions in the PyHover docs page instead of the side browser panel."
+        },
+        "python-hover.ui.autoOpenCurrentHoverInIntegratedDocs": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "When `python-hover.docsBrowser` is set to `integrated` and the docs panel is already open, replace its current page with the current hover target as hover results resolve."
+        },
+        "python-hover.ui.moduleBrowser.defaultView": {
+          "type": "string",
+          "enum": [
+            "hierarchy",
+            "flat"
+          ],
+          "default": "flat",
+          "description": "Default module browser view mode when opening indexed modules. Flat is better for dotted method discovery; hierarchy is available when you want path drilldown."
+        },
+        "python-hover.ui.moduleBrowser.defaultSort": {
+          "type": "string",
+          "enum": [
+            "name",
+            "kind",
+            "package"
+          ],
+          "default": "name",
+          "description": "Default module browser sort mode."
+        },
+        "python-hover.ui.moduleBrowser.defaultDensity": {
+          "type": "string",
+          "enum": [
+            "comfortable",
+            "compact"
+          ],
+          "default": "comfortable",
+          "description": "Default card density for the module browser."
+        },
+        "python-hover.ui.moduleBrowser.showPrivateSymbols": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show names that look private or dunder-style by default in the module browser."
+        },
+        "python-hover.ui.moduleBrowser.showHierarchyHints": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show hierarchy and branch hints in the module browser when navigating large modules."
+        },
+        "python-hover.ui.moduleBrowser.autoLoadPreviews": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically hydrate module browser cards with richer summaries and signatures in the background."
+        },
+        "python-hover.ui.moduleBrowser.previewBatchSize": {
+          "type": "number",
+          "default": 18,
+          "minimum": 4,
+          "maximum": 50,
+          "description": "How many symbol previews the module browser hydrates per background batch."
+        },
+        "python-hover.diagnostics.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show inline warnings for deprecated symbols (squiggles in the editor)."
+        },
+        "python-hover.hoverActivationDelay": {
+          "type": "number",
+          "default": 75,
+          "minimum": 0,
+          "maximum": 2000,
+          "description": "Extra delay in ms before PyHover triggers resolution. Useful on slow machines or large projects to reduce unnecessary hover calls. 0 = no delay."
+        },
+        "python-hover.preloadPackages": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "markdownDescription": "Package names to pre-warm documentation inventories for on activation, regardless of what file is open (e.g. `[\"numpy\", \"pandas\"]`). Requires `onlineDiscovery`."
+        },
+        "python-hover.excludePatterns": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "markdownDescription": "Glob patterns for files where hover resolution is skipped entirely (e.g. `[\"**/migrations/**\", \"**/_generated/**\"]`)."
+        }
+      }
     }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "audit:hover": "npm run compile && node ./scripts/renderHoverAudit.cjs",
+    "smoke:parameter-lens": "npm run compile && node ./scripts/parameterLensSmoke.cjs",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts",
+    "package": "vsce package",
+    "verify": "npm run compile && npm run lint && npm run package"
+  },
+  "dependencies": {
+    "minimatch": "^9.0.7"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "18.x",
+    "@typescript-eslint/eslint-plugin": "^6.15.0",
+    "@typescript-eslint/parser": "^6.15.0",
+    "eslint": "^8.56.0",
+    "typescript": "^5.3.3"
+  }
 }

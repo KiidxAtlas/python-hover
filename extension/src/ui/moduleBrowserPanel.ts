@@ -1,16 +1,16 @@
-import * as path from 'path';
-import * as vscode from 'vscode';
-import { IndexedSymbolPreview, IndexedSymbolSummary } from '../../../shared/types';
+import * as path from 'path'
+import * as vscode from 'vscode'
+import { IndexedSymbolPreview, IndexedSymbolSummary } from '../../../shared/types'
 
 export type ModuleBrowserSettings = {
-  defaultView: 'hierarchy' | 'flat';
-  defaultSort: 'name' | 'kind' | 'package';
-  defaultDensity: 'comfortable' | 'compact';
-  showPrivateSymbols: boolean;
-  showHierarchyHints: boolean;
-  autoLoadPreviews: boolean;
-  previewBatchSize: number;
-};
+  defaultView: 'hierarchy' | 'flat'
+  defaultSort: 'name' | 'kind' | 'package'
+  defaultDensity: 'comfortable' | 'compact'
+  showPrivateSymbols: boolean
+  showHierarchyHints: boolean
+  autoLoadPreviews: boolean
+  previewBatchSize: number
+}
 
 export type ModuleBrowserMessage =
   | { type: 'open-doc'; url: string }
@@ -20,80 +20,92 @@ export type ModuleBrowserMessage =
   | { type: 'load-previews'; requestId: number; symbols: IndexedSymbolSummary[] }
   | { type: 'run-command'; command: string }
   | { type: 'open-settings'; query?: string }
-  | { type: 'update-setting'; key: string; value: boolean | string | number };
+  | { type: 'update-setting'; key: string; value: boolean | string | number }
 
 type ModuleBrowserPayload = {
-  moduleName: string;
-  symbols: IndexedSymbolSummary[];
-  settings: ModuleBrowserSettings;
-};
+  moduleName: string
+  symbols: IndexedSymbolSummary[]
+  settings: ModuleBrowserSettings
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === 'object';
+  return !!value && typeof value === 'object'
 }
 
 function isIndexedSymbolSummary(value: unknown): value is IndexedSymbolSummary {
   if (!isRecord(value)) {
-    return false;
+    return false
   }
 
-  return typeof value.name === 'string'
-    && typeof value.url === 'string'
-    && typeof value.kind === 'string'
-    && typeof value.package === 'string'
-    && (value.title === undefined || typeof value.title === 'string')
-    && (value.module === undefined || typeof value.module === 'string')
-    && (value.signature === undefined || typeof value.signature === 'string')
-    && (value.summary === undefined || typeof value.summary === 'string')
-    && (value.sourceUrl === undefined || typeof value.sourceUrl === 'string');
+  return (
+    typeof value.name === 'string' &&
+    typeof value.url === 'string' &&
+    typeof value.kind === 'string' &&
+    typeof value.package === 'string' &&
+    (value.title === undefined || typeof value.title === 'string') &&
+    (value.module === undefined || typeof value.module === 'string') &&
+    (value.signature === undefined || typeof value.signature === 'string') &&
+    (value.summary === undefined || typeof value.summary === 'string') &&
+    (value.sourceUrl === undefined || typeof value.sourceUrl === 'string')
+  )
 }
 
 function isModuleBrowserMessage(value: unknown): value is ModuleBrowserMessage {
   if (!isRecord(value) || typeof value.type !== 'string') {
-    return false;
+    return false
   }
 
   switch (value.type) {
     case 'open-doc':
-      return typeof value.url === 'string';
+      return typeof value.url === 'string'
     case 'pin-symbol':
     case 'open-source':
     case 'copy-import':
-      return isIndexedSymbolSummary(value.symbol);
+      return isIndexedSymbolSummary(value.symbol)
     case 'load-previews':
-      return typeof value.requestId === 'number'
-        && Array.isArray(value.symbols)
-        && value.symbols.every(isIndexedSymbolSummary);
+      return (
+        typeof value.requestId === 'number' &&
+        Array.isArray(value.symbols) &&
+        value.symbols.every(isIndexedSymbolSummary)
+      )
     case 'run-command':
-      return typeof value.command === 'string';
+      return typeof value.command === 'string'
     case 'open-settings':
-      return value.query === undefined || typeof value.query === 'string';
+      return value.query === undefined || typeof value.query === 'string'
     case 'update-setting':
-      return typeof value.key === 'string'
-        && (typeof value.value === 'boolean' || typeof value.value === 'string' || typeof value.value === 'number');
+      return (
+        typeof value.key === 'string' &&
+        (typeof value.value === 'boolean' ||
+          typeof value.value === 'string' ||
+          typeof value.value === 'number')
+      )
     default:
-      return false;
+      return false
   }
 }
 
 export class ModuleBrowserPanel {
-  private static instance: ModuleBrowserPanel | undefined;
-  private panel: vscode.WebviewPanel | undefined;
-  private disposables: vscode.Disposable[] = [];
-  private currentPayload: ModuleBrowserPayload | undefined;
+  private static instance: ModuleBrowserPanel | undefined
+  private panel: vscode.WebviewPanel | undefined
+  private disposables: vscode.Disposable[] = []
+  private currentPayload: ModuleBrowserPayload | undefined
 
-  private constructor(private readonly onMessage: (message: ModuleBrowserMessage) => void | Promise<void>) { }
+  private constructor(
+    private readonly onMessage: (message: ModuleBrowserMessage) => void | Promise<void>,
+  ) {}
 
-  static getInstance(onMessage: (message: ModuleBrowserMessage) => void | Promise<void>): ModuleBrowserPanel {
+  static getInstance(
+    onMessage: (message: ModuleBrowserMessage) => void | Promise<void>,
+  ): ModuleBrowserPanel {
     if (!ModuleBrowserPanel.instance) {
-      ModuleBrowserPanel.instance = new ModuleBrowserPanel(onMessage);
+      ModuleBrowserPanel.instance = new ModuleBrowserPanel(onMessage)
     }
-    return ModuleBrowserPanel.instance;
+    return ModuleBrowserPanel.instance
   }
 
   show(moduleName: string, symbols: IndexedSymbolSummary[], settings: ModuleBrowserSettings): void {
-    this.currentPayload = { moduleName, symbols, settings };
-    const targetColumn = vscode.window.activeTextEditor?.viewColumn ?? vscode.ViewColumn.Active;
+    this.currentPayload = { moduleName, symbols, settings }
+    const targetColumn = vscode.window.activeTextEditor?.viewColumn ?? vscode.ViewColumn.Active
 
     if (!this.panel) {
       this.panel = vscode.window.createWebviewPanel(
@@ -105,239 +117,288 @@ export class ModuleBrowserPanel {
           retainContextWhenHidden: false,
           localResourceRoots: [this.mediaRootUri()],
         },
-      );
+      )
 
       this.disposables.push(
         this.panel.webview.onDidReceiveMessage(message => {
           if (!isModuleBrowserMessage(message)) {
-            return;
+            return
           }
-          void this.onMessage(message);
+          void this.onMessage(message)
         }),
-      );
+      )
 
       this.panel.onDidDispose(() => {
-        this.panel = undefined;
-        this.currentPayload = undefined;
-        vscode.Disposable.from(...this.disposables).dispose();
-        this.disposables = [];
-      });
+        this.panel = undefined
+        this.currentPayload = undefined
+        vscode.Disposable.from(...this.disposables).dispose()
+        this.disposables = []
+      })
     }
 
-      this.panel.title = this.titleFor(moduleName);
-    this.panel.webview.html = this.buildHtml(this.panel.webview, this.currentPayload);
-      this.panel.reveal(targetColumn, false);
-    }
+    this.panel.title = this.titleFor(moduleName)
+    this.panel.webview.html = this.buildHtml(this.panel.webview, this.currentPayload)
+    this.panel.reveal(targetColumn, false)
+  }
 
   refreshSettings(settings: ModuleBrowserSettings): void {
     if (!this.currentPayload || !this.panel) {
-            return;
-        }
+      return
+    }
 
-    this.currentPayload = { ...this.currentPayload, settings };
-    this.panel.webview.html = this.buildHtml(this.panel.webview, this.currentPayload);
+    this.currentPayload = { ...this.currentPayload, settings }
+    this.panel.webview.html = this.buildHtml(this.panel.webview, this.currentPayload)
   }
 
   postPreviewData(requestId: number, previews: IndexedSymbolPreview[]): void {
     if (!this.panel) {
-            return;
-        }
-
-      void this.panel.webview.postMessage({
-        type: 'preview-data',
-        requestId,
-        previews,
-      });
+      return
     }
 
+    void this.panel.webview.postMessage({
+      type: 'preview-data',
+      requestId,
+      previews,
+    })
+  }
+
   dispose(): void {
-    this.panel?.dispose();
-    this.panel = undefined;
-    this.currentPayload = undefined;
+    this.panel?.dispose()
+    this.panel = undefined
+    this.currentPayload = undefined
   }
 
   private titleFor(moduleName: string): string {
-    return `${moduleName} Browser`;
+    return `${moduleName} Browser`
   }
 
   private mediaRootUri(): vscode.Uri {
-    return vscode.Uri.file(path.join(__dirname, '../../../../media'));
+    return vscode.Uri.file(path.join(__dirname, '../../../../media'))
   }
 
   private moduleBrowserScriptUri(webview: vscode.Webview): string {
-    return webview.asWebviewUri(vscode.Uri.joinPath(this.mediaRootUri(), 'moduleBrowserWebview.js')).toString();
+    return webview
+      .asWebviewUri(vscode.Uri.joinPath(this.mediaRootUri(), 'moduleBrowserWebview.js'))
+      .toString()
   }
 
   private buildInitialPackageOptions(symbols: IndexedSymbolSummary[]): string {
-    const packages = [...new Set(symbols.map(symbol => symbol.package).filter(Boolean))].sort((left, right) => left.localeCompare(right));
-    const options = [`<option value="all" selected>All packages (${packages.length})</option>`];
+    const packages = [...new Set(symbols.map(symbol => symbol.package).filter(Boolean))].sort(
+      (left, right) => left.localeCompare(right),
+    )
+    const options = [`<option value="all" selected>All packages (${packages.length})</option>`]
 
     for (const pkg of packages) {
-      const count = symbols.filter(symbol => symbol.package === pkg).length;
-      options.push(`<option value="${this.escapeHtml(pkg)}">${this.escapeHtml(pkg)} (${count})</option>`);
+      const count = symbols.filter(symbol => symbol.package === pkg).length
+      options.push(
+        `<option value="${this.escapeHtml(pkg)}">${this.escapeHtml(pkg)} (${count})</option>`,
+      )
     }
 
-    return options.join('');
+    return options.join('')
   }
 
   private buildInitialSidebarMeta(symbols: IndexedSymbolSummary[]): string {
-    const documentedCount = symbols.filter(symbol => this.hasInitialDocs(symbol)).length;
-    return [
-      `${symbols.length} indexed`,
-      `${documentedCount} with docs`,
-    ].map(label => `<span class="pill">${this.escapeHtml(label)}</span>`).join('');
+    const documentedCount = symbols.filter(symbol => this.hasInitialDocs(symbol)).length
+    return [`${symbols.length} indexed`, `${documentedCount} with docs`]
+      .map(label => `<span class="pill">${this.escapeHtml(label)}</span>`)
+      .join('')
   }
 
   private buildInitialKindFilters(symbols: IndexedSymbolSummary[]): string {
-    const counts = new Map<string, number>();
+    const counts = new Map<string, number>()
     for (const symbol of symbols) {
-      const kind = this.normalizeKind(symbol.kind);
-      counts.set(kind, (counts.get(kind) || 0) + 1);
+      const kind = this.normalizeKind(symbol.kind)
+      counts.set(kind, (counts.get(kind) || 0) + 1)
     }
 
-    const chips = [`<span class="kind-chip active">All ${symbols.length}</span>`];
-    for (const [kind, count] of [...counts.entries()].sort((left, right) => left[0].localeCompare(right[0]))) {
-      chips.push(`<span class="kind-chip">${this.escapeHtml(kind)} ${count}</span>`);
+    const chips = [`<span class="kind-chip active">All ${symbols.length}</span>`]
+    for (const [kind, count] of [...counts.entries()].sort((left, right) =>
+      left[0].localeCompare(right[0]),
+    )) {
+      chips.push(`<span class="kind-chip">${this.escapeHtml(kind)} ${count}</span>`)
     }
 
-    return chips.join('');
+    return chips.join('')
   }
 
   private buildInitialModuleActions(symbols: IndexedSymbolSummary[], moduleName: string): string {
-    const exactRoot = symbols.find(symbol => symbol.name === moduleName);
+    const exactRoot = symbols.find(symbol => symbol.name === moduleName)
     if (!exactRoot?.url) {
-      return '<div class="sidebar-note">Interactive actions load when the browser script is ready.</div>';
+      return '<div class="sidebar-note">Interactive actions load when the browser script is ready.</div>'
     }
 
-    return `<a class="ghost" href="${this.escapeHtml(exactRoot.url)}" target="_blank" rel="noopener noreferrer">Open docs</a>`;
+    return `<a class="ghost" href="${this.escapeHtml(exactRoot.url)}" target="_blank" rel="noopener noreferrer">Open docs</a>`
   }
 
-  private buildInitialSelectedDetail(symbols: IndexedSymbolSummary[]): { meta: string; html: string } {
-    const selected = [...symbols].sort((left, right) => left.name.localeCompare(right.name))[0];
+  private buildInitialSelectedDetail(symbols: IndexedSymbolSummary[]): {
+    meta: string
+    html: string
+  } {
+    const selected = [...symbols].sort((left, right) => left.name.localeCompare(right.name))[0]
     if (!selected) {
       return {
         meta: 'No symbol selected',
         html: '<div class="sidebar-note">No indexed symbols are available for this module yet.</div>',
-      };
+      }
     }
 
-    const summary = this.escapeHtml(this.truncate(selected.summary || 'Select a symbol after the browser script loads for richer actions and previews.', 260));
+    const summary = this.escapeHtml(
+      this.truncate(
+        selected.summary ||
+          'Select a symbol after the browser script loads for richer actions and previews.',
+        260,
+      ),
+    )
     return {
       meta: this.escapeHtml(this.normalizeKind(selected.kind)),
       html: [
         `<div class="detail-title">${this.escapeHtml(this.displayName(selected))}</div>`,
         `<div class="detail-copy">${this.escapeHtml(selected.name)}</div>`,
-        selected.signature ? `<div class="signature">${this.escapeHtml(this.truncate(selected.signature, 220))}</div>` : '',
+        selected.signature
+          ? `<div class="signature">${this.escapeHtml(this.truncate(selected.signature, 220))}</div>`
+          : '',
         `<div class="detail-copy">${summary || 'No cached summary is available for this symbol yet.'}</div>`,
         `<div class="detail-copy">${this.escapeHtml(this.formatInitialRowMeta(selected))}</div>`,
-        selected.url ? `<div class="stack"><a class="ghost" href="${this.escapeHtml(selected.url)}" target="_blank" rel="noopener noreferrer">Open docs</a></div>` : '',
-      ].filter(Boolean).join(''),
-    };
+        selected.url
+          ? `<div class="stack"><a class="ghost" href="${this.escapeHtml(selected.url)}" target="_blank" rel="noopener noreferrer">Open docs</a></div>`
+          : '',
+      ]
+        .filter(Boolean)
+        .join(''),
+    }
   }
 
-  private buildInitialNamespaces(moduleName: string, symbols: IndexedSymbolSummary[]): { meta: string; html: string } {
-    const branches = new Map<string, number>();
+  private buildInitialNamespaces(
+    moduleName: string,
+    symbols: IndexedSymbolSummary[],
+  ): { meta: string; html: string } {
+    const branches = new Map<string, number>()
 
     for (const symbol of symbols) {
       if (!symbol.name.startsWith(`${moduleName}.`)) {
-        continue;
+        continue
       }
 
-      const parts = symbol.name.slice(moduleName.length + 1).split('.').filter(Boolean);
+      const parts = symbol.name
+        .slice(moduleName.length + 1)
+        .split('.')
+        .filter(Boolean)
       if (parts.length <= 1) {
-        continue;
+        continue
       }
 
-      branches.set(parts[0], (branches.get(parts[0]) || 0) + 1);
+      branches.set(parts[0], (branches.get(parts[0]) || 0) + 1)
     }
 
-    const entries = [...branches.entries()].sort((left, right) => left[0].localeCompare(right[0])).slice(0, 12);
+    const entries = [...branches.entries()]
+      .sort((left, right) => left[0].localeCompare(right[0]))
+      .slice(0, 12)
     if (entries.length === 0) {
       return {
         meta: '0 branches',
         html: '<div class="sidebar-note">Namespace navigation loads when the browser script is ready.</div>',
-      };
+      }
     }
 
     return {
       meta: `${entries.length} branches`,
-      html: entries.map(([name, count]) => `<div class="nav-item"><span class="nav-text"><span class="nav-title">${this.escapeHtml(name)}</span></span><span class="pill">${count}</span></div>`).join(''),
-    };
+      html: entries
+        .map(
+          ([name, count]) =>
+            `<div class="nav-item"><span class="nav-text"><span class="nav-title">${this.escapeHtml(name)}</span></span><span class="pill">${count}</span></div>`,
+        )
+        .join(''),
+    }
   }
 
-  private buildInitialRows(symbols: IndexedSymbolSummary[]): { title: string; meta: string; html: string } {
+  private buildInitialRows(symbols: IndexedSymbolSummary[]): {
+    title: string
+    meta: string
+    html: string
+  } {
     const rows = [...symbols]
       .sort((left, right) => left.name.localeCompare(right.name))
-      .slice(0, 160);
+      .slice(0, 160)
 
     return {
       title: 'Indexed symbols',
       meta: `${rows.length} item${rows.length === 1 ? '' : 's'} shown`,
-      html: rows.length === 0
-        ? '<div class="empty">No indexed symbols are available for this module yet.</div>'
-        : rows.map(symbol => {
-          const summary = this.escapeHtml(this.truncate(symbol.summary || 'No cached summary is available for this symbol yet.', 220));
-          const signature = symbol.signature ? `<div class="signature">${this.escapeHtml(this.truncate(symbol.signature, 180))}</div>` : '';
-          const docsLink = symbol.url
-            ? `<div class="actions"><a class="action" href="${this.escapeHtml(symbol.url)}" target="_blank" rel="noopener noreferrer">Docs</a></div>`
-            : '';
-          return [
-            '<article class="row">',
-            '<div class="row-head">',
-            '<div class="row-title-group">',
-            `<div class="row-title">${this.escapeHtml(this.displayName(symbol))}</div>`,
-            `<div class="row-path">${this.escapeHtml(symbol.name)}</div>`,
-            '</div>',
-            docsLink,
-            '</div>',
-            `<div class="row-meta">${this.escapeHtml(this.formatInitialRowMeta(symbol))}</div>`,
-            signature,
-            `<div class="row-summary">${summary}</div>`,
-            '</article>',
-          ].join('');
-        }).join(''),
-    };
+      html:
+        rows.length === 0
+          ? '<div class="empty">No indexed symbols are available for this module yet.</div>'
+          : rows
+              .map(symbol => {
+                const summary = this.escapeHtml(
+                  this.truncate(
+                    symbol.summary || 'No cached summary is available for this symbol yet.',
+                    220,
+                  ),
+                )
+                const signature = symbol.signature
+                  ? `<div class="signature">${this.escapeHtml(this.truncate(symbol.signature, 180))}</div>`
+                  : ''
+                const docsLink = symbol.url
+                  ? `<div class="actions"><a class="action" href="${this.escapeHtml(symbol.url)}" target="_blank" rel="noopener noreferrer">Docs</a></div>`
+                  : ''
+                return [
+                  '<article class="row">',
+                  '<div class="row-head">',
+                  '<div class="row-title-group">',
+                  `<div class="row-title">${this.escapeHtml(this.displayName(symbol))}</div>`,
+                  `<div class="row-path">${this.escapeHtml(symbol.name)}</div>`,
+                  '</div>',
+                  docsLink,
+                  '</div>',
+                  `<div class="row-meta">${this.escapeHtml(this.formatInitialRowMeta(symbol))}</div>`,
+                  signature,
+                  `<div class="row-summary">${summary}</div>`,
+                  '</article>',
+                ].join('')
+              })
+              .join(''),
+    }
   }
 
   private displayName(symbol: IndexedSymbolSummary): string {
-    const parts = symbol.name.split('.').filter(Boolean);
-    return parts[parts.length - 1] || symbol.name;
+    const parts = symbol.name.split('.').filter(Boolean)
+    return parts[parts.length - 1] || symbol.name
   }
 
   private normalizeKind(kind?: string): string {
-    return kind || 'symbol';
+    return kind || 'symbol'
   }
 
   private hasInitialDocs(symbol: IndexedSymbolSummary): boolean {
-    return Boolean(symbol.url || symbol.summary || symbol.signature || symbol.sourceUrl);
+    return Boolean(symbol.url || symbol.summary || symbol.signature || symbol.sourceUrl)
   }
 
   private formatInitialRowMeta(symbol: IndexedSymbolSummary): string {
-    const parts = [this.normalizeKind(symbol.kind), symbol.package || symbol.module || 'module'];
-    parts.push(this.hasInitialDocs(symbol) ? 'docs' : 'index only');
-    return parts.join(' · ');
+    const parts = [this.normalizeKind(symbol.kind), symbol.package || symbol.module || 'module']
+    parts.push(this.hasInitialDocs(symbol) ? 'docs' : 'index only')
+    return parts.join(' · ')
   }
 
   private truncate(text: string, maxLength: number): string {
-    const clean = text.replace(/\s+/g, ' ').trim();
+    const clean = text.replace(/\s+/g, ' ').trim()
     if (clean.length <= maxLength) {
-      return clean;
+      return clean
     }
 
-    return `${clean.slice(0, maxLength - 1).trimEnd()}...`;
+    return `${clean.slice(0, maxLength - 1).trimEnd()}...`
   }
 
   private buildHtml(webview: vscode.Webview, payload: ModuleBrowserPayload): string {
-    const { moduleName, symbols, settings } = payload;
-    const payloadData = this.serializeForScript({ moduleName, symbols, settings });
-    const initialPackageOptions = this.buildInitialPackageOptions(symbols);
-    const initialSidebarMeta = this.buildInitialSidebarMeta(symbols);
-    const initialKindFilters = this.buildInitialKindFilters(symbols);
-    const initialModuleActions = this.buildInitialModuleActions(symbols, moduleName);
-    const initialSelectedDetail = this.buildInitialSelectedDetail(symbols);
-    const initialNamespaces = this.buildInitialNamespaces(moduleName, symbols);
-    const initialRows = this.buildInitialRows(symbols);
-    const scriptUri = this.moduleBrowserScriptUri(webview);
+    const { moduleName, symbols, settings } = payload
+    const payloadData = this.serializeForScript({ moduleName, symbols, settings })
+    const initialPackageOptions = this.buildInitialPackageOptions(symbols)
+    const initialSidebarMeta = this.buildInitialSidebarMeta(symbols)
+    const initialKindFilters = this.buildInitialKindFilters(symbols)
+    const initialModuleActions = this.buildInitialModuleActions(symbols, moduleName)
+    const initialSelectedDetail = this.buildInitialSelectedDetail(symbols)
+    const initialNamespaces = this.buildInitialNamespaces(moduleName, symbols)
+    const initialRows = this.buildInitialRows(symbols)
+    const scriptUri = this.moduleBrowserScriptUri(webview)
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -901,7 +962,7 @@ export class ModuleBrowserPanel {
 <div id="pyhover-module-browser-payload" hidden>${payloadData}</div>
 <script src="${scriptUri}"></script>
 </body>
-</html>`;
+</html>`
   }
 
   private escapeHtml(value: string): string {
@@ -910,7 +971,7 @@ export class ModuleBrowserPanel {
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
+      .replace(/'/g, '&#39;')
   }
 
   private serializeForScript(value: unknown): string {
@@ -919,6 +980,6 @@ export class ModuleBrowserPanel {
       .replace(/>/g, '\\u003e')
       .replace(/&/g, '\\u0026')
       .replace(/\u2028/g, '\\u2028')
-      .replace(/\u2029/g, '\\u2029');
+      .replace(/\u2029/g, '\\u2029')
   }
 }

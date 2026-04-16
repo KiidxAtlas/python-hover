@@ -4,6 +4,18 @@ All notable changes to Python Hover will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.7.5] - 2026-04-15
+
+Release polish focused on hover structure consistency, Studio customization controls, and security hardening.
+
+- Added configurable regular-hover section order via `python-hover.ui.hoverSectionOrder`, plus new visibility controls for overview, active parameter lens, and notes.
+- Added a dedicated **Hover Layout** section in PyHover Studio with per-section toggles and up/down ordering controls for regular symbol hovers.
+- Refactored regular hover rendering to use a normalized ordered section pipeline while keeping header and toolbar fixed at the top.
+- Improved keyword hover rendering consistency by preferring pre-extracted structured syntax sections when present and avoiding misclassification of grammar as body prose.
+- Hardened Studio interaction reliability: explicit move-button behavior, robust reorder message handling, clearer reorder error reporting, and safe settings normalization for malformed layout arrays.
+- Expanded settings update support to include array-valued settings writes (needed for section ordering) while preserving existing preferred-target scope behavior.
+- Performed release security sanity checks for trusted command usage and webview message validation paths; no new trust surface added in this release.
+
 ## [0.7.4] - 2026-03-30
 
 Production hardening for the new Studio, sidebar surfaces, and contextual hover workflows.
@@ -120,7 +132,7 @@ Works out of the box with NumPy, Pandas, Matplotlib, PyTorch, scikit-learn, Djan
 - **Class method docstrings resolved correctly** — AST extraction was passing only the leaf name (`greet`) instead of the qualified path (`Person.greet`), causing it to miss methods inside classes.
 - **`class Person:` hover no longer redirects to Person docs** — hovering `class`, `def`, `for`, `while`, and 20+ other structural keywords now shows keyword documentation, not the following symbol's docs.
 - **`typing.List` / `typing.Union` show correct content** — Python 3.14 changed typing internals; the fix infers `isStdlib` from the LSP file path instead of the runtime, preventing fallthrough to the PyPI `typing` backport description.
-- **`typing.Union` no longer shows `(*args, **kwargs)` signature** — Pylance's `_GenericAlias.__call__` signature is suppressed for all `typing` module symbols.
+- **`typing.Union` no longer shows `(\*args, **kwargs)`signature** — Pylance's`\_GenericAlias.**call**`signature is suppressed for all`typing` module symbols.
 - **`os.path.join` cursor-aware** — hovering each segment of a dotted chain shows docs for that segment only.
 - **DevDocs cross-language results eliminated** — DevDocs link is now suppressed when a direct Sphinx URL is already available.
 - **Local variable names no longer query PyPI** — hovering `agg` in `agg = df.agg(...)` no longer searches PyPI for unrelated packages.
@@ -153,8 +165,8 @@ Works out of the box with NumPy, Pandas, Matplotlib, PyTorch, scikit-learn, Djan
 ### 🐛 Bug Fixes In 0.6.13
 
 - **`typing.List` / `typing.Union` wrong content** — Root cause: when the Python runtime couldn't import a typing alias (Python 3.14 changed internals), `isStdlib` was lost. The doc resolver then queried the PyPI `typing` backport package and got "Support for type hints — List, Dict, Optional, Union, Callable, Protocol". Fixed by inferring `isStdlib = true` from the LSP file path (typeshed / stdlib paths) as a reliable safety net independent of runtime success.
-- **`typing.List(*args, **kwargs)` signature** — Same runtime failure path meant Pylance's misleading `_GenericAlias.__call__` signature wasn't being suppressed. Added a post-merge safety net in the pipeline: if a symbol's module is `typing` and the signature matches `(*args, **kwargs)`, it's cleared before rendering. Also simplified `resolver.py` to use `obj.__module__ == 'typing'` (cross-version) instead of a fragile class-name allowlist.
-- **`class Person:` hover shows Person instead of keyword** — Hovering `class` in `class Person:` (or `def` in `def foo():`, `for`, `while`, etc.) caused Pylance to resolve the *following* symbol and return that symbol's docs. Fixed with a structural keyword fast-path that intercepts 20+ Python keywords before Phase 1 LSP, bypasses Pylance entirely, and renders true keyword documentation from `pydoc.help()`.
+- **`typing.List(\*args, **kwargs)`signature** — Same runtime failure path meant Pylance's misleading`\_GenericAlias.**call**`signature wasn't being suppressed. Added a post-merge safety net in the pipeline: if a symbol's module is`typing`and the signature matches`(\*args, \*\*kwargs)`, it's cleared before rendering. Also simplified `resolver.py`to use`obj.**module** == 'typing'` (cross-version) instead of a fragile class-name allowlist.
+- **`class Person:` hover shows Person instead of keyword** — Hovering `class` in `class Person:` (or `def` in `def foo():`, `for`, `while`, etc.) caused Pylance to resolve the _following_ symbol and return that symbol's docs. Fixed with a structural keyword fast-path that intercepts 20+ Python keywords before Phase 1 LSP, bypasses Pylance entirely, and renders true keyword documentation from `pydoc.help()`.
 - **`os.path.join` cursor-aware hover** — Hovering `os` in `os.path.join` now shows `os` docs, hovering `path` shows `os.path` docs, hovering `join` shows `os.path.join` docs. Fixed in `lspClient` by computing a cursor-aware initial word (trimming the dotted chain to the hovered segment) before LSP resolution.
 - **DevDocs showing wrong language (CSS, etc.)** — DevDocs link is no longer shown when the hover already has a direct official `doc.url` (Sphinx/docs.python.org). The fallback DevDocs search was triggering when DevDocs didn't have the user's Python docset enabled, causing results from unrelated languages. Now: if there's a direct URL, that's the only link shown.
 - **Local variable names triggering wrong PyPI results** — Hovering a local variable (e.g. `agg` in `agg: Series = df.agg(...)`) would query PyPI for a package named `agg` and return completely unrelated packages (e.g. the "FATE dice roller"). Fixed by treating symbols with no file path and no resolved module as local/unresolvable, skipping all remote doc lookup.
@@ -367,14 +379,14 @@ This release represents a **ground-up rewrite** of Python Hover with a new modul
 
 New settings added:
 
-| Setting | Default | Description |
-| --- | --- | --- |
-| `python-hover.onlineDiscovery` | `true` | Enable or disable network requests |
-| `python-hover.docsVersion` | `"auto"` | Python version for docs (`"auto"`, `"3.11"`, etc.) |
-| `python-hover.inventoryCacheDays` | `7` | Days to cache Sphinx inventories |
-| `python-hover.snippetCacheHours` | `24` | Hours to cache documentation snippets |
-| `python-hover.requestTimeout` | `5000` | Network request timeout in ms |
-| `python-hover.customLibraries` | `[]` | Custom library inventory definitions |
+| Setting                           | Default  | Description                                        |
+| --------------------------------- | -------- | -------------------------------------------------- |
+| `python-hover.onlineDiscovery`    | `true`   | Enable or disable network requests                 |
+| `python-hover.docsVersion`        | `"auto"` | Python version for docs (`"auto"`, `"3.11"`, etc.) |
+| `python-hover.inventoryCacheDays` | `7`      | Days to cache Sphinx inventories                   |
+| `python-hover.snippetCacheHours`  | `24`     | Hours to cache documentation snippets              |
+| `python-hover.requestTimeout`     | `5000`   | Network request timeout in ms                      |
+| `python-hover.customLibraries`    | `[]`     | Custom library inventory definitions               |
 
 ### 📦 Dependencies
 

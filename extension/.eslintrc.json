@@ -9,16 +9,9 @@
     "ecmaVersion": "latest",
     "sourceType": "module"
   },
-  "plugins": [
-    "@typescript-eslint"
-  ],
-  "extends": [
-    "eslint:recommended"
-  ],
-  "ignorePatterns": [
-    "out",
-    "dist"
-  ],
+  "plugins": ["@typescript-eslint"],
+  "extends": ["eslint:recommended"],
+  "ignorePatterns": ["out", "dist"],
   "rules": {
     "no-undef": "off",
     "no-unused-vars": "off"

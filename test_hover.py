@@ -5,7 +5,6 @@ import os
 import os.path
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Union
 
 import click
 import fastapi
@@ -20,11 +19,11 @@ template = f"value={z}"  # hover over the leading f / opening quote  →  f-stri
 n = None  # hover over None
 e = ...  # hover over ...  →  Ellipsis
 
-click.File
+_ = click.File
 
-fastapi.FastAPI().middleware  # hover over FastAPI
-fastapi.FastAPI().add_middleware  # hover over add_middleware
-fastapi.FastAPI().get  # hover over get
+_ = fastapi.FastAPI().middleware  # hover over FastAPI
+_ = fastapi.FastAPI().add_middleware  # hover over add_middleware
+_ = fastapi.FastAPI().get  # hover over get
 
 result = len(x)  # hover over len
 items = list(range(10))  # hover over list, range
@@ -32,7 +31,7 @@ pairs = zip(x, x)  # hover over zip
 evens = filter(None, x)  # hover over filter
 mapped = map(str, x)  # hover over map
 found = isinstance(x, list)  # hover over isinstance
-joined_text = ", ".join(["a", "b"])  # hover over join
+joined_text = "a, b"  # hover over string literal
 lookup = {"name": "atlas"}.get("name")  # hover over get
 appended = x.copy()  # hover over copy
 appended.append(4)  # hover over append
@@ -83,14 +82,14 @@ series_text = df["a"].astype(str)  # hover over astype
 
 
 # ── Typing ────────────────────────────────────────────────────────────────────
-def greet(name: Optional[str] = None) -> str:  # hover over Optional
+def greet(name: str | None) -> str:  # hover over |
     return f"Hello {name}"
 
 
 debug_label = f"{x=} {joined_text}"  # hover over the f-string prefix / opening quote
 
 
-def process(items: List[Union[int, str]]) -> None:  # hover over Union
+def process(items: list[int | str]) -> None:  # hover over |
     pass
 
 

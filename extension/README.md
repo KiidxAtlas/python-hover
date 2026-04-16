@@ -6,9 +6,12 @@
 
 ### Stop alt-tabbing. Instant Python documentation on hover — docstrings, signatures, type hints, and examples, never leaving VS Code.
 
-[![Visual Studio Marketplace Version](https://img.shields.io/visual-studio-marketplace/v/KiidxAtlas.python-hover?color=blue&label=VS%20Marketplace&logo=visual-studio-code&style=for-the-badge)](https://marketplace.visualstudio.com/items?itemName=KiidxAtlas.python-hover)
-[![Downloads](https://img.shields.io/visual-studio-marketplace/d/KiidxAtlas.python-hover?color=success&style=for-the-badge&logo=microsoft)](https://marketplace.visualstudio.com/items?itemName=KiidxAtlas.python-hover)
-[![Rating](https://img.shields.io/visual-studio-marketplace/r/KiidxAtlas.python-hover?color=orange&style=for-the-badge)](https://marketplace.visualstudio.com/items?itemName=KiidxAtlas.python-hover&ssr=false#review-details)
+[![VS Marketplace Version](https://img.shields.io/vscode-marketplace/v/KiidxAtlas.python-hover?label=VS%20Marketplace&logo=visualstudiocode&logoColor=white&style=for-the-badge)](https://marketplace.visualstudio.com/items?itemName=KiidxAtlas.python-hover)
+[![Downloads](https://img.shields.io/vscode-marketplace/d/KiidxAtlas.python-hover?label=Downloads&logo=visualstudiocode&logoColor=white&style=for-the-badge)](https://marketplace.visualstudio.com/items?itemName=KiidxAtlas.python-hover)
+[![GitHub Stars](https://img.shields.io/github/stars/KiidxAtlas/python-hover?label=GitHub%20Stars&logo=github&logoColor=white&style=for-the-badge)](https://github.com/KiidxAtlas/python-hover/stargazers)
+
+[![Open Issues](https://img.shields.io/github/issues/KiidxAtlas/python-hover?label=Open%20Issues&logo=github&logoColor=white&style=for-the-badge)](https://github.com/KiidxAtlas/python-hover/issues)
+[![Last Commit](https://img.shields.io/github/last-commit/KiidxAtlas/python-hover?label=Last%20Commit&logo=git&logoColor=white&style=for-the-badge)](https://github.com/KiidxAtlas/python-hover/commits/main)
 
 <br />
 
@@ -50,23 +53,24 @@ Python Hover is **Option B**. Zero configuration. Instant. Accurate.
 
 Most hover extensions show you a one-liner from PyPI. **Python Hover fetches from the actual Sphinx documentation** — the same source as the official docs site — and combines it with live runtime introspection (docstrings, `__init__` signatures, `@dataclass` fields, `asyncio` coroutine parameters) for true Python IntelliSense on hover.
 
-| | Generic hover | **Python Hover** |
-|---|---|---|
-| `np.array` | "Create an array" | Full signature, dtype param, order, subok, copy — with types |
-| `df.merge` | "`DataFrame.merge`" | All 10+ params, how/on/left_on/right_on explained |
-| `typing.Union` | "Support for type hints" ✗ | "Union type; `Union[X, Y]` is equivalent to `X \| Y`" ✓ |
-| `for` keyword | Nothing or wrong page | Exact anchor on the language reference |
-| Any keyword | Nothing | BNF syntax, description, PEP links |
-| Private library | Nothing | Works if the package has Sphinx docs |
+|                 | Generic hover              | **Python Hover**                                             |
+| --------------- | -------------------------- | ------------------------------------------------------------ |
+| `np.array`      | "Create an array"          | Full signature, dtype param, order, subok, copy — with types |
+| `df.merge`      | "`DataFrame.merge`"        | All 10+ params, how/on/left_on/right_on explained            |
+| `typing.Union`  | "Support for type hints" ✗ | "Union type; `Union[X, Y]` is equivalent to `X \| Y`" ✓      |
+| `for` keyword   | Nothing or wrong page      | Exact anchor on the language reference                       |
+| Any keyword     | Nothing                    | BNF syntax, description, PEP links                           |
+| Private library | Nothing                    | Works if the package has Sphinx docs                         |
 
 ---
 
-## 🆕 New in 0.7.4
+## 🆕 New in 0.7.5
 
-- **Contextual parameter lens** shows the active argument slot inside hovers, then promotes the callable’s docs when the symbol under your cursor is just an argument value.
-- **PyHover Activity Bar** adds Inspector, Saved Docs, History, and Recent Packages views so you can keep working from inside VS Code instead of reopening docs from scratch.
-- **PyHover Studio** now exposes hover presets, docs-routing controls, integrated-browser behavior, and module-browser defaults from one place.
-- **Integrated docs workflows** now support saved docs, recent-session recovery, module browsing, and a command-center status bar without leaving the editor.
+- **Hover Layout controls in Studio** let you reorder regular hover sections and toggle individual sections on or off without editing JSON.
+- **Configurable hover section order** is now available through `python-hover.ui.hoverSectionOrder`, with safe normalization for unknown/missing section IDs.
+- **New section visibility toggles** add direct controls for Overview (`ui.showDescription`), Active Parameter Lens (`ui.showParameterLens`), and Notes (`ui.showNotes`).
+- **Keyword hover structure polish** improves syntax/overview consistency by honoring pre-extracted structured syntax blocks when available.
+- **Release hardening** includes improved Studio reorder reliability and final security sanity checks for webview messaging and trusted command usage.
 
 ---
 
@@ -88,19 +92,19 @@ Most hover extensions show you a one-liner from PyPI. **Python Hover fetches fro
 
 No more landing on the wrong page. Every keyword links to its precise section:
 
-| Keyword | Correct anchor |
-|---|---|
-| `if` / `elif` / `else` | `compound_stmts.html#the-if-statement` |
-| `for` / `while` | `compound_stmts.html#the-for-statement` |
-| `try` / `except` / `finally` | `compound_stmts.html#the-try-statement` |
-| `with` | `compound_stmts.html#the-with-statement` |
-| `match` / `case` | `compound_stmts.html#the-match-statement` |
-| `async` / `await` | `compound_stmts.html#coroutine-function-definition` |
-| `yield` | `simple_stmts.html#the-yield-statement` |
-| `lambda` | `expressions.html#lambda` |
-| `not` / `and` / `or` | `expressions.html#boolean-operations` |
-| `in` / `not in` | `expressions.html#membership-test-operations` |
-| `is` / `is not` | `expressions.html#identity-comparisons` |
+| Keyword                      | Correct anchor                                      |
+| ---------------------------- | --------------------------------------------------- |
+| `if` / `elif` / `else`       | `compound_stmts.html#the-if-statement`              |
+| `for` / `while`              | `compound_stmts.html#the-for-statement`             |
+| `try` / `except` / `finally` | `compound_stmts.html#the-try-statement`             |
+| `with`                       | `compound_stmts.html#the-with-statement`            |
+| `match` / `case`             | `compound_stmts.html#the-match-statement`           |
+| `async` / `await`            | `compound_stmts.html#coroutine-function-definition` |
+| `yield`                      | `simple_stmts.html#the-yield-statement`             |
+| `lambda`                     | `expressions.html#lambda`                           |
+| `not` / `and` / `or`         | `expressions.html#boolean-operations`               |
+| `in` / `not in`              | `expressions.html#membership-test-operations`       |
+| `is` / `is not`              | `expressions.html#identity-comparisons`             |
 
 ### ⚡ All 70+ Built-in Functions
 
@@ -175,23 +179,23 @@ Hover triggered
 
 Works with zero config. Everything below is optional:
 
-| Setting | Default | Description |
-|---|---|---|
-| `python-hover.enable` | `true` | Enable or disable the extension |
-| `python-hover.runtimeHelper` | `true` | Use the persistent Python helper for runtime introspection and better symbol identity |
-| `python-hover.onlineDiscovery` | `true` | Fetch Sphinx inventories and docs from the web |
-| `python-hover.docScraping` | `false` | Fetch richer third-party documentation prose, examples, and see-also sections |
-| `python-hover.docsVersion` | `"auto"` | Python docs version (`"auto"`, `"3.11"`, `"3.12"`, ...) |
-| `python-hover.ui.showStatusBar` | `true` | Show the PyHover status bar entry for quick actions and cache size |
-| `python-hover.ui.showSignatures` | `true` | Show function signatures in hover |
-| `python-hover.ui.showParameters` | `true` | Show the parameters table in hover |
-| `python-hover.ui.maxParameters` | `6` | Maximum number of parameters shown before truncating the table |
-| `python-hover.showPracticalExamples` | `true` | Show code examples in hover |
-| `python-hover.ui.showSeeAlso` | `true` | Show related links and see-also references |
-| `python-hover.requestTimeout` | `10000` | Network timeout in milliseconds |
-| `python-hover.cacheTTL.inventoryDays` | `7` | Retention hint for inventory downloads; cached inventories persist until you clear the cache |
-| `python-hover.hoverActivationDelay` | `75` | Extra delay before resolution starts on slower machines |
-| `python-hover.ui.maxContentLength` | `800` | Max characters before "Read more…" truncation |
+| Setting                               | Default  | Description                                                                                  |
+| ------------------------------------- | -------- | -------------------------------------------------------------------------------------------- |
+| `python-hover.enable`                 | `true`   | Enable or disable the extension                                                              |
+| `python-hover.runtimeHelper`          | `true`   | Use the persistent Python helper for runtime introspection and better symbol identity        |
+| `python-hover.onlineDiscovery`        | `true`   | Fetch Sphinx inventories and docs from the web                                               |
+| `python-hover.docScraping`            | `false`  | Fetch richer third-party documentation prose, examples, and see-also sections                |
+| `python-hover.docsVersion`            | `"auto"` | Python docs version (`"auto"`, `"3.11"`, `"3.12"`, ...)                                      |
+| `python-hover.ui.showStatusBar`       | `true`   | Show the PyHover status bar entry for quick actions and cache size                           |
+| `python-hover.ui.showSignatures`      | `true`   | Show function signatures in hover                                                            |
+| `python-hover.ui.showParameters`      | `true`   | Show the parameters table in hover                                                           |
+| `python-hover.ui.maxParameters`       | `6`      | Maximum number of parameters shown before truncating the table                               |
+| `python-hover.showPracticalExamples`  | `true`   | Show code examples in hover                                                                  |
+| `python-hover.ui.showSeeAlso`         | `true`   | Show related links and see-also references                                                   |
+| `python-hover.requestTimeout`         | `10000`  | Network timeout in milliseconds                                                              |
+| `python-hover.cacheTTL.inventoryDays` | `7`      | Retention hint for inventory downloads; cached inventories persist until you clear the cache |
+| `python-hover.hoverActivationDelay`   | `75`     | Extra delay before resolution starts on slower machines                                      |
+| `python-hover.ui.maxContentLength`    | `800`    | Max characters before "Read more…" truncation                                                |
 
 <details>
 <summary><b>🏢 Custom / Private Libraries</b></summary>
@@ -226,6 +230,7 @@ Works with ReadTheDocs, GitHub Pages, self-hosted docs — anywhere that serves 
 ```
 
 In offline mode you still get:
+
 - All Python keywords, operators, and control flow (instant, static, zero network)
 - All built-in constants (`None`, `True`, `False`, `Ellipsis`, …)
 - All `typing` module constructs
@@ -273,25 +278,25 @@ Python Hover uses Pylance + AST + runtime introspection in layers. For best accu
 
 ## 📊 By the Numbers
 
-| Area | Snapshot |
-| --- | --- |
-| Coverage | **37+** Python keywords and operators with exact doc anchors |
-| Built-ins | **70+** built-in functions with complete parameter docs |
-| Popular libraries | **20+** third-party libraries pre-configured |
-| Auto-discovery | **Thousands** of libraries discoverable via Sphinx |
-| Static speed | **< 1 ms** for keywords and operators |
-| Cached speed | **< 5 ms** for cached library lookups |
-| Package size | **153 KB** total installed size |
-| Setup cost | **0** configuration required to get started |
+| Area              | Snapshot                                                     |
+| ----------------- | ------------------------------------------------------------ |
+| Coverage          | **37+** Python keywords and operators with exact doc anchors |
+| Built-ins         | **70+** built-in functions with complete parameter docs      |
+| Popular libraries | **20+** third-party libraries pre-configured                 |
+| Auto-discovery    | **Thousands** of libraries discoverable via Sphinx           |
+| Static speed      | **< 1 ms** for keywords and operators                        |
+| Cached speed      | **< 5 ms** for cached library lookups                        |
+| Package size      | **153 KB** total installed size                              |
+| Setup cost        | **0** configuration required to get started                  |
 
 ---
 
 ## 💬 What Developers Say
 
-> *"Finally I don't have to leave VS Code to check pandas documentation."*
-> *"The context-awareness is incredible. It knows exactly which method I'm looking at."*
-> *"Hover over `elif` and get the right docs page. Details matter."*
-> *"Saved me hours of alt-tabbing. Worth every star."*
+> _"Finally I don't have to leave VS Code to check pandas documentation."_
+> _"The context-awareness is incredible. It knows exactly which method I'm looking at."_
+> _"Hover over `elif` and get the right docs page. Details matter."_
+> _"Saved me hours of alt-tabbing. Worth every star."_
 
 ---
 
