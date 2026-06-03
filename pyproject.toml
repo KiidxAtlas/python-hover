@@ -5,10 +5,40 @@ description = "Python helper utilities for the Python Hover VS Code extension"
 requires-python = ">=3.10"
 dependencies = []
 
-[tool.uv]
-dev-dependencies = [
+[dependency-groups]
+dev = [
+    "aiohttp",
+    "arrow",
+    "attrs",
     "click",
     "fastapi",
+    "flask",
+    "httpx",
+    "jinja2",
+    "loguru",
+    "matplotlib",
+    "more-itertools",
     "numpy",
     "pandas",
+    "paramiko",
+    "pendulum",
+    "pillow",
+    "psutil",
+    "pydantic",
+    "pygments",
+    "pytest",
+    "python-dateutil",
+    "pyyaml",
+    "redis",
+    "requests",
+    "rich",
+    "scipy",
+    "sqlalchemy",
+    "starlette",
+    "tenacity",
+    "toml",
+    "tqdm",
+    "typer",
+    "uvicorn",
+    "websockets",
 ]

@@ -1,6 +1,6 @@
-import * as https from 'https'
 import { DocKey, HoverDoc, ResolutionSource } from '../../../shared/types'
 import { DiskCache } from '../cache/diskCache'
+import { httpGetJson } from '../net/httpClient'
 
 interface PyPiPackageInfo {
   project_urls?: Record<string, unknown>
@@ -347,29 +347,6 @@ export class PyPiClient {
   }
 
   private fetchJson<T>(url: string): Promise<T> {
-    return new Promise((resolve, reject) => {
-      const req = https.get(url, { timeout: 5000 }, res => {
-        if (res.statusCode !== 200) {
-          reject(new Error(`Status code: ${res.statusCode}`))
-          return
-        }
-        let data = ''
-        res.on('data', chunk => (data += chunk))
-        res.on('end', () => {
-          try {
-            resolve(JSON.parse(data) as T)
-          } catch (e) {
-            reject(e)
-          }
-        })
-      })
-
-      req.on('timeout', () => {
-        req.destroy()
-        reject(new Error('Request timed out'))
-      })
-
-      req.on('error', reject)
-    })
+    return httpGetJson<T>(url, { timeoutMs: 5000 })
   }
 }

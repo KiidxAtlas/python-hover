@@ -1,4 +1,8 @@
 import ast
+import builtins as py_builtins
+import io
+import keyword
+import tokenize
 from dataclasses import dataclass, field
 
 
@@ -10,6 +14,15 @@ class InferenceContext:
 
 
 COPY_METHODS = {"copy", "__copy__", "__deepcopy__"}
+SOFT_KEYWORDS = {"match", "case"}
+BUILTIN_NAMES = set(dir(py_builtins))
+GLOBAL_NAME_TYPES = {
+    "__file__": "str",
+    "__name__": "str",
+    "__package__": "str",
+    "__doc__": "str",
+    "__annotations__": "dict",
+}
 
 
 def identify_at_position(source, line, col):
@@ -22,7 +35,27 @@ def identify_at_position(source, line, col):
     except SyntaxError:
         return None
 
+    keyword_token = _token_at_position(source, line, col)
+    if keyword_token:
+        token_value = keyword_token.string
+        if (
+            keyword.iskeyword(token_value) or token_value in SOFT_KEYWORDS
+        ) and token_value not in {"None", "True", "False"}:
+            return token_value
+        if token_value in {"None", "True", "False"}:
+            return token_value
+
     context = _build_inference_context(tree)
+
+    if keyword_token and keyword_token.type == tokenize.NAME:
+        token_value = keyword_token.string
+        inferred = context.assignments.get(token_value) or context.aliases.get(
+            token_value
+        )
+        if inferred:
+            return inferred
+        if token_value in BUILTIN_NAMES:
+            return token_value
 
     target_node = None
     min_range = float("inf")
@@ -88,7 +121,28 @@ def identify_at_position(source, line, col):
     return _map_node_to_type(target_node, parents, context)
 
 
+def _token_at_position(source, line, col):
+    cursor_line = line - 1
+    try:
+        for token in tokenize.generate_tokens(io.StringIO(source).readline):
+            if token.start[0] - 1 != cursor_line:
+                continue
+
+            start_col = token.start[1]
+            end_col = token.end[1]
+            if start_col <= col < end_col:
+                return token
+    except (tokenize.TokenError, IndentationError):
+        return None
+
+    return None
+
+
 def _map_node_to_type(node, parents, context):
+    if isinstance(node, ast.alias):
+        # Covers import tokens where the narrowest AST node is an alias.
+        return node.name
+
     # Literals
     if isinstance(node, (ast.List, ast.ListComp)):
         return "list"
@@ -117,12 +171,20 @@ def _map_node_to_type(node, parents, context):
             parent = parents.get(node)  # ast.Expr wrapper
             if isinstance(parent, ast.Expr):
                 grandparent = parents.get(parent)
-                if isinstance(
-                    grandparent,
-                    (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef, ast.Module),
+                if (
+                    isinstance(
+                        grandparent,
+                        (
+                            ast.ClassDef,
+                            ast.FunctionDef,
+                            ast.AsyncFunctionDef,
+                            ast.Module,
+                        ),
+                    )
+                    and grandparent.body
+                    and grandparent.body[0] is parent
                 ):
-                    if grandparent.body and grandparent.body[0] is parent:
-                        return "docstring_literal"
+                    return "docstring_literal"
             return "str"
         if isinstance(node.value, bytes):
             return "bytes"
@@ -132,7 +194,15 @@ def _map_node_to_type(node, parents, context):
             return "Ellipsis"
 
     if isinstance(node, ast.Name):
-        return context.assignments.get(node.id) or context.aliases.get(node.id)
+        inferred_name = context.assignments.get(node.id) or context.aliases.get(node.id)
+        if inferred_name:
+            return inferred_name
+        global_name_type = GLOBAL_NAME_TYPES.get(node.id)
+        if global_name_type:
+            return global_name_type
+        if node.id in BUILTIN_NAMES:
+            return node.id
+        return None
 
     if isinstance(node, ast.Attribute):
         return _infer_attribute(node, context)
@@ -159,9 +229,7 @@ def _map_node_to_type(node, parents, context):
         curr = node
         while curr in parents:
             curr = parents[curr]
-            if isinstance(curr, ast.ClassDef):
-                name = f"{curr.name}.{name}"
-            elif isinstance(curr, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if isinstance(curr, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
                 name = f"{curr.name}.{name}"
         return name
 
@@ -183,6 +251,8 @@ def _build_inference_context(tree):
         elif isinstance(node, ast.ImportFrom):
             if not node.module:
                 continue
+            module_root = node.module.split(".")[0]
+            context.aliases[module_root] = module_root
             for alias in node.names:
                 if alias.name == "*":
                     continue
@@ -191,12 +261,120 @@ def _build_inference_context(tree):
         elif isinstance(node, ast.ClassDef):
             context.aliases[node.name] = node.name
             context.class_attrs[node.name] = _collect_class_attributes(node, context)
+            for item in node.body:
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    _record_function_signature_bindings(item, context)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            _record_function_signature_bindings(node, context)
         elif isinstance(node, (ast.With, ast.AsyncWith)):
             _record_with_bindings(node, context)
         elif isinstance(node, (ast.Assign, ast.AnnAssign)):
             _record_assignment(node, context)
 
+    # Second pass: bind names introduced by flow constructs (for/comprehension/match)
+    # so local variables in these scopes can still produce useful hovers.
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.For, ast.AsyncFor)):
+            _record_for_bindings(node, context)
+        elif isinstance(
+            node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+        ):
+            for generator in node.generators:
+                _record_comprehension_bindings(generator, context)
+        elif isinstance(node, ast.Match):
+            _record_match_bindings(node, context)
+
     return context
+
+
+def _infer_iter_element_type(iter_type):
+    if not iter_type:
+        return None
+
+    if iter_type in {"range"}:
+        return "int"
+    if iter_type in {"str"}:
+        return "str"
+    if iter_type in {"bytes", "bytearray"}:
+        return "int"
+    if iter_type in {"dict"}:
+        return "str"
+    if iter_type in {"list", "tuple", "set", "frozenset"}:
+        return "object"
+
+    if iter_type in {"pandas.DataFrame", "pandas.core.frame.DataFrame"}:
+        return "str"
+    if iter_type in {"pandas.Series", "pandas.core.series.Series"}:
+        return "object"
+
+    return "object"
+
+
+def _bind_target_names(target, inferred_type, context):
+    if isinstance(target, ast.Name):
+        if inferred_type:
+            context.assignments[target.id] = inferred_type
+        return
+
+    if isinstance(target, (ast.Tuple, ast.List)):
+        for item in target.elts:
+            _bind_target_names(item, inferred_type, context)
+
+
+def _record_for_bindings(node, context):
+    iter_type = _infer_expr(node.iter, context)
+    inferred_type = _infer_iter_element_type(iter_type)
+    _bind_target_names(node.target, inferred_type, context)
+
+
+def _record_comprehension_bindings(generator, context):
+    iter_type = _infer_expr(generator.iter, context)
+    inferred_type = _infer_iter_element_type(iter_type)
+    _bind_target_names(generator.target, inferred_type, context)
+
+
+def _bind_match_pattern_names(pattern, inferred_type, context):
+    if isinstance(pattern, ast.MatchAs):
+        if pattern.name and inferred_type:
+            context.assignments[pattern.name] = inferred_type
+        if pattern.pattern:
+            _bind_match_pattern_names(pattern.pattern, inferred_type, context)
+        return
+
+    if isinstance(pattern, ast.MatchStar):
+        if pattern.name:
+            context.assignments[pattern.name] = "list"
+        return
+
+    if isinstance(pattern, ast.MatchSequence):
+        element_type = _infer_iter_element_type(inferred_type)
+        for subpattern in pattern.patterns:
+            _bind_match_pattern_names(subpattern, element_type, context)
+        return
+
+    if isinstance(pattern, ast.MatchMapping):
+        for subpattern in pattern.patterns:
+            _bind_match_pattern_names(subpattern, "object", context)
+        if pattern.rest:
+            context.assignments[pattern.rest] = "dict"
+        return
+
+    if isinstance(pattern, ast.MatchClass):
+        class_name = _infer_expr(pattern.cls, context) or inferred_type
+        for subpattern in pattern.patterns:
+            _bind_match_pattern_names(subpattern, "object", context)
+        for attr_name, subpattern in zip(pattern.kwd_attrs, pattern.kwd_patterns):
+            _bind_match_pattern_names(
+                subpattern,
+                f"{class_name}.{attr_name}" if class_name else "object",
+                context,
+            )
+
+
+def _record_match_bindings(node, context):
+    subject_type = _infer_expr(node.subject, context)
+    for case in node.cases:
+        _bind_match_pattern_names(case.pattern, subject_type, context)
 
 
 def _record_assignment(node, context):
@@ -272,6 +450,18 @@ def _collect_class_attributes(node, context):
     return attrs
 
 
+def _record_function_signature_bindings(node, context):
+    all_args = (
+        list(node.args.posonlyargs) + list(node.args.args) + list(node.args.kwonlyargs)
+    )
+    for arg in all_args:
+        if arg.annotation is None:
+            continue
+        inferred = _annotation_to_name(arg.annotation, context)
+        if inferred:
+            context.assignments[arg.arg] = inferred
+
+
 def _annotation_to_name(annotation, context):
     if isinstance(annotation, ast.Name):
         return context.aliases.get(annotation.id, annotation.id)
@@ -297,6 +487,9 @@ def _infer_call(node, context, current_class=None, local_types=None):
         if owner:
             if node.func.attr in COPY_METHODS:
                 return owner
+            inferred_groupby = _infer_pandas_groupby_return(owner, node.func.attr)
+            if inferred_groupby:
+                return inferred_groupby
             if node.func.attr and node.func.attr[:1].isupper():
                 return f"{owner}.{node.func.attr}"
 
@@ -310,6 +503,23 @@ def _infer_call(node, context, current_class=None, local_types=None):
         return callee[:-9]
 
     return callee
+
+
+def _infer_pandas_groupby_return(owner, attr):
+    if attr != "groupby":
+        return None
+
+    owner_root = owner.split(".")[0]
+    owner_leaf = owner.split(".")[-1]
+    if owner_root != "pandas":
+        return None
+
+    if owner_leaf == "DataFrame":
+        return "pandas.core.groupby.generic.DataFrameGroupBy"
+    if owner_leaf == "Series":
+        return "pandas.core.groupby.generic.SeriesGroupBy"
+
+    return None
 
 
 def _infer_attribute(node, context, current_class=None, local_types=None):
@@ -340,7 +550,15 @@ def _infer_expr(node, context, current_class=None, local_types=None):
             return local_types[node.id]
         if node.id == "self" and current_class:
             return current_class
-        return context.assignments.get(node.id) or context.aliases.get(node.id)
+        inferred_name = context.assignments.get(node.id) or context.aliases.get(node.id)
+        if inferred_name:
+            return inferred_name
+        global_name_type = GLOBAL_NAME_TYPES.get(node.id)
+        if global_name_type:
+            return global_name_type
+        if node.id in BUILTIN_NAMES:
+            return node.id
+        return None
 
     if isinstance(node, ast.Attribute):
         return _infer_attribute(
@@ -353,9 +571,32 @@ def _infer_expr(node, context, current_class=None, local_types=None):
         )
 
     if isinstance(node, ast.Subscript):
-        return _infer_expr(
+        container = _infer_expr(
             node.value, context, current_class=current_class, local_types=local_types
         )
+        if not container:
+            return None
+
+        # Common pandas shape inference:
+        # - DataFrame["col"] -> Series
+        # - DataFrame[["a", "b"]] -> DataFrame
+        # - Series[...] remains Series
+        if container in {"pandas.DataFrame", "pandas.core.frame.DataFrame"}:
+            slice_node = node.slice
+            if isinstance(slice_node, ast.Constant) and isinstance(
+                slice_node.value, str
+            ):
+                return "pandas.Series"
+            if isinstance(slice_node, ast.Name):
+                # unknown dynamic selector; keep DataFrame to avoid over-claiming
+                return container
+            if isinstance(slice_node, ast.List):
+                return container
+
+        if container in {"pandas.Series", "pandas.core.series.Series"}:
+            return "pandas.Series"
+
+        return container
 
     if isinstance(node, (ast.List, ast.ListComp)):
         return "list"

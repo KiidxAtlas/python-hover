@@ -1,8 +1,8 @@
 import { createHash } from 'crypto'
-import * as https from 'https'
 import { Logger } from '../../../extension/src/logger'
 import { DocKey, HoverDoc, ResolutionSource } from '../../../shared/types'
 import { DiskCache } from '../cache/diskCache'
+import { httpGetText } from '../net/httpClient'
 
 type SiteIndexEntry = {
   title: string
@@ -377,39 +377,12 @@ export class SiteIndexResolver {
   }
 
   private fetchText(url: string, redirectCount = 0): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const req = https.get(url, { timeout: this.timeout, headers: INDEX_REQUEST_HEADERS }, res => {
-        if (
-          res.statusCode &&
-          res.statusCode >= 300 &&
-          res.statusCode < 400 &&
-          res.headers.location
-        ) {
-          if (redirectCount >= 5) {
-            reject(new Error(`Too many redirects for ${url}`))
-            return
-          }
-          const redirectUrl = new URL(res.headers.location, url).toString()
-          this.fetchText(redirectUrl, redirectCount + 1).then(resolve).catch(reject)
-          return
-        }
-
-        if (res.statusCode !== 200) {
-          reject(new Error(`Status code ${res.statusCode}`))
-          return
-        }
-
-        let data = ''
-        res.on('data', chunk => (data += chunk))
-        res.on('end', () => resolve(data))
-        res.on('error', reject)
-      })
-
-      req.on('timeout', () => {
-        req.destroy()
-        reject(new Error('Request timed out'))
-      })
-      req.on('error', reject)
+    void redirectCount
+    return httpGetText(url, {
+      timeoutMs: this.timeout,
+      headers: INDEX_REQUEST_HEADERS,
+      maxRedirects: 5,
+      maxAttempts: 2,
     })
   }
 }

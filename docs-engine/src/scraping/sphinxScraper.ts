@@ -1,7 +1,8 @@
-import * as https from 'https'
-import { getEngineLogger } from '../engineLogger'
+import { stripDangerousTagBlocks, stripHtmlTags } from '../../../shared/htmlSanitizer'
 import { StructuredHoverContent, StructuredHoverSection } from '../../../shared/types'
 import { DiskCache } from '../cache/diskCache'
+import { getEngineLogger } from '../engineLogger'
+import { httpGetText } from '../net/httpClient'
 
 const DOCS_REQUEST_HEADERS = {
   'User-Agent':
@@ -722,40 +723,14 @@ export class SphinxScraper {
     this.htmlCache.set(url, html)
   }
 
-  private fetchHtml(url: string): Promise<string> {
-    const httpsUrl = this.normalizeToHttps(url)
-    return new Promise((resolve, reject) => {
-      const req = https.get(
-        httpsUrl,
-        { timeout: this.timeout, headers: DOCS_REQUEST_HEADERS },
-        res => {
-          if (
-            res.statusCode &&
-            res.statusCode >= 300 &&
-            res.statusCode < 400 &&
-            res.headers.location
-          ) {
-            const redirectUrl = this.normalizeToHttps(
-              new URL(res.headers.location, httpsUrl).toString(),
-            )
-            this.fetchHtml(redirectUrl).then(resolve).catch(reject)
-            return
-          }
-          if (res.statusCode !== 200) {
-            reject(new Error(`Status code ${res.statusCode}`))
-            return
-          }
-          let data = ''
-          res.on('data', chunk => (data += chunk))
-          res.on('end', () => resolve(data))
-          res.on('error', reject)
-        },
-      )
-      req.on('timeout', () => {
-        req.destroy()
-        reject(new Error('Request timed out'))
-      })
-      req.on('error', reject)
+  private fetchHtml(url: string, redirectCount = 0, attempt = 0): Promise<string> {
+    void redirectCount
+    void attempt
+    return httpGetText(this.normalizeToHttps(url), {
+      timeoutMs: this.timeout,
+      headers: DOCS_REQUEST_HEADERS,
+      maxRedirects: 5,
+      maxAttempts: 2,
     })
   }
 
@@ -1058,9 +1033,7 @@ export class SphinxScraper {
     let md = html
 
     // Remove scripts, styles, and SVG
-    md = md.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gim, '')
-    md = md.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gim, '')
-    md = md.replace(/<svg\b[^>]*>[\s\S]*?<\/svg>/gim, '')
+    md = stripDangerousTagBlocks(md, ['script', 'style', 'svg'])
 
     // Remove Sphinx permalink anchors (¶)
     md = md.replace(/<a[^>]+class="headerlink"[^>]*>[\s\S]*?<\/a>/gim, '')
@@ -1068,7 +1041,7 @@ export class SphinxScraper {
 
     // Headers → bold (hovers don't need heading hierarchy)
     md = md.replace(/<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/gim, (_, inner) => {
-      const text = inner.replace(/<[^>]+>/g, '').trim()
+      const text = stripHtmlTags(String(inner)).trim()
       return text ? `\n**${text}**\n` : ''
     })
 
@@ -1078,7 +1051,7 @@ export class SphinxScraper {
     // "***class *Name(*arg*)**" — strip to plain text instead.
     md = md.replace(
       /<em[^>]+class="[^"]*(?:property|sig-param)[^"]*"[^>]*>([\s\S]*?)<\/em>/gim,
-      (_, inner) => inner.replace(/<[^>]+>/g, ''),
+      (_, inner) => stripHtmlTags(String(inner)),
     )
 
     // Inline formatting BEFORE stripping tags
@@ -1089,7 +1062,7 @@ export class SphinxScraper {
 
     // Code blocks — strip inner tags first then wrap
     md = md.replace(/<pre[^>]*>([\s\S]*?)<\/pre>/gim, (_, inner) => {
-      const code = inner.replace(/<[^>]+>/g, '').trim()
+      const code = stripHtmlTags(String(inner)).trim()
       return `\n\`\`\`python\n${code}\n\`\`\`\n`
     })
     md = md.replace(/<code[^>]*>([\s\S]*?)<\/code>/gim, '`$1`')
@@ -1101,7 +1074,7 @@ export class SphinxScraper {
 
     // Links — make absolute
     md = md.replace(/<a[^>]+href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gim, (_, href, text) => {
-      const cleanText = text.replace(/<[^>]+>/g, '').trim()
+      const cleanText = stripHtmlTags(String(text)).trim()
       if (!cleanText) {
         return ''
       }
@@ -1130,11 +1103,11 @@ export class SphinxScraper {
     // Sphinx sig-object <dt> blocks are Python signatures — don't bold-wrap them,
     // as their content is already plain text after the property/sig-param em stripping above.
     md = md.replace(/<dt[^>]*class="[^"]*\bsig\b[^"]*"[^>]*>([\s\S]*?)<\/dt>/gim, (_, inner) => {
-      const text = inner.replace(/<[^>]+>/g, '').trim()
+      const text = stripHtmlTags(String(inner)).trim()
       return text ? `\n${text}\n` : ''
     })
     md = md.replace(/<dt[^>]*>([\s\S]*?)<\/dt>/gim, (_, inner) => {
-      const text = inner.replace(/<[^>]+>/g, '').trim()
+      const text = stripHtmlTags(String(inner)).trim()
       if (!text || text === ':') {
         return ''
       }
@@ -1153,14 +1126,12 @@ export class SphinxScraper {
     md = md.replace(/<\/?(?:div|span|section|article|aside|nav|header|footer|main)[^>]*>/gim, '')
 
     // Strip remaining tags
-    md = md.replace(/<[^>]+>/gim, '')
+    md = stripHtmlTags(md)
 
     // Decode HTML entities
     md = md.replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
     md = md.replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
     md = md
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
       .replace(/&amp;/g, '&')
       .replace(/&quot;/g, '"')
       .replace(/&apos;/g, "'")
@@ -1170,8 +1141,8 @@ export class SphinxScraper {
       .replace(/&hellip;/g, '…')
 
     // Final pass: strip any tags reconstructed from decoded HTML entities
-    md = md.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
-    md = md.replace(/<[^>]+>/gim, '')
+    md = stripDangerousTagBlocks(md, ['script', 'style'])
+    md = stripHtmlTags(md)
 
     // Normalize whitespace
     md = md.replace(/[ \t]+/g, ' ')

@@ -14,6 +14,7 @@ import { StaticDocResolver } from './resolvers/staticDocResolver'
 import { SphinxScraper } from './scraping/sphinxScraper'
 import { SearchFallback } from './search/searchFallback'
 import { SiteIndexResolver } from './search/siteIndexResolver'
+import { buildStdlibDocsUrl } from '../data/stdlibModules'
 
 export interface ResolverConfig {
   cacheTTL?: {
@@ -726,7 +727,7 @@ export class DocResolver {
     let url = baseUrl ? `${baseUrl}/index.html` : undefined
     if (isStdlib) {
       const version = this.inventoryFetcher.getPythonVersion()
-      url = `https://docs.python.org/${version}/library/${packageName}.html`
+      url = buildStdlibDocsUrl(packageName, version)
     }
 
     // Use cached scraped content if available; otherwise fire background scrape

@@ -6,8 +6,8 @@
 
 ### Stop alt-tabbing. Instant Python documentation on hover — docstrings, signatures, type hints, and examples, never leaving VS Code.
 
-[![VS Marketplace Version](https://img.shields.io/vscode-marketplace/v/KiidxAtlas.python-hover?label=VS%20Marketplace&logo=visualstudiocode&logoColor=white&style=for-the-badge)](https://marketplace.visualstudio.com/items?itemName=KiidxAtlas.python-hover)
-[![Downloads](https://img.shields.io/vscode-marketplace/d/KiidxAtlas.python-hover?label=Downloads&logo=visualstudiocode&logoColor=white&style=for-the-badge)](https://marketplace.visualstudio.com/items?itemName=KiidxAtlas.python-hover)
+[![VS Marketplace Version](https://badgen.net/vs-marketplace/v/KiidxAtlas.python-hover?icon=visualstudio&label=VS%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=KiidxAtlas.python-hover)
+[![Downloads](https://badgen.net/vs-marketplace/d/KiidxAtlas.python-hover?icon=visualstudio&label=Downloads)](https://marketplace.visualstudio.com/items?itemName=KiidxAtlas.python-hover)
 [![GitHub Stars](https://img.shields.io/github/stars/KiidxAtlas/python-hover?label=GitHub%20Stars&logo=github&logoColor=white&style=for-the-badge)](https://github.com/KiidxAtlas/python-hover/stargazers)
 
 [![Open Issues](https://img.shields.io/github/issues/KiidxAtlas/python-hover?label=Open%20Issues&logo=github&logoColor=white&style=for-the-badge)](https://github.com/KiidxAtlas/python-hover/issues)

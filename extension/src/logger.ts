@@ -1,40 +1,45 @@
-import * as vscode from 'vscode'
+import * as vscode from "vscode";
 
 export class Logger {
-  private static _outputChannel: vscode.OutputChannel
-  private static _debugEnabled = false
+  private static _outputChannel: vscode.OutputChannel;
+  private static _debugEnabled = false;
+  private static _revealOnError = false;
 
   public static initialize(name: string) {
-    this._outputChannel = vscode.window.createOutputChannel(name)
+    this._outputChannel = vscode.window.createOutputChannel(name);
   }
 
   public static setDebugEnabled(enabled: boolean) {
-    this._debugEnabled = enabled
+    this._debugEnabled = enabled;
+  }
+
+  public static setRevealOnError(enabled: boolean) {
+    this._revealOnError = enabled;
   }
 
   public static log(message: string, data?: unknown) {
     if (!this._outputChannel) {
-      return
+      return;
     }
-    const timestamp = new Date().toLocaleTimeString()
-    let logMessage = `[${timestamp}] ${message}`
+    const timestamp = new Date().toLocaleTimeString();
+    let logMessage = `[${timestamp}] ${message}`;
 
     if (data) {
-      if (typeof data === 'object') {
-        logMessage += `\n${JSON.stringify(data, null, 2)}`
+      if (typeof data === "object") {
+        logMessage += `\n${JSON.stringify(data, null, 2)}`;
       } else {
-        logMessage += ` ${data}`
+        logMessage += ` ${data}`;
       }
     }
 
-    this._outputChannel.appendLine(logMessage)
+    this._outputChannel.appendLine(logMessage);
   }
 
   public static debug(message: string, data?: unknown) {
     if (!this._debugEnabled) {
-      return
+      return;
     }
-    this.log(`[debug] ${message}`, data)
+    this.log(`[debug] ${message}`, data);
   }
 
   public static debugDuration(
@@ -44,49 +49,51 @@ export class Logger {
     minDurationMs = 0,
   ) {
     if (!this._debugEnabled) {
-      return
+      return;
     }
 
-    const durationMs = Date.now() - startedAt
+    const durationMs = Date.now() - startedAt;
     if (durationMs < minDurationMs) {
-      return
+      return;
     }
 
     const payload =
-      data && typeof data === 'object'
+      data && typeof data === "object"
         ? { ...(data as Record<string, unknown>), durationMs }
         : data !== undefined
           ? { detail: data, durationMs }
-          : { durationMs }
-    this.log(`[debug] ${message}`, payload)
+          : { durationMs };
+    this.log(`[debug] ${message}`, payload);
   }
 
   public static error(message: string, error?: unknown) {
     if (!this._outputChannel) {
-      return
+      return;
     }
-    const timestamp = new Date().toLocaleTimeString()
-    let logMessage = `[${timestamp}] [ERROR] ${message}`
+    const timestamp = new Date().toLocaleTimeString();
+    let logMessage = `[${timestamp}] [ERROR] ${message}`;
 
     if (error) {
       if (error instanceof Error) {
-        logMessage += `\n${error.stack || error.message}`
-      } else if (typeof error === 'object') {
-        logMessage += `\n${JSON.stringify(error, null, 2)}`
+        logMessage += `\n${error.stack || error.message}`;
+      } else if (typeof error === "object") {
+        logMessage += `\n${JSON.stringify(error, null, 2)}`;
       } else {
-        logMessage += ` ${error}`
+        logMessage += ` ${error}`;
       }
     }
 
-    this._outputChannel.appendLine(logMessage)
-    this._outputChannel.show(true) // Bring to front on error
+    this._outputChannel.appendLine(logMessage);
+    if (this._revealOnError) {
+      this._outputChannel.show(true);
+    }
   }
 
   public static show() {
-    this._outputChannel?.show()
+    this._outputChannel?.show();
   }
 
   public static dispose() {
-    this._outputChannel?.dispose()
+    this._outputChannel?.dispose();
   }
 }
