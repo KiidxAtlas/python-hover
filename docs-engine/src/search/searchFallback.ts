@@ -1,4 +1,5 @@
 import { DocKey, HoverDoc, ResolutionSource } from '../../../shared/types'
+import { buildStdlibDocsUrl } from '../../data/stdlibModules'
 
 /**
  * Maps Python package names to their DevDocs doc-set names.
@@ -44,6 +45,45 @@ const DEVDOCS_DOC_SETS: Record<string, string> = {
 }
 
 export class SearchFallback {
+  private normalizePackageCandidates(key: DocKey): string[] {
+    const candidates = new Set<string>()
+    if (key.package) {
+      candidates.add(key.package.toLowerCase())
+    }
+    if (key.module) {
+      candidates.add(key.module.split('.')[0].toLowerCase())
+    }
+
+    const nameRoot = (key.name || '').split('.')[0]?.toLowerCase()
+    if (nameRoot) {
+      candidates.add(nameRoot)
+    }
+
+    return [...candidates]
+  }
+
+  private resolveDocSet(key: DocKey): string | undefined {
+    const candidates = this.normalizePackageCandidates(key)
+    for (const candidate of candidates) {
+      const mapped = DEVDOCS_DOC_SETS[candidate]
+      if (mapped) {
+        return mapped
+      }
+    }
+    return undefined
+  }
+
+  private buildSearchTerm(key: DocKey): string {
+    const cleanName = (key.qualname || key.name).replace(/^builtins\./, '')
+    const parts = cleanName.split('.').filter(Boolean)
+    if (parts.length === 0) {
+      return key.name
+    }
+
+    // Keep the most specific 1-2 segments for higher hit quality.
+    return parts.slice(-2).join('.')
+  }
+
   /**
    * Returns a DevDocs URL that is scoped to a single documentation set.
    *
@@ -59,24 +99,23 @@ export class SearchFallback {
    * unknown 3rd-party → unscoped search (symbol name only)
    */
   getDevDocsUrl(key: DocKey): string | null {
-    const cleanName = (key.qualname || key.name).replace(/^builtins\./, '')
-    const leafTerm = cleanName.split('.').slice(-2).join('.') || cleanName
+    const term = this.buildSearchTerm(key)
 
     // ── stdlib / builtins ─────────────────────────────────────────────
     if (key.isStdlib || !key.package || key.package === 'builtins') {
-      return `https://devdocs.io/#q=${encodeURIComponent(`python~3 ${leafTerm}`)}`
+      return `https://devdocs.io/#q=${encodeURIComponent(`python~3 ${term}`)}`
     }
 
     // ── known third-party ─────────────────────────────────────────────
-    const docSet = DEVDOCS_DOC_SETS[key.package.toLowerCase()]
+    const docSet = this.resolveDocSet(key)
     if (docSet) {
-      return `https://devdocs.io/#q=${encodeURIComponent(`${docSet} ${leafTerm}`)}`
+      return `https://devdocs.io/#q=${encodeURIComponent(`${docSet} ${term}`)}`
     }
 
     // ── unknown third-party ───────────────────────────────────────────
     // No registered doc set — use an unscoped DevDocs search so the button
     // still resolves to something useful.
-    return `https://devdocs.io/#q=${encodeURIComponent(leafTerm)}`
+    return `https://devdocs.io/#q=${encodeURIComponent(term)}`
   }
 
   async search(key: DocKey): Promise<HoverDoc> {
@@ -85,9 +124,8 @@ export class SearchFallback {
     // For stdlib symbols, construct the module page URL so the hover always
     // shows a working Docs link even when the Sphinx inventory fails to load.
     let url: string | undefined
-    if (key.isStdlib && key.module && key.module !== 'builtins') {
-      const topModule = key.module.split('.')[0]
-      url = `https://docs.python.org/3/library/${topModule}.html`
+    if (key.isStdlib && (key.module || key.package || key.name) && key.package !== 'builtins') {
+      url = buildStdlibDocsUrl(key.module || key.package || key.name, '3')
     }
 
     return {

@@ -7,7 +7,14 @@
     "types": ["node", "vscode"],
     "sourceMap": true,
     "rootDir": "..",
-    "strict": true
+    "strict": true,
+    "ignoreDeprecations": "6.0",
+    "baseUrl": "..",
+    "paths": {
+      "#src/*": ["extension/src/*"],
+      "#shared/*": ["shared/*"],
+      "#docs-engine/*": ["docs-engine/src/*"]
+    }
   },
   "include": ["src/**/*", "../docs-engine/**/*", "../shared/**/*"],
   "exclude": ["node_modules", ".vscode-test"]

@@ -101,18 +101,23 @@ export class HoverDocBuilder {
     const qualnameParts = qualname.split('.')
     const nameLeaf = nameParts[nameParts.length - 1]
     const qualnameLeaf = qualnameParts[qualnameParts.length - 1]
-    const nameOwner = nameParts.length >= 2 ? nameParts[nameParts.length - 2] : undefined
-    const qualnameOwner =
-      qualnameParts.length >= 2 ? qualnameParts[qualnameParts.length - 2] : undefined
 
-    // Runtime reflection often resolves aliases/inherited methods to the implementation
-    // target (e.g. DataFrame.aggregate, Starlette.add_middleware). For display, prefer
-    // the hovered public symbol name in those cases.
-    if (nameLeaf !== qualnameLeaf || (nameOwner && qualnameOwner && nameOwner !== qualnameOwner)) {
-      return nameOwner ? `${nameOwner}.${nameLeaf}` : name
+    // Preserve public dotted names like os.path.join and pandas.DataFrame.aggregate.
+    // For very deep implementation paths (e.g. pandas.core.frame.DataFrame.aggregate),
+    // shorten to the visible owner + leaf so the hover title stays readable.
+    if (name.startsWith('builtins.')) {
+      return name.slice('builtins.'.length)
     }
 
-    return qualname
+    if (nameParts.length <= 3) {
+      return name
+    }
+
+    if (nameLeaf !== qualnameLeaf) {
+      return name
+    }
+
+    return `${nameParts[nameParts.length - 2]}.${nameLeaf}`
   }
 
   private buildSummary(

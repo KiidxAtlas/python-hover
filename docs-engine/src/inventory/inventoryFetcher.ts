@@ -1,5 +1,3 @@
-import * as https from 'https'
-import { getEngineLogger } from '../engineLogger'
 import {
   CustomLibraryConfig,
   DocKey,
@@ -8,6 +6,8 @@ import {
   ResolutionSource,
 } from '../../../shared/types'
 import { DiskCache } from '../cache/diskCache'
+import { getEngineLogger } from '../engineLogger'
+import { httpGetBuffer, httpHeadExists } from '../net/httpClient'
 import { PyPiClient } from '../pypi/pypiClient'
 import { InventoryParser } from './inventoryParser'
 
@@ -131,8 +131,6 @@ export class InventoryFetcher {
   private loadingPromises: Map<string, Promise<void>> = new Map()
   /** Log each failed package at most once per session (avoid hover-stampedes). */
   private failedInventoryLog = new Set<string>()
-  /** Log each redirect chain at most once per session. */
-  private redirectLogSeen = new Set<string>()
   /** Cache resolved inventory lookups so fallback strategy scans are not repeated. */
   private inventoryLookupCache = new Map<string, HoverDoc | null>()
   /** Cache query-derived symbol lists until inventories change. */
@@ -459,31 +457,11 @@ export class InventoryFetcher {
   }
 
   private checkUrlExists(url: string): Promise<boolean> {
-    // Ensure URL uses HTTPS (required for VS Code Remote environments)
-    const httpsUrl = this.normalizeToHttps(url)
-
-    return new Promise(resolve => {
-      const req = https.request(
-        httpsUrl,
-        { method: 'HEAD', timeout: 5000, headers: DOCS_REQUEST_HEADERS },
-        res => {
-          // Accept 200 OK or 3xx Redirects (which fetchBuffer handles)
-          if (
-            res.statusCode &&
-            (res.statusCode === 200 || (res.statusCode >= 300 && res.statusCode < 400))
-          ) {
-            resolve(true)
-          } else {
-            resolve(false)
-          }
-        },
-      )
-      req.on('timeout', () => {
-        req.destroy()
-        resolve(false)
-      })
-      req.on('error', () => resolve(false))
-      req.end()
+    return httpHeadExists(this.normalizeToHttps(url), {
+      timeoutMs: 5000,
+      headers: DOCS_REQUEST_HEADERS,
+      maxRedirects: 5,
+      maxAttempts: 1,
     })
   }
 
@@ -1235,52 +1213,14 @@ export class InventoryFetcher {
     return InventoryFetcher.CORPUS_META_PAGE_PATTERNS.some(pattern => pattern.test(url))
   }
 
-  private fetchBuffer(url: string, redirectCount = 0): Promise<Buffer> {
-    if (redirectCount > 5) {
-      return Promise.reject(new Error('Too many redirects'))
-    }
-
-    // Ensure URL uses HTTPS (required for VS Code Remote environments)
-    const httpsUrl = this.normalizeToHttps(url)
-
-    return new Promise((resolve, reject) => {
-      const req = https.get(httpsUrl, { timeout: 5000, headers: DOCS_REQUEST_HEADERS }, res => {
-        if (
-          res.statusCode &&
-          res.statusCode >= 300 &&
-          res.statusCode < 400 &&
-          res.headers.location
-        ) {
-          // Normalize redirect URL to HTTPS as well
-          const newUrl = this.normalizeToHttps(new URL(res.headers.location, httpsUrl).toString())
-          const redirectKey = `${httpsUrl}→${newUrl}`
-          if (!this.redirectLogSeen.has(redirectKey)) {
-            this.redirectLogSeen.add(redirectKey)
-            getEngineLogger().log(`Following redirect for ${httpsUrl} to ${newUrl}`)
-          }
-          this.fetchBuffer(newUrl, redirectCount + 1)
-            .then(resolve)
-            .catch(reject)
-          return
-        }
-
-        if (res.statusCode !== 200) {
-          reject(new Error(`Status code: ${res.statusCode}`))
-          return
-        }
-
-        const chunks: Buffer[] = []
-        res.on('data', chunk => chunks.push(chunk))
-        res.on('end', () => resolve(Buffer.concat(chunks)))
-        res.on('error', reject)
-      })
-
-      req.on('timeout', () => {
-        req.destroy()
-        reject(new Error('Request timed out'))
-      })
-
-      req.on('error', reject)
+  private fetchBuffer(url: string, redirectCount = 0, attempt = 0): Promise<Buffer> {
+    void redirectCount
+    void attempt
+    return httpGetBuffer(this.normalizeToHttps(url), {
+      timeoutMs: 5000,
+      headers: DOCS_REQUEST_HEADERS,
+      maxRedirects: 5,
+      maxAttempts: 2,
     })
   }
 }

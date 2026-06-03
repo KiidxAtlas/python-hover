@@ -1,8 +1,13 @@
 {
   "name": "python-hover",
-  "displayName": "🐍 Python Hover - Enhanced Documentation",
-  "description": "Instant Python documentation on hover. Covers 300+ constructs, all keywords/operators with correct anchors, NumPy, Pandas, FastAPI, Django, PyTorch, Flask, Pydantic, SQLAlchemy, Requests and more. Scoped DevDocs links, smart context detection, zero config.",
-  "version": "0.7.5",
+  "displayName": "Python Hover",
+  "description": "Professional Python hover documentation for VS Code with fast symbol resolution, curated docs links, and integrated browsing.",
+  "version": "0.7.6",
+  "imports": {
+    "#src/*": "./out/extension/src/*.js",
+    "#shared/*": "./out/shared/*.js",
+    "#docs-engine/*": "./out/docs-engine/src/*.js"
+  },
   "publisher": "KiidxAtlas",
   "author": {
     "name": "KiidxAtlas",
@@ -158,7 +163,7 @@
       },
       {
         "command": "python-hover.openDocsSide",
-        "title": "Open Docs in Side Panel",
+        "title": "Open Docs in Integrated Browser",
         "category": "Python Hover"
       },
       {
@@ -190,19 +195,23 @@
       "pyhover": [
         {
           "id": "pyhover.inspector",
-          "name": "Inspector"
+          "name": "Inspector",
+          "icon": "media/pyhover-activity.svg"
         },
         {
           "id": "pyhover.saved",
-          "name": "Saved Docs"
+          "name": "Saved Docs",
+          "icon": "media/pyhover-activity.svg"
         },
         {
           "id": "pyhover.history",
-          "name": "History"
+          "name": "History",
+          "icon": "media/pyhover-activity.svg"
         },
         {
           "id": "pyhover.packages",
-          "name": "Recent Packages"
+          "name": "Recent Packages",
+          "icon": "media/pyhover-activity.svg"
         }
       ]
     },
@@ -385,7 +394,7 @@
           ],
           "default": "integrated",
           "enumDescriptions": [
-            "Open in VS Code side panel",
+            "Open in VS Code integrated browser",
             "Open in system browser"
           ],
           "markdownDescription": "Where to open official docs links from hovers, pins, and Studio."
@@ -396,9 +405,9 @@
             "integrated",
             "external"
           ],
-          "default": "external",
+          "default": "integrated",
           "enumDescriptions": [
-            "Open in VS Code side panel",
+            "Open in VS Code integrated browser",
             "Open in system browser"
           ],
           "markdownDescription": "Where to open DevDocs searches from hovers and Studio."
@@ -433,6 +442,16 @@
           "type": "boolean",
           "default": false,
           "markdownDescription": "Enable verbose debug logging and surface richer troubleshooting details in the output channel and debug panels."
+        },
+        "python-hover.revealOutputOnStartup": {
+          "type": "boolean",
+          "default": false,
+          "description": "Reveal the PyHover Output channel when the extension activates."
+        },
+        "python-hover.revealOutputOnError": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically reveal the PyHover Output channel when errors are logged."
         },
         "python-hover.ui.showSignatures": {
           "type": "boolean",
@@ -735,8 +754,9 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
+    "compile": "rm -rf out && tsc -p ./",
     "audit:hover": "npm run compile && node ./scripts/renderHoverAudit.cjs",
+    "smoke:hover-sweep": "npm run compile && node ./scripts/hoverSweepSmoke.cjs",
     "smoke:parameter-lens": "npm run compile && node ./scripts/parameterLensSmoke.cjs",
     "watch": "tsc -watch -p ./",
     "lint": "eslint src --ext ts",
@@ -749,9 +769,9 @@
   "devDependencies": {
     "@types/vscode": "^1.85.0",
     "@types/node": "18.x",
-    "@typescript-eslint/eslint-plugin": "^6.15.0",
-    "@typescript-eslint/parser": "^6.15.0",
+    "@typescript-eslint/eslint-plugin": "^8.59.0",
+    "@typescript-eslint/parser": "^8.59.0",
     "eslint": "^8.56.0",
-    "typescript": "^5.3.3"
+    "typescript": "^6.0.3"
   }
 }
