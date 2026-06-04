@@ -806,7 +806,7 @@
     "compile": "rm -rf out && tsc -p ./",
     "watch": "tsc -watch -p ./",
     "lint": "eslint src --ext ts",
-    "package": "vsce package",
+    "package": "npx @vscode/vsce package",
     "verify": "npm run compile && npm run lint && npm run package"
   },
   "dependencies": {

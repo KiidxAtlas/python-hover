@@ -901,7 +901,7 @@ export class HoverProvider implements vscode.HoverProvider {
               }
               this.hoverCache.set(moduleKey, hover);
               return hover;
-            };)();
+            })();
             this.inflightHovers.set(moduleKey, modulePromise);
             modulePromise.finally(() => this.inflightHovers.delete(moduleKey));
             return modulePromise.then((result) =>
@@ -1227,7 +1227,7 @@ export class HoverProvider implements vscode.HoverProvider {
               return decorated;
             });
         });
-      };)();
+      })();
 
       this.inflightPositionHovers.set(posKey, hoverPromise);
       hoverPromise.finally(() => this.inflightPositionHovers.delete(posKey));
