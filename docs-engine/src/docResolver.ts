@@ -5,190 +5,231 @@ import {
   IndexedSymbolSummary,
   ResolutionSource,
   StructuredHoverContent,
-} from '../../shared/types'
-import { DiskCache, PYHOVER_PYTHON_STDLIB_CORPUS_GROUP } from './cache/diskCache'
-import { getEngineLogger } from './engineLogger'
-import { InventoryFetcher } from './inventory/inventoryFetcher'
-import { PyPiClient } from './pypi/pypiClient'
-import { StaticDocResolver } from './resolvers/staticDocResolver'
-import { SphinxScraper } from './scraping/sphinxScraper'
-import { SearchFallback } from './search/searchFallback'
-import { SiteIndexResolver } from './search/siteIndexResolver'
-import { buildStdlibDocsUrl } from '../data/stdlibModules'
+} from "../../shared/types";
+import { buildStdlibDocsUrl } from "../data/stdlibModules";
+import {
+  DiskCache,
+  PYHOVER_PYTHON_STDLIB_CORPUS_GROUP,
+} from "./cache/diskCache";
+import { PyPiClient } from "./discover/pypiClient";
+import { getEngineLogger } from "./engineLogger";
+import { InventoryFetcher } from "./fetch/inventoryFetcher";
+import { SearchFallback } from "./fetch/searchFallback";
+import { SiteIndexResolver } from "./fetch/siteIndexResolver";
+import { SphinxScraper } from "./process/sphinxScraper";
+import { StaticDocResolver } from "./static/staticDocResolver";
 
 export interface ResolverConfig {
   cacheTTL?: {
-    inventoryDays: number
-    snippetHours: number
-  }
-  requestTimeout?: number
-  customLibraries?: CustomLibraryConfig[]
-  onlineDiscovery?: boolean
+    inventoryDays: number;
+    snippetHours: number;
+  };
+  requestTimeout?: number;
+  customLibraries?: CustomLibraryConfig[];
+  onlineDiscovery?: boolean;
   /** When true, scrape the full documentation for each package in the background
    *  on first hover — builds the local corpus all at once instead of symbol-by-symbol. */
-  buildFullCorpus?: boolean
+  buildFullCorpus?: boolean;
   /** When true, prefetch HTML and extract narrative content (default off). */
-  enableDocScraping?: boolean
+  enableDocScraping?: boolean;
   /** When true, use bundled KNOWN_DOCS_URLS in InventoryFetcher (faster). */
-  useKnownDocsUrls?: boolean
+  useKnownDocsUrls?: boolean;
 }
 
 export class DocResolver {
-  private readonly inventoryFetcher: InventoryFetcher
-  private readonly pypiClient: PyPiClient
-  private readonly fallback: SearchFallback
-  private readonly siteIndexResolver: SiteIndexResolver
-  private readonly scraper: SphinxScraper
-  private readonly staticResolver: StaticDocResolver
-  private readonly config?: ResolverConfig
-  private readonly enableDocScraping: boolean
+  private readonly inventoryFetcher: InventoryFetcher;
+  private readonly pypiClient: PyPiClient;
+  private readonly fallback: SearchFallback;
+  private readonly siteIndexResolver: SiteIndexResolver;
+  private readonly scraper: SphinxScraper;
+  private readonly staticResolver: StaticDocResolver;
+  private readonly config?: ResolverConfig;
+  private readonly enableDocScraping: boolean;
 
   /** Packages whose full corpus build has already been triggered this session. */
-  private readonly fullCorpusBuilt = new Set<string>()
+  private readonly fullCorpusBuilt = new Set<string>();
   /** Deduplicate background scrape kicks for the same package + URL pair. */
-  private readonly prefetchInFlight = new Set<string>()
+  private readonly prefetchInFlight = new Set<string>();
 
   constructor(diskCache: DiskCache, config?: ResolverConfig) {
     this.inventoryFetcher = new InventoryFetcher(
       diskCache,
-      '3',
+      "3",
       config?.customLibraries || [],
       config?.onlineDiscovery !== false,
       config?.useKnownDocsUrls === true,
-    )
-    this.pypiClient = new PyPiClient(diskCache)
-    this.fallback = new SearchFallback()
-    this.siteIndexResolver = new SiteIndexResolver(diskCache, config?.requestTimeout || 5000)
-    this.scraper = new SphinxScraper(diskCache, config?.requestTimeout || 5000)
-    this.staticResolver = new StaticDocResolver()
-    this.config = config
-    this.enableDocScraping = config?.enableDocScraping === true
+    );
+    this.pypiClient = new PyPiClient(diskCache);
+    this.fallback = new SearchFallback();
+    this.siteIndexResolver = new SiteIndexResolver(
+      diskCache,
+      config?.requestTimeout || 5000,
+    );
+    this.scraper = new SphinxScraper(diskCache, config?.requestTimeout || 5000);
+    this.staticResolver = new StaticDocResolver();
+    this.config = config;
+    this.enableDocScraping = config?.enableDocScraping === true;
   }
 
   setPythonVersion(version: string) {
-    this.inventoryFetcher.setPythonVersion(version)
-    this.staticResolver.setPythonVersion(version)
+    this.inventoryFetcher.setPythonVersion(version);
+    this.staticResolver.setPythonVersion(version);
   }
 
   /** Start background inventory loads for the most common packages. */
   warmupInventories(packages?: string[]): void {
-    this.inventoryFetcher.warmup(packages)
+    this.inventoryFetcher.warmup(packages);
   }
 
   searchSymbols(query: string) {
-    return this.inventoryFetcher.searchSymbols(query)
+    return this.inventoryFetcher.searchSymbols(query);
   }
 
   findSymbolReference(reference: {
-    label: string
-    url?: string
-    currentModule?: string
-    currentPackage?: string
-    currentTitle?: string
+    label: string;
+    url?: string;
+    currentModule?: string;
+    currentPackage?: string;
+    currentTitle?: string;
   }): IndexedSymbolSummary | null {
-    return this.inventoryFetcher.findSymbolReference(reference)
+    return this.inventoryFetcher.findSymbolReference(reference);
   }
 
   getModuleSymbols(moduleName: string): IndexedSymbolSummary[] {
     return this.inventoryFetcher
       .getModuleSymbols(moduleName)
-      .map(symbol => this.enrichIndexedSymbolSummary(symbol))
+      .map((symbol) => this.enrichIndexedSymbolSummary(symbol));
   }
 
   getIndexedPackages() {
-    return this.inventoryFetcher.getIndexedPackages()
+    return this.inventoryFetcher.getIndexedPackages();
   }
 
   getIndexedPackageSummaries() {
-    return this.inventoryFetcher.getIndexedPackageSummaries()
+    return this.inventoryFetcher.getIndexedPackageSummaries();
   }
 
-  async ensureIndexedPackage(packageName: string, isStdlib = false): Promise<void> {
-    const normalized = packageName.trim()
+  async ensureIndexedPackage(
+    packageName: string,
+    isStdlib = false,
+  ): Promise<void> {
+    const normalized = packageName.trim();
     if (!normalized) {
-      return
+      return;
     }
 
-    await this.inventoryFetcher.ensurePackageLoaded(normalized, undefined, isStdlib)
+    await this.inventoryFetcher.ensurePackageLoaded(
+      normalized,
+      undefined,
+      isStdlib,
+    );
   }
 
   async hydrateCachedInventories(): Promise<string[]> {
-    return this.inventoryFetcher.hydrateCachedInventories()
+    return this.inventoryFetcher.hydrateCachedInventories();
   }
 
-  private enrichIndexedSymbolSummary(symbol: IndexedSymbolSummary): IndexedSymbolSummary {
+  private enrichIndexedSymbolSummary(
+    symbol: IndexedSymbolSummary,
+  ): IndexedSymbolSummary {
     if ((!symbol.url || symbol.summary) && symbol.signature) {
-      return symbol
+      return symbol;
     }
 
     if (!symbol.url) {
-      return symbol
+      return symbol;
     }
 
-    const corpusPackage = this.corpusPackageName(symbol.package, symbol.module, symbol.name)
-    const corpusGroup = this.getCorpusGroupForIndexedSymbol(symbol)
+    const corpusPackage = this.corpusPackageName(
+      symbol.package,
+      symbol.module,
+      symbol.name,
+    );
+    const corpusGroup = this.getCorpusGroupForIndexedSymbol(symbol);
     const cachedContent =
-      this.scraper.getCachedContent(corpusPackage, symbol.url, corpusGroup) ?? undefined
+      this.scraper.getCachedContent(corpusPackage, symbol.url, corpusGroup) ??
+      undefined;
     const structuredContent = this.getStructuredContent(
       corpusPackage,
       symbol.url,
       corpusGroup,
       cachedContent,
-    )
+    );
     const summary =
-      symbol.summary || this.extractSummaryFromStructuredOrContent(structuredContent, cachedContent)
+      symbol.summary ||
+      this.extractSummaryFromStructuredOrContent(
+        structuredContent,
+        cachedContent,
+      );
 
     return {
       ...symbol,
       signature: symbol.signature || structuredContent?.signature,
       summary,
-    }
+    };
   }
 
-  private getCorpusGroupForIndexedSymbol(symbol: IndexedSymbolSummary): string | undefined {
-    const root = symbol.package || symbol.name.split('.')[0] || ''
+  private getCorpusGroupForIndexedSymbol(
+    symbol: IndexedSymbolSummary,
+  ): string | undefined {
+    const root = symbol.package || symbol.name.split(".")[0] || "";
     const baseUrl =
       this.inventoryFetcher.getPackageBaseUrl(root) ||
-      this.inventoryFetcher.getPackageBaseUrl('builtins')
+      this.inventoryFetcher.getPackageBaseUrl("builtins");
     if (!baseUrl) {
-      return undefined
+      return undefined;
     }
 
     try {
-      const parsed = new URL(baseUrl)
-      return parsed.hostname === 'docs.python.org' ? PYHOVER_PYTHON_STDLIB_CORPUS_GROUP : undefined
+      const parsed = new URL(baseUrl);
+      return parsed.hostname === "docs.python.org"
+        ? PYHOVER_PYTHON_STDLIB_CORPUS_GROUP
+        : undefined;
     } catch {
       // If baseUrl is not a valid URL, fall back to no special corpus group.
-      return undefined
+      return undefined;
     }
   }
 
   async buildPythonStdlibCorpus(
-    onProgress?: (progress: { completed: number; total: number; current: string }) => void,
+    onProgress?: (progress: {
+      completed: number;
+      total: number;
+      current: string;
+    }) => void,
     shouldCancel?: () => boolean,
-  ): Promise<{ targets: number; corpusPackages: number; completed: number; cancelled: boolean }> {
-    await this.inventoryFetcher.ensurePackageLoaded('builtins', undefined, true)
+  ): Promise<{
+    targets: number;
+    corpusPackages: number;
+    completed: number;
+    cancelled: boolean;
+  }> {
+    await this.inventoryFetcher.ensurePackageLoaded(
+      "builtins",
+      undefined,
+      true,
+    );
 
-    const targets = this.inventoryFetcher.getPackageSymbolTargets('builtins')
-    const corpusPackages = new Set<string>()
-    const BATCH = 4
-    let completed = 0
-    let cancelled = false
+    const targets = this.inventoryFetcher.getPackageSymbolTargets("builtins");
+    const corpusPackages = new Set<string>();
+    const BATCH = 4;
+    let completed = 0;
+    let cancelled = false;
 
     for (let i = 0; i < targets.length; i += BATCH) {
       if (shouldCancel?.()) {
-        cancelled = true
-        break
+        cancelled = true;
+        break;
       }
 
-      const batch = targets.slice(i, i + BATCH)
+      const batch = targets.slice(i, i + BATCH);
       await Promise.all(
-        batch.map(async target => {
+        batch.map(async (target) => {
           if (shouldCancel?.()) {
-            cancelled = true
-            return
+            cancelled = true;
+            return;
           }
-          corpusPackages.add(target.corpusPackage)
+          corpusPackages.add(target.corpusPackage);
           await this.scraper
             .fetchContent(
               target.corpusPackage,
@@ -196,7 +237,7 @@ export class DocResolver {
               PYHOVER_PYTHON_STDLIB_CORPUS_GROUP,
               true,
             )
-            .catch(() => null)
+            .catch(() => null);
           await this.scraper
             .fetchSeeAlso(
               target.corpusPackage,
@@ -204,22 +245,31 @@ export class DocResolver {
               PYHOVER_PYTHON_STDLIB_CORPUS_GROUP,
               true,
             )
-            .catch(() => [])
+            .catch(() => []);
           if (shouldCancel?.()) {
-            cancelled = true
-            return
+            cancelled = true;
+            return;
           }
-          completed += 1
-          onProgress?.({ completed, total: targets.length, current: target.url })
+          completed += 1;
+          onProgress?.({
+            completed,
+            total: targets.length,
+            current: target.url,
+          });
         }),
-      )
+      );
 
       if (cancelled) {
-        break
+        break;
       }
     }
 
-    return { targets: targets.length, corpusPackages: corpusPackages.size, completed, cancelled }
+    return {
+      targets: targets.length,
+      corpusPackages: corpusPackages.size,
+      completed,
+      cancelled,
+    };
   }
 
   private corpusPackageName(
@@ -231,113 +281,123 @@ export class DocResolver {
     // a symbol like "list.append" would incorrectly derive package "list"
     // instead of the already-correct "builtins".
     const publicPackage =
-      !packageName && symbolName?.includes('.') ? symbolName.split('.')[0] : undefined
-    return publicPackage || packageName || moduleName?.split('.')[0] || 'python'
+      !packageName && symbolName?.includes(".")
+        ? symbolName.split(".")[0]
+        : undefined;
+    return (
+      publicPackage || packageName || moduleName?.split(".")[0] || "python"
+    );
   }
 
   private corpusLookupGroup(key: DocKey): string | undefined {
-    return key.isStdlib || key.package === 'builtins'
+    return key.isStdlib || key.package === "builtins"
       ? PYHOVER_PYTHON_STDLIB_CORPUS_GROUP
-      : undefined
+      : undefined;
   }
 
   private shouldBuildCorpus(): boolean {
-    return this.config?.onlineDiscovery !== false
+    return this.config?.onlineDiscovery !== false;
   }
 
   private shouldBuildFullCorpus(): boolean {
-    return this.shouldBuildCorpus() && this.config?.buildFullCorpus === true
+    return this.shouldBuildCorpus() && this.config?.buildFullCorpus === true;
   }
 
   private isLikelyPythonModuleName(name?: string): boolean {
     return (
       !!name &&
-      (name === 'builtins' ||
-        name === 'python' ||
+      (name === "builtins" ||
+        name === "python" ||
         /^[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)*$/.test(name))
-    )
+    );
   }
 
   private buildAlternateInventoryKeys(key: DocKey): DocKey[] {
-    const keys = [key]
-    const publicPackage = key.name.includes('.') ? key.name.split('.')[0] : undefined
+    const keys = [key];
+    const publicPackage = key.name.includes(".")
+      ? key.name.split(".")[0]
+      : undefined;
 
     if (publicPackage && publicPackage !== key.package) {
       keys.push({
         ...key,
         package: publicPackage,
-      })
+      });
     }
 
-    return keys
+    return keys;
   }
 
   private async resolveInventoryDoc(key: DocKey): Promise<HoverDoc | null> {
     for (const candidate of this.buildAlternateInventoryKeys(key)) {
       try {
-        const doc = await this.inventoryFetcher.findInInventory(candidate)
+        const doc = await this.inventoryFetcher.findInInventory(candidate);
         if (doc) {
-          return doc
+          return doc;
         }
       } catch (e) {
-        getEngineLogger().log(`Inventory fetch failed for ${candidate.name}: ${e}`)
+        getEngineLogger().log(
+          `Inventory fetch failed for ${candidate.name}: ${e}`,
+        );
       }
     }
 
-    return null
+    return null;
   }
 
   private isPlaceholderContent(text?: string): boolean {
     if (!text) {
-      return false
+      return false;
     }
     return (
-      text.startsWith('Documentation from') ||
-      text.startsWith('Documentation for') ||
-      text === 'No documentation found.' ||
-      text === 'Documentation lookup failed.'
-    )
+      text.startsWith("Documentation from") ||
+      text.startsWith("Documentation for") ||
+      text === "No documentation found." ||
+      text === "Documentation lookup failed."
+    );
   }
 
   private hasUsefulText(text?: string, minLength = 32): boolean {
-    const trimmed = text?.trim()
+    const trimmed = text?.trim();
     if (!trimmed || this.isPlaceholderContent(trimmed)) {
-      return false
+      return false;
     }
-    return trimmed.length >= minLength
+    return trimmed.length >= minLength;
   }
 
   private extractSummaryFromContent(content?: string): string | undefined {
-    const trimmed = content?.trim()
+    const trimmed = content?.trim();
     if (!trimmed) {
-      return undefined
+      return undefined;
     }
 
     const withoutLeadingLabel = trimmed
-      .replace(/^`{1,3}\s*[A-Za-z_][\w.]*\s*`{0,3}\s*\n\n(?=```)/, '')
-      .replace(/^``\s+[A-Za-z_][\w.]*\s*\n\n(?=```)/, '')
+      .replace(/^`{1,3}\s*[A-Za-z_][\w.]*\s*`{0,3}\s*\n\n(?=```)/, "")
+      .replace(/^``\s+[A-Za-z_][\w.]*\s*\n\n(?=```)/, "");
 
     const withoutLeadingCodeFence = withoutLeadingLabel.replace(
       /^```[a-zA-Z]*\n[\s\S]*?\n```\s*/m,
-      '',
-    )
+      "",
+    );
     const paragraphs = withoutLeadingCodeFence
       .split(/\n\s*\n/)
-      .map(part => part.trim())
+      .map((part) => part.trim())
       .filter(Boolean)
-      .filter(part => !/^`{1,3}\s*[A-Za-z_][\w.]*\s*`{0,3}$/.test(part))
-      .filter(part => !/^``\s+[A-Za-z_][\w.]*$/.test(part))
-      .filter(part => !/^```/.test(part))
-      .filter(part => !this.isSignatureLikeParagraph(part))
+      .filter((part) => !/^`{1,3}\s*[A-Za-z_][\w.]*\s*`{0,3}$/.test(part))
+      .filter((part) => !/^``\s+[A-Za-z_][\w.]*$/.test(part))
+      .filter((part) => !/^```/.test(part))
+      .filter((part) => !this.isSignatureLikeParagraph(part));
 
-    return paragraphs[0] || undefined
+    return paragraphs[0] || undefined;
   }
 
   private extractSummaryFromStructuredOrContent(
     structuredContent?: StructuredHoverContent,
     content?: string,
   ): string | undefined {
-    return structuredContent?.summary || this.extractSummaryFromContent(content)
+    return (
+      structuredContent?.summary || this.extractSummaryFromContent(content)
+    );
   }
 
   private getStructuredContent(
@@ -347,30 +407,39 @@ export class DocResolver {
     content?: string,
   ): StructuredHoverContent | undefined {
     const cached = url
-      ? (this.scraper.getCachedStructuredContent(packageName, url, group) ?? undefined)
-      : undefined
-    const derived = content ? this.scraper.deriveStructuredContent(content) : undefined
+      ? (this.scraper.getCachedStructuredContent(packageName, url, group) ??
+        undefined)
+      : undefined;
+    const derived = content
+      ? this.scraper.deriveStructuredContent(content)
+      : undefined;
     if (!cached) {
-      return derived
+      return derived;
     }
     if (!derived) {
-      return cached
+      return cached;
     }
 
-    return this.shouldPreferDerivedStructuredContent(cached, derived) ? derived : cached
+    return this.shouldPreferDerivedStructuredContent(cached, derived)
+      ? derived
+      : cached;
   }
 
   private shouldPreferDerivedStructuredContent(
     cached: StructuredHoverContent,
     derived: StructuredHoverContent,
   ): boolean {
-    const cachedCodeSections = cached.sections.filter(section => section.kind === 'code').length
-    const derivedCodeSections = derived.sections.filter(section => section.kind === 'code').length
-    const cachedExamples = cached.examples?.length ?? 0
-    const derivedExamples = derived.examples?.length ?? 0
+    const cachedCodeSections = cached.sections.filter(
+      (section) => section.kind === "code",
+    ).length;
+    const derivedCodeSections = derived.sections.filter(
+      (section) => section.kind === "code",
+    ).length;
+    const cachedExamples = cached.examples?.length ?? 0;
+    const derivedExamples = derived.examples?.length ?? 0;
 
     if (!cached.signature && !!derived.signature) {
-      return true
+      return true;
     }
 
     if (
@@ -379,22 +448,22 @@ export class DocResolver {
       derivedExamples >= cachedExamples &&
       derived.sections.length >= cached.sections.length
     ) {
-      return true
+      return true;
     }
 
     if (derivedCodeSections > cachedCodeSections) {
-      return true
+      return true;
     }
 
     if (derivedExamples > cachedExamples) {
-      return true
+      return true;
     }
 
     if ((derived.sections.length ?? 0) > (cached.sections.length ?? 0)) {
-      return true
+      return true;
     }
 
-    return false
+    return false;
   }
 
   private getSeeAlso(
@@ -405,34 +474,41 @@ export class DocResolver {
   ): string[] | undefined {
     const cached = url
       ? (this.scraper.getCachedSeeAlso(packageName, url, group) ?? undefined)
-      : undefined
+      : undefined;
     if (cached && cached.length > 0) {
-      return cached
+      return cached;
     }
 
     if (!content) {
-      return undefined
+      return undefined;
     }
-    const derived = this.scraper.deriveSeeAlsoFromMarkdown(content)
-    return derived.length > 0 ? derived : undefined
+    const derived = this.scraper.deriveSeeAlsoFromMarkdown(content);
+    return derived.length > 0 ? derived : undefined;
   }
 
   private isSignatureLikeParagraph(paragraph: string): boolean {
-    const normalized = paragraph.replace(/[`*_]/g, '').replace(/\s+/g, ' ').trim()
+    const normalized = paragraph
+      .replace(/[`*_]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
 
     if (!normalized) {
-      return false
+      return false;
     }
 
-    if (/^(?:class|async\s+def|def)\s+[A-Za-z_][\w.]*\s*\(.*\)\s*(?:->\s*.+)?$/i.test(normalized)) {
-      return true
+    if (
+      /^(?:class|async\s+def|def)\s+[A-Za-z_][\w.]*\s*\(.*\)\s*(?:->\s*.+)?$/i.test(
+        normalized,
+      )
+    ) {
+      return true;
     }
 
     if (/^[A-Za-z_][\w.]*\s*\(.*\)\s*(?:->\s*.+)?$/.test(normalized)) {
-      return true
+      return true;
     }
 
-    return false
+    return false;
   }
 
   private async resolveSourceUrl(
@@ -440,12 +516,12 @@ export class DocResolver {
     explicitSourceUrl?: string,
   ): Promise<string | undefined> {
     if (explicitSourceUrl?.trim()) {
-      return explicitSourceUrl.trim()
+      return explicitSourceUrl.trim();
     }
 
-    const stdlibSourceUrl = this.cpythonSourceUrl(key)
+    const stdlibSourceUrl = this.cpythonSourceUrl(key);
     if (stdlibSourceUrl) {
-      return stdlibSourceUrl
+      return stdlibSourceUrl;
     }
 
     if (
@@ -453,10 +529,14 @@ export class DocResolver {
       key.isStdlib ||
       !this.isLikelyPythonModuleName(key.package)
     ) {
-      return undefined
+      return undefined;
     }
 
-    return (await this.pypiClient.getPackageRepoUrl(key.package).catch(() => null)) ?? undefined
+    return (
+      (await this.pypiClient
+        .getPackageRepoUrl(key.package)
+        .catch(() => null)) ?? undefined
+    );
   }
 
   private async buildResolvedInventoryDoc(
@@ -468,12 +548,14 @@ export class DocResolver {
     seeAlso?: string[],
     links?: Record<string, string>,
   ): Promise<HoverDoc> {
-    const sourceUrl = await this.resolveSourceUrl(key, inventoryDoc.sourceUrl)
+    const sourceUrl = await this.resolveSourceUrl(key, inventoryDoc.sourceUrl);
     return {
       ...inventoryDoc,
       content,
       structuredContent,
-      summary: summary || this.extractSummaryFromStructuredOrContent(structuredContent, content),
+      summary:
+        summary ||
+        this.extractSummaryFromStructuredOrContent(structuredContent, content),
       source: ResolutionSource.Corpus,
       confidence: 1.0,
       links,
@@ -481,30 +563,33 @@ export class DocResolver {
       seeAlso: seeAlso && seeAlso.length > 0 ? seeAlso : undefined,
       module: key.module || key.package,
       sourceUrl,
-    }
+    };
   }
 
-  private prefetchInventoryEnhancements(packageName: string, url?: string): void {
+  private prefetchInventoryEnhancements(
+    packageName: string,
+    url?: string,
+  ): void {
     if (!url || !this.enableDocScraping) {
-      return
+      return;
     }
 
-    const prefetchKey = `${packageName}:${url}`
+    const prefetchKey = `${packageName}:${url}`;
     if (this.prefetchInFlight.has(prefetchKey)) {
-      return
+      return;
     }
-    this.prefetchInFlight.add(prefetchKey)
+    this.prefetchInFlight.add(prefetchKey);
 
     void Promise.all([
-      this.scraper.fetchContent(packageName, url).catch(e => {
-        getEngineLogger().log(`Background scrape failed for ${url}: ${e}`)
+      this.scraper.fetchContent(packageName, url).catch((e) => {
+        getEngineLogger().log(`Background scrape failed for ${url}: ${e}`);
       }),
       this.scraper.fetchSeeAlso(packageName, url).catch(() => {
         // See-also data is non-critical; ignore failures.
       }),
     ]).finally(() => {
-      this.prefetchInFlight.delete(prefetchKey)
-    })
+      this.prefetchInFlight.delete(prefetchKey);
+    });
   }
 
   private async resolveSearchIndexedDoc(
@@ -512,51 +597,68 @@ export class DocResolver {
     corpusPackage: string,
     corpusGroup?: string,
   ): Promise<HoverDoc | null> {
-    const baseUrl = await this.resolveSiteIndexBaseUrl(key)
+    const baseUrl = await this.resolveSiteIndexBaseUrl(key);
     if (!baseUrl) {
-      return null
+      return null;
     }
 
-    const siteIndexDoc = await this.siteIndexResolver.resolve(key, baseUrl).catch(e => {
-      getEngineLogger().log(`Site index lookup failed for ${key.name}: ${e}`)
-      return null
-    })
+    const siteIndexDoc = await this.siteIndexResolver
+      .resolve(key, baseUrl)
+      .catch((e) => {
+        getEngineLogger().log(`Site index lookup failed for ${key.name}: ${e}`);
+        return null;
+      });
     if (!siteIndexDoc) {
-      return null
+      return null;
     }
 
     const cachedContent = siteIndexDoc.url
-      ? (this.scraper.getCachedContent(corpusPackage, siteIndexDoc.url, corpusGroup) ?? undefined)
-      : undefined
+      ? (this.scraper.getCachedContent(
+          corpusPackage,
+          siteIndexDoc.url,
+          corpusGroup,
+        ) ?? undefined)
+      : undefined;
     const cachedStructuredContent = this.getStructuredContent(
       corpusPackage,
       siteIndexDoc.url,
       corpusGroup,
       cachedContent,
-    )
+    );
     const needsImmediateScrape =
       this.shouldBuildCorpus() &&
       !!siteIndexDoc.url &&
       !this.hasUsefulText(cachedContent) &&
-      !this.hasUsefulText(siteIndexDoc.summary)
+      !this.hasUsefulText(siteIndexDoc.summary);
     const scrapedContent = needsImmediateScrape
       ? ((await this.scraper
           .fetchContent(corpusPackage, siteIndexDoc.url!, corpusGroup)
           .catch(() => null)) ?? undefined)
-      : undefined
-    const content = cachedContent || scrapedContent
+      : undefined;
+    const content = cachedContent || scrapedContent;
     const structuredContent =
       cachedStructuredContent ||
-      this.getStructuredContent(corpusPackage, siteIndexDoc.url, corpusGroup, content)
+      this.getStructuredContent(
+        corpusPackage,
+        siteIndexDoc.url,
+        corpusGroup,
+        content,
+      );
     const summary =
-      siteIndexDoc.summary || this.extractSummaryFromStructuredOrContent(structuredContent, content)
-    const seeAlso = this.getSeeAlso(corpusPackage, siteIndexDoc.url, corpusGroup, content)
+      siteIndexDoc.summary ||
+      this.extractSummaryFromStructuredOrContent(structuredContent, content);
+    const seeAlso = this.getSeeAlso(
+      corpusPackage,
+      siteIndexDoc.url,
+      corpusGroup,
+      content,
+    );
 
     if (!content && siteIndexDoc.url) {
-      this.prefetchInventoryEnhancements(corpusPackage, siteIndexDoc.url)
+      this.prefetchInventoryEnhancements(corpusPackage, siteIndexDoc.url);
     }
 
-    const sourceUrl = await this.resolveSourceUrl(key, siteIndexDoc.sourceUrl)
+    const sourceUrl = await this.resolveSourceUrl(key, siteIndexDoc.sourceUrl);
 
     return {
       ...siteIndexDoc,
@@ -569,37 +671,52 @@ export class DocResolver {
       seeAlso,
       module: key.module || key.package,
       sourceUrl,
-    }
+    };
   }
 
-  private async resolveSiteIndexBaseUrl(key: DocKey): Promise<string | undefined> {
-    const isStdlib = key.isStdlib || key.package === 'builtins' || key.package === 'python'
-    const candidatePackage = isStdlib ? 'builtins' : key.package
+  private async resolveSiteIndexBaseUrl(
+    key: DocKey,
+  ): Promise<string | undefined> {
+    const isStdlib =
+      key.isStdlib || key.package === "builtins" || key.package === "python";
+    const candidatePackage = isStdlib ? "builtins" : key.package;
     if (!this.isLikelyPythonModuleName(candidatePackage)) {
-      return undefined
+      return undefined;
     }
 
-    const suggested = this.inventoryFetcher.getSuggestedBaseUrl(candidatePackage, isStdlib)
+    const suggested = this.inventoryFetcher.getSuggestedBaseUrl(
+      candidatePackage,
+      isStdlib,
+    );
     if (suggested) {
-      return suggested
+      return suggested;
     }
 
-    if (this.config?.onlineDiscovery === false || isStdlib || !candidatePackage) {
-      return undefined
+    if (
+      this.config?.onlineDiscovery === false ||
+      isStdlib ||
+      !candidatePackage
+    ) {
+      return undefined;
     }
 
-    const metadata = await this.pypiClient.getPackageMetadata(candidatePackage).catch(() => null)
-    return metadata?.url ?? undefined
+    const metadata = await this.pypiClient
+      .getPackageMetadata(candidatePackage)
+      .catch(() => null);
+    return metadata?.url ?? undefined;
   }
 
-  private shouldUseImmediateBuiltinStaticPath(key: DocKey, staticDoc: HoverDoc | null): boolean {
+  private shouldUseImmediateBuiltinStaticPath(
+    key: DocKey,
+    staticDoc: HoverDoc | null,
+  ): boolean {
     if (!staticDoc?.url) {
-      return false
+      return false;
     }
-    if (key.package !== 'builtins' && key.module !== 'builtins') {
-      return false
+    if (key.package !== "builtins" && key.module !== "builtins") {
+      return false;
     }
-    return (key.qualname || key.name).replace(/^builtins\./, '').includes('.')
+    return (key.qualname || key.name).replace(/^builtins\./, "").includes(".");
   }
 
   /**
@@ -609,46 +726,51 @@ export class DocResolver {
    */
   private triggerFullCorpusBuild(pkg: string): void {
     if (!this.shouldBuildFullCorpus()) {
-      return
+      return;
     }
     if (!pkg || this.fullCorpusBuilt.has(pkg)) {
-      return
+      return;
     }
-    this.fullCorpusBuilt.add(pkg)
+    this.fullCorpusBuilt.add(pkg);
 
-    const urls = this.inventoryFetcher.getPackageSymbolUrls(pkg)
+    const urls = this.inventoryFetcher.getPackageSymbolUrls(pkg);
     if (urls.length === 0) {
-      return
+      return;
     }
 
-    getEngineLogger().log(`[corpus] Full build triggered for ${pkg}: ${urls.length} pages`)
-    void this.scrapeUrlsThrottled(pkg, urls)
+    getEngineLogger().log(
+      `[corpus] Full build triggered for ${pkg}: ${urls.length} pages`,
+    );
+    void this.scrapeUrlsThrottled(pkg, urls);
   }
 
   /** Scrape a list of page URLs in small concurrent batches with a delay between
    *  each batch to avoid overwhelming documentation servers. */
-  private async scrapeUrlsThrottled(pkg: string, urls: string[]): Promise<void> {
-    const BATCH = 3
-    const DELAY_MS = 300
+  private async scrapeUrlsThrottled(
+    pkg: string,
+    urls: string[],
+  ): Promise<void> {
+    const BATCH = 3;
+    const DELAY_MS = 300;
 
     for (let i = 0; i < urls.length; i += BATCH) {
       await Promise.all(
-        urls.slice(i, i + BATCH).map(url =>
-          this.scraper.fetchContent(pkg, url).catch(e => {
-            getEngineLogger().log(`[corpus] Scrape failed for ${url}: ${e}`)
+        urls.slice(i, i + BATCH).map((url) =>
+          this.scraper.fetchContent(pkg, url).catch((e) => {
+            getEngineLogger().log(`[corpus] Scrape failed for ${url}: ${e}`);
           }),
         ),
-      )
+      );
       if (i + BATCH < urls.length) {
-        await new Promise<void>(resolve => setTimeout(resolve, DELAY_MS))
+        await new Promise<void>((resolve) => setTimeout(resolve, DELAY_MS));
       }
     }
 
-    getEngineLogger().log(`[corpus] Full build complete for ${pkg}`)
+    getEngineLogger().log(`[corpus] Full build complete for ${pkg}`);
   }
 
   getIndexedSymbolCount() {
-    return this.inventoryFetcher.getIndexedSymbolCount()
+    return this.inventoryFetcher.getIndexedSymbolCount();
   }
 
   /**
@@ -657,22 +779,22 @@ export class DocResolver {
    */
   private cpythonSourceUrl(key: DocKey): string | undefined {
     if (!key.isStdlib) {
-      return undefined
+      return undefined;
     }
-    if (key.package === 'builtins' || key.module === 'builtins') {
-      return undefined
+    if (key.package === "builtins" || key.module === "builtins") {
+      return undefined;
     }
-    const qualname = key.qualname || key.name
-    const leaf = qualname.split('.').pop() ?? ''
-    if (!leaf || (leaf.startsWith('__') && leaf.endsWith('__'))) {
-      return undefined
+    const qualname = key.qualname || key.name;
+    const leaf = qualname.split(".").pop() ?? "";
+    if (!leaf || (leaf.startsWith("__") && leaf.endsWith("__"))) {
+      return undefined;
     }
-    const rootModule = (key.module || key.package || '').split('.')[0]
+    const rootModule = (key.module || key.package || "").split(".")[0];
     if (!rootModule) {
-      return undefined
+      return undefined;
     }
-    const query = `repo:python/cpython path:Lib/${rootModule} "def ${leaf}"`
-    return `https://github.com/search?q=${encodeURIComponent(query)}&type=code`
+    const query = `repo:python/cpython path:Lib/${rootModule} "def ${leaf}"`;
+    return `https://github.com/search?q=${encodeURIComponent(query)}&type=code`;
   }
 
   /**
@@ -680,93 +802,128 @@ export class DocResolver {
    * Loads the package inventory (if not already cached) then returns a card showing
    * the module description and its top exported names.
    */
-  async resolveModuleOverview(packageName: string, isStdlib = false): Promise<HoverDoc> {
+  async resolveModuleOverview(
+    packageName: string,
+    isStdlib = false,
+  ): Promise<HoverDoc> {
     const docKey: DocKey = {
       name: packageName,
       qualname: packageName,
       package: packageName,
       module: packageName,
       isStdlib,
-    }
+    };
 
     // Trigger inventory load (no-op if already cached)
     try {
-      await this.inventoryFetcher.findInInventory(docKey)
+      await this.inventoryFetcher.findInInventory(docKey);
     } catch {
       /* swallow — we'll still show what we have */
     }
 
-    const moduleExports = this.inventoryFetcher.getModuleExports(packageName, 16)
-    const exportCount = this.inventoryFetcher.getPackageExportCount(packageName)
-    const baseUrl = this.inventoryFetcher.getPackageBaseUrl(packageName)
+    const moduleExports = this.inventoryFetcher.getModuleExports(
+      packageName,
+      16,
+    );
+    const exportCount =
+      this.inventoryFetcher.getPackageExportCount(packageName);
+    const baseUrl = this.inventoryFetcher.getPackageBaseUrl(packageName);
 
     // Get PyPI summary for third-party packages
-    let summary: string | undefined
-    let latestVersion: string | undefined
-    let license: string | undefined
-    let requiresPython: string | undefined
-    let sourceUrl: string | undefined
+    let summary: string | undefined;
+    let latestVersion: string | undefined;
+    let license: string | undefined;
+    let requiresPython: string | undefined;
+    let sourceUrl: string | undefined;
     if (
       this.config?.onlineDiscovery !== false &&
       !isStdlib &&
       this.isLikelyPythonModuleName(packageName)
     ) {
       try {
-        const pypiDoc = await this.pypiClient.findDocs(docKey).catch(() => null)
-        summary = pypiDoc?.summary
-        latestVersion = pypiDoc?.latestVersion
-        license = pypiDoc?.license
-        requiresPython = pypiDoc?.requiresPython
-        sourceUrl = await this.resolveSourceUrl(docKey, pypiDoc?.sourceUrl)
+        const pypiDoc = await this.pypiClient
+          .findDocs(docKey)
+          .catch(() => null);
+        summary = pypiDoc?.summary;
+        latestVersion = pypiDoc?.latestVersion;
+        license = pypiDoc?.license;
+        requiresPython = pypiDoc?.requiresPython;
+        sourceUrl = await this.resolveSourceUrl(docKey, pypiDoc?.sourceUrl);
       } catch {
         /* ignore */
       }
     }
 
     // Derive a useful docs URL: prefer the package index page
-    let url = baseUrl ? `${baseUrl}/index.html` : undefined
+    let url = baseUrl ? `${baseUrl}/index.html` : undefined;
     if (isStdlib) {
-      const version = this.inventoryFetcher.getPythonVersion()
-      url = buildStdlibDocsUrl(packageName, version)
+      const version = this.inventoryFetcher.getPythonVersion();
+      url = buildStdlibDocsUrl(packageName, version);
     }
 
     // Use cached scraped content if available; otherwise fire background scrape
-    let content: string | undefined
-    const corpusPackage = this.corpusPackageName(packageName, packageName, packageName)
-    const corpusGroup = isStdlib ? PYHOVER_PYTHON_STDLIB_CORPUS_GROUP : undefined
-    let structuredContent: StructuredHoverContent | undefined
+    let content: string | undefined;
+    const corpusPackage = this.corpusPackageName(
+      packageName,
+      packageName,
+      packageName,
+    );
+    const corpusGroup = isStdlib
+      ? PYHOVER_PYTHON_STDLIB_CORPUS_GROUP
+      : undefined;
+    let structuredContent: StructuredHoverContent | undefined;
     if (url) {
-      content = this.scraper.getCachedContent(corpusPackage, url, corpusGroup) ?? undefined
-      structuredContent = this.getStructuredContent(corpusPackage, url, corpusGroup, content)
-      if (!content && this.config?.onlineDiscovery !== false && this.enableDocScraping) {
-        this.prefetchInventoryEnhancements(corpusPackage, url)
+      content =
+        this.scraper.getCachedContent(corpusPackage, url, corpusGroup) ??
+        undefined;
+      structuredContent = this.getStructuredContent(
+        corpusPackage,
+        url,
+        corpusGroup,
+        content,
+      );
+      if (
+        !content &&
+        this.config?.onlineDiscovery !== false &&
+        this.enableDocScraping
+      ) {
+        this.prefetchInventoryEnhancements(corpusPackage, url);
       }
-      summary = summary || this.extractSummaryFromStructuredOrContent(structuredContent, content)
+      summary =
+        summary ||
+        this.extractSummaryFromStructuredOrContent(structuredContent, content);
     }
 
     if ((!summary || !content) && this.config?.onlineDiscovery !== false) {
-      const siteIndexDoc = await this.resolveSearchIndexedDoc(docKey, corpusPackage, corpusGroup)
+      const siteIndexDoc = await this.resolveSearchIndexedDoc(
+        docKey,
+        corpusPackage,
+        corpusGroup,
+      );
       if (siteIndexDoc) {
-        summary = summary || siteIndexDoc.summary
-        content = content || siteIndexDoc.content
-        structuredContent = structuredContent || siteIndexDoc.structuredContent
-        url = url || siteIndexDoc.url
+        summary = summary || siteIndexDoc.summary;
+        content = content || siteIndexDoc.content;
+        structuredContent = structuredContent || siteIndexDoc.structuredContent;
+        url = url || siteIndexDoc.url;
       }
     }
 
     const seeAlso = url
       ? (this.getSeeAlso(corpusPackage, url, corpusGroup, content) ?? undefined)
-      : undefined
+      : undefined;
 
     return {
       title: packageName,
-      kind: 'module',
+      kind: "module",
       summary,
       content,
       structuredContent,
       url,
       devdocsUrl: this.fallback.getDevDocsUrl(docKey) ?? undefined,
-      source: moduleExports.length > 0 ? ResolutionSource.Corpus : ResolutionSource.PyPI,
+      source:
+        moduleExports.length > 0
+          ? ResolutionSource.Corpus
+          : ResolutionSource.PyPI,
       confidence: 0.9,
       module: packageName,
       moduleExports: moduleExports.length > 0 ? moduleExports : undefined,
@@ -776,53 +933,65 @@ export class DocResolver {
       license,
       requiresPython,
       seeAlso,
-    }
+    };
   }
 
   async resolve(key: DocKey): Promise<HoverDoc> {
     try {
-      const corpusPackage = this.corpusPackageName(key.package, key.module, key.name)
-      const corpusGroup = this.corpusLookupGroup(key)
+      const corpusPackage = this.corpusPackageName(
+        key.package,
+        key.module,
+        key.name,
+      );
+      const corpusGroup = this.corpusLookupGroup(key);
       // 0. Static Data (Fastest, Offline)
-      const staticDoc = this.staticResolver.resolve(key)
-      const inventoryDoc = await this.resolveInventoryDoc(key)
+      const staticDoc = this.staticResolver.resolve(key);
+      const inventoryDoc = await this.resolveInventoryDoc(key);
 
       if (this.shouldUseImmediateBuiltinStaticPath(key, staticDoc)) {
-        const builtinStaticDoc = staticDoc!
-        const bestUrl = builtinStaticDoc.url || inventoryDoc?.url
+        const builtinStaticDoc = staticDoc!;
+        const bestUrl = builtinStaticDoc.url || inventoryDoc?.url;
         const cachedContent = builtinStaticDoc.url
-          ? (this.scraper.getCachedContent(corpusPackage, builtinStaticDoc.url, corpusGroup) ??
-            undefined)
-          : undefined
+          ? (this.scraper.getCachedContent(
+              corpusPackage,
+              builtinStaticDoc.url,
+              corpusGroup,
+            ) ?? undefined)
+          : undefined;
         const cachedStructuredContent = this.getStructuredContent(
           corpusPackage,
           builtinStaticDoc.url,
           corpusGroup,
           cachedContent,
-        )
+        );
         const cachedSeeAlso = this.getSeeAlso(
           corpusPackage,
           builtinStaticDoc.url,
           corpusGroup,
           cachedContent,
-        )
+        );
         const needsImmediateScrape =
           this.shouldBuildCorpus() &&
           !!bestUrl &&
           !this.hasUsefulText(cachedContent) &&
-          !this.hasUsefulText(inventoryDoc?.summary)
+          !this.hasUsefulText(inventoryDoc?.summary);
         const scrapedContent = needsImmediateScrape
           ? ((await this.scraper
               .fetchContent(corpusPackage, bestUrl!, corpusGroup)
               .catch(() => null)) ?? undefined)
-          : undefined
-        const content = cachedContent || scrapedContent
+          : undefined;
+        const content = cachedContent || scrapedContent;
         const structuredContent =
           cachedStructuredContent ||
-          this.getStructuredContent(corpusPackage, bestUrl, corpusGroup, content)
+          this.getStructuredContent(
+            corpusPackage,
+            bestUrl,
+            corpusGroup,
+            content,
+          );
 
         if (!content && bestUrl) {
-          this.prefetchInventoryEnhancements(corpusPackage, bestUrl)
+          this.prefetchInventoryEnhancements(corpusPackage, bestUrl);
         }
 
         return {
@@ -833,15 +1002,20 @@ export class DocResolver {
           structuredContent,
           summary:
             inventoryDoc?.summary ||
-            this.extractSummaryFromStructuredOrContent(structuredContent, content),
+            this.extractSummaryFromStructuredOrContent(
+              structuredContent,
+              content,
+            ),
           seeAlso: cachedSeeAlso,
           source: content
             ? ResolutionSource.Corpus
             : (inventoryDoc?.source ?? builtinStaticDoc.source),
-          confidence: content ? 1.0 : (inventoryDoc?.confidence ?? builtinStaticDoc.confidence),
+          confidence: content
+            ? 1.0
+            : (inventoryDoc?.confidence ?? builtinStaticDoc.confidence),
           devdocsUrl: this.fallback.getDevDocsUrl(key) ?? undefined,
           module: key.module || key.package,
-        }
+        };
       }
 
       // 1. Inventory lookup + corpus build
@@ -852,43 +1026,55 @@ export class DocResolver {
       // network cost) so repeat hovers are richer.  If nothing is cached yet, kick
       // off a background scrape so the NEXT hover will have real content.
       if (staticDoc && inventoryDoc) {
-        const bestUrl = staticDoc.url || inventoryDoc.url
+        const bestUrl = staticDoc.url || inventoryDoc.url;
         const cachedContent = bestUrl
-          ? (this.scraper.getCachedContent(corpusPackage, bestUrl, corpusGroup) ?? undefined)
-          : undefined
+          ? (this.scraper.getCachedContent(
+              corpusPackage,
+              bestUrl,
+              corpusGroup,
+            ) ?? undefined)
+          : undefined;
         const cachedStructuredContent = this.getStructuredContent(
           corpusPackage,
           bestUrl,
           corpusGroup,
           cachedContent,
-        )
+        );
         const needsImmediateScrape =
           this.shouldBuildCorpus() &&
           !!bestUrl &&
           !this.hasUsefulText(inventoryDoc.summary) &&
-          !this.hasUsefulText(cachedContent)
+          !this.hasUsefulText(cachedContent);
         const scrapedContent = needsImmediateScrape
           ? ((await this.scraper
               .fetchContent(corpusPackage, bestUrl!, corpusGroup)
               .catch(() => null)) ?? undefined)
-          : undefined
-        const content = cachedContent || scrapedContent
+          : undefined;
+        const content = cachedContent || scrapedContent;
         const structuredContent =
           cachedStructuredContent ||
-          this.getStructuredContent(corpusPackage, bestUrl, corpusGroup, content)
+          this.getStructuredContent(
+            corpusPackage,
+            bestUrl,
+            corpusGroup,
+            content,
+          );
 
         if (this.shouldBuildCorpus()) {
           if (!content && bestUrl) {
             if (this.enableDocScraping) {
-              this.prefetchInventoryEnhancements(corpusPackage, bestUrl)
+              this.prefetchInventoryEnhancements(corpusPackage, bestUrl);
             }
           }
           if (this.shouldBuildFullCorpus() && key.package) {
-            this.triggerFullCorpusBuild(key.package)
+            this.triggerFullCorpusBuild(key.package);
           }
         }
 
-        const sourceUrl = await this.resolveSourceUrl(key, inventoryDoc.sourceUrl)
+        const sourceUrl = await this.resolveSourceUrl(
+          key,
+          inventoryDoc.sourceUrl,
+        );
 
         return {
           ...inventoryDoc,
@@ -897,13 +1083,16 @@ export class DocResolver {
           structuredContent,
           summary:
             inventoryDoc.summary ||
-            this.extractSummaryFromStructuredOrContent(structuredContent, content),
+            this.extractSummaryFromStructuredOrContent(
+              structuredContent,
+              content,
+            ),
           source: ResolutionSource.Corpus,
           confidence: 1.0,
           devdocsUrl: this.fallback.getDevDocsUrl(key) ?? undefined,
           module: key.module || key.package,
           sourceUrl,
-        }
+        };
       }
 
       // Static match but no inventory — use cached scraped content if available,
@@ -911,51 +1100,69 @@ export class DocResolver {
       // so the NEXT hover gets rich content.
       if (staticDoc && !inventoryDoc) {
         const cachedContent = staticDoc.url
-          ? (this.scraper.getCachedContent(corpusPackage, staticDoc.url, corpusGroup) ?? undefined)
-          : undefined
+          ? (this.scraper.getCachedContent(
+              corpusPackage,
+              staticDoc.url,
+              corpusGroup,
+            ) ?? undefined)
+          : undefined;
         const cachedStructuredContent = this.getStructuredContent(
           corpusPackage,
           staticDoc.url,
           corpusGroup,
           cachedContent,
-        )
+        );
         const cachedSeeAlsoForStatic = this.getSeeAlso(
           corpusPackage,
           staticDoc.url,
           corpusGroup,
           cachedContent,
-        )
+        );
         const needsImmediateScrape =
-          this.shouldBuildCorpus() && !!staticDoc.url && !this.hasUsefulText(cachedContent)
+          this.shouldBuildCorpus() &&
+          !!staticDoc.url &&
+          !this.hasUsefulText(cachedContent);
         const scrapedContent = needsImmediateScrape
           ? ((await this.scraper
               .fetchContent(corpusPackage, staticDoc.url!, corpusGroup)
               .catch(() => null)) ?? undefined)
-          : undefined
-        const content = cachedContent || scrapedContent
+          : undefined;
+        const content = cachedContent || scrapedContent;
         const structuredContent =
           cachedStructuredContent ||
-          this.getStructuredContent(corpusPackage, staticDoc.url, corpusGroup, content)
+          this.getStructuredContent(
+            corpusPackage,
+            staticDoc.url,
+            corpusGroup,
+            content,
+          );
 
         if (!content && staticDoc.url && this.enableDocScraping) {
-          this.prefetchInventoryEnhancements(corpusPackage, staticDoc.url)
+          this.prefetchInventoryEnhancements(corpusPackage, staticDoc.url);
         }
 
         return {
           ...staticDoc,
           content,
           structuredContent,
-          summary: this.extractSummaryFromStructuredOrContent(structuredContent, content),
+          summary: this.extractSummaryFromStructuredOrContent(
+            structuredContent,
+            content,
+          ),
           seeAlso: cachedSeeAlsoForStatic,
           source: content ? ResolutionSource.Corpus : staticDoc.source,
           devdocsUrl: this.fallback.getDevDocsUrl(key) ?? undefined,
           module: key.module || key.package,
-        }
+        };
       }
 
       const cachedScrapedContent = inventoryDoc?.url
-        ? (this.scraper.getCachedContent(corpusPackage, inventoryDoc.url, corpusGroup) ?? undefined)
-        : undefined
+        ? (this.scraper.getCachedContent(
+            corpusPackage,
+            inventoryDoc.url,
+            corpusGroup,
+          ) ?? undefined)
+        : undefined;
       const cachedStructuredContent = inventoryDoc?.url
         ? this.getStructuredContent(
             corpusPackage,
@@ -963,44 +1170,61 @@ export class DocResolver {
             corpusGroup,
             cachedScrapedContent,
           )
-        : undefined
+        : undefined;
       const cachedSeeAlso = inventoryDoc?.url
-        ? this.getSeeAlso(corpusPackage, inventoryDoc.url, corpusGroup, cachedScrapedContent)
-        : undefined
+        ? this.getSeeAlso(
+            corpusPackage,
+            inventoryDoc.url,
+            corpusGroup,
+            cachedScrapedContent,
+          )
+        : undefined;
 
       if (inventoryDoc) {
         const inventoryContent = this.isPlaceholderContent(inventoryDoc.content)
           ? undefined
-          : inventoryDoc.content
+          : inventoryDoc.content;
         const needsImmediateScrape =
           this.shouldBuildCorpus() &&
           !!inventoryDoc.url &&
           !this.hasUsefulText(inventoryDoc.summary) &&
           !this.hasUsefulText(cachedScrapedContent) &&
-          !this.hasUsefulText(inventoryContent)
+          !this.hasUsefulText(inventoryContent);
         const scrapedContent = needsImmediateScrape
           ? ((await this.scraper
               .fetchContent(corpusPackage, inventoryDoc.url!, corpusGroup)
               .catch(() => null)) ?? undefined)
-          : undefined
-        const immediateContent = cachedScrapedContent || inventoryContent || scrapedContent
+          : undefined;
+        const immediateContent =
+          cachedScrapedContent || inventoryContent || scrapedContent;
         const structuredContent =
           cachedStructuredContent ||
-          this.getStructuredContent(corpusPackage, inventoryDoc.url, corpusGroup, immediateContent)
+          this.getStructuredContent(
+            corpusPackage,
+            inventoryDoc.url,
+            corpusGroup,
+            immediateContent,
+          );
         const immediateSummary =
           inventoryDoc.summary ||
-          this.extractSummaryFromStructuredOrContent(structuredContent, immediateContent)
+          this.extractSummaryFromStructuredOrContent(
+            structuredContent,
+            immediateContent,
+          );
 
         if (this.shouldBuildCorpus()) {
           // Always fire background scrape if we don't have cached content yet
           if (inventoryDoc.url && !immediateContent) {
             if (this.enableDocScraping) {
-              this.prefetchInventoryEnhancements(corpusPackage, inventoryDoc.url)
+              this.prefetchInventoryEnhancements(
+                corpusPackage,
+                inventoryDoc.url,
+              );
             }
           }
           // Full corpus build: scrape every page in the package at once
           if (this.shouldBuildFullCorpus() && key.package) {
-            this.triggerFullCorpusBuild(key.package)
+            this.triggerFullCorpusBuild(key.package);
           }
         }
 
@@ -1014,52 +1238,62 @@ export class DocResolver {
           structuredContent,
           immediateSummary,
           cachedSeeAlso,
-        )
+        );
       }
 
       if (this.config?.onlineDiscovery !== false) {
-        const siteIndexDoc = await this.resolveSearchIndexedDoc(key, corpusPackage, corpusGroup)
+        const siteIndexDoc = await this.resolveSearchIndexedDoc(
+          key,
+          corpusPackage,
+          corpusGroup,
+        );
         if (siteIndexDoc) {
-          return siteIndexDoc
+          return siteIndexDoc;
         }
       }
 
       // 2. PyPI metadata (only if online discovery enabled, no inventory match)
       // Never query PyPI for stdlib symbols — backport packages on PyPI (e.g. the
       // `typing` backport) have unrelated summaries that would be shown as content.
-      const isStdlib = key.isStdlib || key.package === 'builtins'
+      const isStdlib = key.isStdlib || key.package === "builtins";
 
       if (
         this.config?.onlineDiscovery !== false &&
         !isStdlib &&
         this.isLikelyPythonModuleName(key.package)
       ) {
-        const pypiDoc = await this.pypiClient.findDocs(key).catch(e => {
-          getEngineLogger().log(`PyPI fetch failed for ${key.name}: ${e}`)
-          return null
-        })
+        const pypiDoc = await this.pypiClient.findDocs(key).catch((e) => {
+          getEngineLogger().log(`PyPI fetch failed for ${key.name}: ${e}`);
+          return null;
+        });
 
         if (pypiDoc) {
           // Only use PyPI data for package-level symbols.  For individual
           // methods/classes the PyPI tagline describes the *package*, not
           // the symbol, and would mislead the user.
           const isPackageLevel =
-            !key.qualname || key.qualname === key.package || key.qualname === key.name
+            !key.qualname ||
+            key.qualname === key.package ||
+            key.qualname === key.name;
           if (isPackageLevel) {
             return {
               ...pypiDoc,
               source: ResolutionSource.PyPI,
               confidence: 0.8,
               devdocsUrl: this.fallback.getDevDocsUrl(key) ?? undefined,
-            }
+            };
           }
         }
       }
 
       // 3. Fallback Search (DevDocs, etc.)
-      const fallbackDoc = await this.fallback.search(key)
+      const fallbackDoc = await this.fallback.search(key);
       if (fallbackDoc) {
-        return { ...fallbackDoc, source: ResolutionSource.Fallback, confidence: 0.5 }
+        return {
+          ...fallbackDoc,
+          source: ResolutionSource.Fallback,
+          confidence: 0.5,
+        };
       }
 
       // 4. Return empty/unknown if nothing found
@@ -1067,15 +1301,15 @@ export class DocResolver {
         title: key.name,
         source: ResolutionSource.Fallback,
         confidence: 0.0,
-      }
+      };
     } catch (e) {
       // Top-level error boundary - never let resolve() throw
-      getEngineLogger().error(`DocResolver.resolve failed for ${key.name}`, e)
+      getEngineLogger().error(`DocResolver.resolve failed for ${key.name}`, e);
       return {
         title: key.name,
         source: ResolutionSource.Fallback,
         confidence: 0.0,
-      }
+      };
     }
   }
 }

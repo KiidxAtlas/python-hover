@@ -1,29 +1,41 @@
-import { HoverDocBuilder } from '#docs-engine/builder/hoverDocBuilder'
-import { DocResolver } from '#docs-engine/docResolver'
-import { DocKeyBuilder } from '#shared/docKey'
-import { BUILTIN_TYPES, isKnownTopLevelBuiltin } from '#shared/pythonBuiltins'
-import { ActiveParameterLens, HoverDoc, ResolutionSource, SymbolInfo } from '#shared/types'
-import { mergeActiveParameterLensWithDoc, resolveActiveParameterLens } from '#src/hover/parameterLens'
-import { isStdlibTopLevelModule } from '#src/symbols/symbolClassifier'
-import { HoverRenderer } from '#src/ui/rendering/hoverRenderer'
-import * as vscode from 'vscode'
+import { DocResolver } from "#docs-engine/docResolver";
+import { HoverDocBuilder } from "#docs-engine/process/hoverDocBuilder";
+import { DocKeyBuilder } from "#shared/docKey";
+import { BUILTIN_TYPES, isKnownTopLevelBuiltin } from "#shared/pythonBuiltins";
+import {
+  ActiveParameterLens,
+  HoverDoc,
+  ResolutionSource,
+  SymbolInfo,
+} from "#shared/types";
+import HoverResolutionManager from "#src/hover/hoverResolutionManager";
+import {
+  mergeActiveParameterLensWithDoc,
+  resolveActiveParameterLens,
+} from "#src/hover/parameterLens";
+import { isStdlibTopLevelModule } from "#src/symbols/symbolClassifier";
+import { HoverRenderer } from "#src/ui/rendering/hoverRenderer";
+import * as vscode from "vscode";
 
 type HoverCommandStore = {
-  rememberCommandDoc: (doc: HoverDoc, commandToken: string) => HoverDoc
-  getExactDocByCommandToken: (token: string) => HoverDoc | null
-}
+  rememberCommandDoc: (doc: HoverDoc, commandToken: string) => HoverDoc;
+  getExactDocByCommandToken: (token: string) => HoverDoc | null;
+};
 
 type AliasResolver = {
   resolveAliasForDocument: (
     document: vscode.TextDocument,
     documentText: string,
     symbol: string,
-  ) => string
-}
+  ) => string;
+};
 
 export class HoverParameterLensService {
-  private parameterLensCache = new Map<string, ActiveParameterLens | null>()
-  private inflightParameterLens = new Map<string, Promise<ActiveParameterLens | null>>()
+  private parameterLensCache = new Map<string, ActiveParameterLens | null>();
+  private inflightParameterLens = new Map<
+    string,
+    Promise<ActiveParameterLens | null>
+  >();
 
   constructor(
     private readonly renderer: HoverRenderer,
@@ -33,9 +45,15 @@ export class HoverParameterLensService {
     private readonly aliasResolver: AliasResolver,
   ) {}
 
+  private resolutionManager?: HoverResolutionManager;
+
+  setResolutionManager(m: HoverResolutionManager) {
+    this.resolutionManager = m;
+  }
+
   clearSessionCache(): void {
-    this.parameterLensCache.clear()
-    this.inflightParameterLens.clear()
+    this.parameterLensCache.clear();
+    this.inflightParameterLens.clear();
   }
 
   async getParameterLens(
@@ -44,29 +62,29 @@ export class HoverParameterLensService {
     token: vscode.CancellationToken,
   ): Promise<ActiveParameterLens | null> {
     if (token.isCancellationRequested) {
-      return null
+      return null;
     }
 
-    const cacheKey = this.positionCacheKey(document, position)
+    const cacheKey = this.positionCacheKey(document, position);
     if (this.parameterLensCache.has(cacheKey)) {
-      return this.parameterLensCache.get(cacheKey) ?? null
+      return this.parameterLensCache.get(cacheKey) ?? null;
     }
 
-    const inflight = this.inflightParameterLens.get(cacheKey)
+    const inflight = this.inflightParameterLens.get(cacheKey);
     if (inflight) {
-      return inflight
+      return inflight;
     }
 
     const promise = resolveActiveParameterLens(document, position)
       .catch(() => null)
-      .then(lens => {
-        this.parameterLensCache.set(cacheKey, lens)
-        return lens
+      .then((lens) => {
+        this.parameterLensCache.set(cacheKey, lens);
+        return lens;
       })
-      .finally(() => this.inflightParameterLens.delete(cacheKey))
+      .finally(() => this.inflightParameterLens.delete(cacheKey));
 
-    this.inflightParameterLens.set(cacheKey, promise)
-    return promise
+    this.inflightParameterLens.set(cacheKey, promise);
+    return promise;
   }
 
   async decorateHoverWithParameterLens(
@@ -79,35 +97,47 @@ export class HoverParameterLensService {
     position: vscode.Position,
   ): Promise<vscode.Hover | null> {
     if (!lens) {
-      return hover
+      return hover;
     }
 
     const tokenBase = baseCommandToken
       ? `${baseCommandToken}::lens`
-      : `__lens__:${document.uri.toString()}`
-    const commandToken = `${tokenBase}:${document.version}:${position.line}:${position.character}:${lens.parameterIndex}`
+      : `__lens__:${document.uri.toString()}`;
+    const commandToken = `${tokenBase}:${document.version}:${position.line}:${position.character}:${lens.parameterIndex}`;
     const baseDoc = baseCommandToken
       ? this.commandStore.getExactDocByCommandToken(baseCommandToken)
-      : null
+      : null;
     if (baseCommandToken && !baseDoc && hover) {
-      return hover
+      return hover;
     }
+
+    const shouldPromoteCallable =
+      !baseDoc ||
+      (this.isHoveringCallableName(document, position, lens.callable) &&
+        this.shouldPromoteCallableContext(baseDoc, lens));
 
     const contextualDoc =
-      baseDoc && !this.shouldPromoteCallableContext(baseDoc, lens)
+      baseDoc && !shouldPromoteCallable
         ? this.buildContextualHoverDoc(baseDoc, lens, commandToken)
-        : ((await this.buildPromotedCallableDoc(document, documentText, lens, commandToken)) ??
-          this.buildLensOnlyHoverDoc(lens, commandToken))
+        : ((await this.buildPromotedCallableDoc(
+            document,
+            documentText,
+            lens,
+            commandToken,
+          )) ?? this.buildLensOnlyHoverDoc(lens, commandToken));
 
-    const contextualHover = this.renderer.render(contextualDoc)
+    const contextualHover = this.renderer.render(contextualDoc);
     if (hoverRange) {
-      contextualHover.range = hoverRange
+      contextualHover.range = hoverRange;
     }
-    return contextualHover
+    return contextualHover;
   }
 
-  private positionCacheKey(document: vscode.TextDocument, position: vscode.Position): string {
-    return `${document.uri.toString()}:${document.version}:${position.line}:${position.character}`
+  private positionCacheKey(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+  ): string {
+    return `${document.uri.toString()}:${document.version}:${position.line}:${position.character}`;
   }
 
   private buildContextualHoverDoc(
@@ -120,14 +150,17 @@ export class HoverParameterLensService {
       metadata: { ...(doc.metadata ?? {}) },
       parameterLens: mergeActiveParameterLensWithDoc(lens, doc),
       parameters: doc.parameters ?? lens.parameters,
-    }
-    return this.commandStore.rememberCommandDoc(contextualDoc, commandToken)
+    };
+    return this.commandStore.rememberCommandDoc(contextualDoc, commandToken);
   }
 
-  private buildLensOnlyHoverDoc(lens: ActiveParameterLens, commandToken: string): HoverDoc {
+  private buildLensOnlyHoverDoc(
+    lens: ActiveParameterLens,
+    commandToken: string,
+  ): HoverDoc {
     const lensDoc: HoverDoc = {
       title: lens.callable,
-      kind: 'function',
+      kind: "function",
       signature: lens.signature,
       summary: lens.callableDocumentation,
       content: lens.callableDocumentation,
@@ -135,8 +168,8 @@ export class HoverParameterLensService {
       confidence: 0.82,
       parameters: lens.parameters,
       parameterLens: lens,
-    }
-    return this.commandStore.rememberCommandDoc(lensDoc, commandToken)
+    };
+    return this.commandStore.rememberCommandDoc(lensDoc, commandToken);
   }
 
   private async buildPromotedCallableDoc(
@@ -145,77 +178,116 @@ export class HoverParameterLensService {
     lens: ActiveParameterLens,
     commandToken: string,
   ): Promise<HoverDoc | null> {
-    const callableName = lens.callable.trim()
-    if (!callableName || callableName.startsWith('(')) {
-      return null
+    const callableName = lens.callable.trim();
+    if (!callableName || callableName.startsWith("(")) {
+      return null;
     }
 
     const resolvedCallable = this.aliasResolver
       .resolveAliasForDocument(document, documentText, callableName)
-      .trim()
-    if (!resolvedCallable || resolvedCallable.startsWith('(')) {
-      return null
+      .trim();
+    if (!resolvedCallable || resolvedCallable.startsWith("(")) {
+      return null;
     }
 
-    const symbolInfo = this.buildPromotedSymbolInfo(resolvedCallable, lens)
+    const symbolInfo = this.buildPromotedSymbolInfo(resolvedCallable, lens);
 
-    const docs = await this.docResolver
-      .resolve(DocKeyBuilder.fromSymbol(symbolInfo))
-      .catch(() => null)
+    const docKey = DocKeyBuilder.fromSymbol(symbolInfo);
+    const docs = this.resolutionManager
+      ? await this.resolutionManager.resolveDoc(docKey).catch(() => null)
+      : await this.docResolver.resolve(docKey).catch(() => null);
     if (!docs) {
-      return null
+      return null;
     }
 
-    const hoverDoc = this.docBuilder.build(symbolInfo, docs)
-    hoverDoc.signature = hoverDoc.signature || lens.signature
-    hoverDoc.summary = hoverDoc.summary || lens.callableDocumentation
-    hoverDoc.content = hoverDoc.content || lens.callableDocumentation
-    hoverDoc.parameters = hoverDoc.parameters ?? lens.parameters
-    hoverDoc.parameterLens = mergeActiveParameterLensWithDoc(lens, hoverDoc)
-    return this.commandStore.rememberCommandDoc(hoverDoc, commandToken)
+    const hoverDoc = this.docBuilder.build(symbolInfo, docs);
+    hoverDoc.signature = hoverDoc.signature || lens.signature;
+    hoverDoc.summary = hoverDoc.summary || lens.callableDocumentation;
+    hoverDoc.content = hoverDoc.content || lens.callableDocumentation;
+    hoverDoc.parameters = hoverDoc.parameters ?? lens.parameters;
+    hoverDoc.parameterLens = mergeActiveParameterLensWithDoc(lens, hoverDoc);
+    return this.commandStore.rememberCommandDoc(hoverDoc, commandToken);
   }
 
-  private shouldPromoteCallableContext(baseDoc: HoverDoc, lens: ActiveParameterLens): boolean {
-    const baseLeaf = this.hoverDocLeafName(baseDoc.title)
-    const callableLeaf = this.hoverDocLeafName(lens.callable)
+  private shouldPromoteCallableContext(
+    baseDoc: HoverDoc,
+    lens: ActiveParameterLens,
+  ): boolean {
+    const baseLeaf = this.hoverDocLeafName(baseDoc.title);
+    const callableLeaf = this.hoverDocLeafName(lens.callable);
     if (!baseLeaf || !callableLeaf) {
-      return true
+      return true;
     }
-    return baseLeaf !== callableLeaf
+    return baseLeaf !== callableLeaf;
+  }
+
+  private isHoveringCallableName(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+    callable: string,
+  ): boolean {
+    const hoveredWordRange = document.getWordRangeAtPosition(
+      position,
+      /[A-Za-z_][A-Za-z0-9_]*/,
+    );
+    if (!hoveredWordRange) {
+      return false;
+    }
+
+    const hovered = document.getText(hoveredWordRange).trim().toLowerCase();
+    if (!hovered) {
+      return false;
+    }
+
+    const callableLeaf = this.hoverDocLeafName(callable);
+    if (hovered === callableLeaf) {
+      return true;
+    }
+
+    const callableParts = callable
+      .replace(/^builtins\./, "")
+      .split(".")
+      .map((part) => part.trim().toLowerCase())
+      .filter(Boolean);
+
+    return callableParts.includes(hovered);
   }
 
   private hoverDocLeafName(value: string | undefined): string {
     return (
       value
         ?.trim()
-        .replace(/^builtins\./, '')
-        .split('.')
+        .replace(/^builtins\./, "")
+        .split(".")
         .pop()
         ?.trim()
-        .toLowerCase() ?? ''
-    )
+        .toLowerCase() ?? ""
+    );
   }
 
-  private buildPromotedSymbolInfo(resolvedCallable: string, lens: ActiveParameterLens): SymbolInfo {
-    const normalizedCallable = resolvedCallable.replace(/^builtins\./, '')
-    const rootName = normalizedCallable.split('.')[0] ?? ''
+  private buildPromotedSymbolInfo(
+    resolvedCallable: string,
+    lens: ActiveParameterLens,
+  ): SymbolInfo {
+    const normalizedCallable = resolvedCallable.replace(/^builtins\./, "");
+    const rootName = normalizedCallable.split(".")[0] ?? "";
     const isBuiltinCallable =
-      resolvedCallable.startsWith('builtins.') ||
+      resolvedCallable.startsWith("builtins.") ||
       BUILTIN_TYPES.has(rootName) ||
-      isKnownTopLevelBuiltin(rootName)
-    const isStdlib = isBuiltinCallable || isStdlibTopLevelModule(rootName)
+      isKnownTopLevelBuiltin(rootName);
+    const isStdlib = isBuiltinCallable || isStdlibTopLevelModule(rootName);
     const module = this.getPromotedCallableModule(
       resolvedCallable,
       rootName,
       isBuiltinCallable,
       isStdlib,
-    )
+    );
     const name =
-      !resolvedCallable.startsWith('builtins.') &&
+      !resolvedCallable.startsWith("builtins.") &&
       isBuiltinCallable &&
-      !resolvedCallable.includes('.')
+      !resolvedCallable.includes(".")
         ? `builtins.${resolvedCallable}`
-        : resolvedCallable
+        : resolvedCallable;
 
     return {
       name,
@@ -226,12 +298,12 @@ export class HoverParameterLensService {
         isBuiltinCallable,
       ),
       module,
-      kind: 'function',
+      kind: "function",
       isStdlib,
       path: module,
       signature: lens.signature,
       docstring: lens.callableDocumentation,
-    }
+    };
   }
 
   private getPromotedCallableModule(
@@ -241,14 +313,14 @@ export class HoverParameterLensService {
     isStdlib: boolean,
   ): string | undefined {
     if (isBuiltinCallable) {
-      return 'builtins'
+      return "builtins";
     }
 
-    if (resolvedCallable.includes('.')) {
-      return resolvedCallable.split('.').slice(0, -1).join('.')
+    if (resolvedCallable.includes(".")) {
+      return resolvedCallable.split(".").slice(0, -1).join(".");
     }
 
-    return isStdlib ? rootName : undefined
+    return isStdlib ? rootName : undefined;
   }
 
   private getPromotedCallableQualname(
@@ -258,9 +330,9 @@ export class HoverParameterLensService {
     isBuiltinCallable: boolean,
   ): string | undefined {
     if (module && name.startsWith(`${module}.`)) {
-      return name.slice(module.length + 1)
+      return name.slice(module.length + 1);
     }
 
-    return isBuiltinCallable ? normalizedCallable : undefined
+    return isBuiltinCallable ? normalizedCallable : undefined;
   }
 }

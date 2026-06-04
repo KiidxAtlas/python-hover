@@ -4,6 +4,7 @@ import io
 import keyword
 import tokenize
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass
@@ -25,7 +26,7 @@ GLOBAL_NAME_TYPES = {
 }
 
 
-def identify_at_position(source, line, col):
+def identify_at_position(source: str, line: int, col: int) -> str | None:
     """
     Identifies the Python construct at the given line and column.
     line is 1-based, col is 0-based.
@@ -121,7 +122,7 @@ def identify_at_position(source, line, col):
     return _map_node_to_type(target_node, parents, context)
 
 
-def _token_at_position(source, line, col):
+def _token_at_position(source: str, line: int, col: int) -> Any:
     cursor_line = line - 1
     try:
         for token in tokenize.generate_tokens(io.StringIO(source).readline):
@@ -138,7 +139,9 @@ def _token_at_position(source, line, col):
     return None
 
 
-def _map_node_to_type(node, parents, context):
+def _map_node_to_type(
+    node: ast.AST, parents: dict[ast.AST, ast.AST], context: InferenceContext
+) -> str | None:
     if isinstance(node, ast.alias):
         # Covers import tokens where the narrowest AST node is an alias.
         return node.name
@@ -236,7 +239,7 @@ def _map_node_to_type(node, parents, context):
     return None
 
 
-def _build_inference_context(tree):
+def _build_inference_context(tree: ast.Module) -> InferenceContext:
     context = InferenceContext()
 
     for node in tree.body:
@@ -287,7 +290,7 @@ def _build_inference_context(tree):
     return context
 
 
-def _infer_iter_element_type(iter_type):
+def _infer_iter_element_type(iter_type: str | None) -> str | None:
     if not iter_type:
         return None
 
@@ -310,7 +313,9 @@ def _infer_iter_element_type(iter_type):
     return "object"
 
 
-def _bind_target_names(target, inferred_type, context):
+def _bind_target_names(
+    target: ast.AST, inferred_type: str | None, context: InferenceContext
+) -> None:
     if isinstance(target, ast.Name):
         if inferred_type:
             context.assignments[target.id] = inferred_type
@@ -321,19 +326,25 @@ def _bind_target_names(target, inferred_type, context):
             _bind_target_names(item, inferred_type, context)
 
 
-def _record_for_bindings(node, context):
+def _record_for_bindings(
+    node: ast.For | ast.AsyncFor, context: InferenceContext
+) -> None:
     iter_type = _infer_expr(node.iter, context)
     inferred_type = _infer_iter_element_type(iter_type)
     _bind_target_names(node.target, inferred_type, context)
 
 
-def _record_comprehension_bindings(generator, context):
+def _record_comprehension_bindings(
+    generator: ast.comprehension, context: InferenceContext
+) -> None:
     iter_type = _infer_expr(generator.iter, context)
     inferred_type = _infer_iter_element_type(iter_type)
     _bind_target_names(generator.target, inferred_type, context)
 
 
-def _bind_match_pattern_names(pattern, inferred_type, context):
+def _bind_match_pattern_names(
+    pattern: ast.pattern, inferred_type: str | None, context: InferenceContext
+) -> None:
     if isinstance(pattern, ast.MatchAs):
         if pattern.name and inferred_type:
             context.assignments[pattern.name] = inferred_type
@@ -371,13 +382,15 @@ def _bind_match_pattern_names(pattern, inferred_type, context):
             )
 
 
-def _record_match_bindings(node, context):
+def _record_match_bindings(node: ast.Match, context: InferenceContext) -> None:
     subject_type = _infer_expr(node.subject, context)
     for case in node.cases:
         _bind_match_pattern_names(case.pattern, subject_type, context)
 
 
-def _record_assignment(node, context):
+def _record_assignment(
+    node: ast.Assign | ast.AnnAssign, context: InferenceContext
+) -> None:
     if isinstance(node, ast.Assign):
         value = node.value
         targets = node.targets
@@ -394,7 +407,9 @@ def _record_assignment(node, context):
             context.assignments[target.id] = inferred
 
 
-def _record_with_bindings(node, context):
+def _record_with_bindings(
+    node: ast.With | ast.AsyncWith, context: InferenceContext
+) -> None:
     for item in node.items:
         inferred = _infer_context_manager_type(item.context_expr, context)
         if not inferred:
@@ -404,7 +419,7 @@ def _record_with_bindings(node, context):
             context.assignments[item.optional_vars.id] = inferred
 
 
-def _infer_context_manager_type(node, context):
+def _infer_context_manager_type(node: ast.AST, context: InferenceContext) -> str | None:
     if isinstance(node, ast.Call):
         if isinstance(node.func, ast.Name) and node.func.id == "open":
             return "io.TextIOWrapper"
@@ -414,8 +429,10 @@ def _infer_context_manager_type(node, context):
     return _infer_expr(node, context)
 
 
-def _collect_class_attributes(node, context):
-    attrs = {}
+def _collect_class_attributes(
+    node: ast.ClassDef, context: InferenceContext
+) -> dict[str, str]:
+    attrs: dict[str, str] = {}
 
     for item in node.body:
         if not isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -450,7 +467,9 @@ def _collect_class_attributes(node, context):
     return attrs
 
 
-def _record_function_signature_bindings(node, context):
+def _record_function_signature_bindings(
+    node: ast.FunctionDef | ast.AsyncFunctionDef, context: InferenceContext
+) -> None:
     all_args = (
         list(node.args.posonlyargs) + list(node.args.args) + list(node.args.kwonlyargs)
     )
@@ -462,7 +481,7 @@ def _record_function_signature_bindings(node, context):
             context.assignments[arg.arg] = inferred
 
 
-def _annotation_to_name(annotation, context):
+def _annotation_to_name(annotation: ast.AST, context: InferenceContext) -> str | None:
     if isinstance(annotation, ast.Name):
         return context.aliases.get(annotation.id, annotation.id)
     if isinstance(annotation, ast.Attribute):
@@ -476,7 +495,12 @@ def _annotation_to_name(annotation, context):
     return None
 
 
-def _infer_call(node, context, current_class=None, local_types=None):
+def _infer_call(
+    node: ast.Call,
+    context: InferenceContext,
+    current_class: str | None = None,
+    local_types: dict[str, str] | None = None,
+) -> str | None:
     if isinstance(node.func, ast.Attribute):
         owner = _infer_expr(
             node.func.value,
@@ -505,7 +529,7 @@ def _infer_call(node, context, current_class=None, local_types=None):
     return callee
 
 
-def _infer_pandas_groupby_return(owner, attr):
+def _infer_pandas_groupby_return(owner: str, attr: str) -> str | None:
     if attr != "groupby":
         return None
 
@@ -522,7 +546,12 @@ def _infer_pandas_groupby_return(owner, attr):
     return None
 
 
-def _infer_attribute(node, context, current_class=None, local_types=None):
+def _infer_attribute(
+    node: ast.Attribute,
+    context: InferenceContext,
+    current_class: str | None = None,
+    local_types: dict[str, str] | None = None,
+) -> str | None:
     owner = _infer_expr(
         node.value, context, current_class=current_class, local_types=local_types
     )
@@ -541,7 +570,12 @@ def _infer_attribute(node, context, current_class=None, local_types=None):
     return f"{owner}.{node.attr}"
 
 
-def _infer_expr(node, context, current_class=None, local_types=None):
+def _infer_expr(
+    node: ast.AST | None,
+    context: InferenceContext,
+    current_class: str | None = None,
+    local_types: dict[str, str] | None = None,
+) -> str | None:
     if node is None:
         return None
 

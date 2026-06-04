@@ -1,367 +1,410 @@
-import { HoverDoc, ParameterInfo, StructuredHoverSection } from '#shared/types'
-import { cleanContent, cleanSignature, stripDocumentationBoilerplate } from '#src/ui/rendering/contentCleaner'
+import { HoverDoc, ParameterInfo, StructuredHoverSection } from "#shared/types";
+import {
+  cleanContent,
+  cleanSignature,
+  stripDocumentationBoilerplate,
+} from "#src/ui/rendering/contentCleaner";
 
 export function getDisplayTitle(title: string): string {
-  return title.replace(/^builtins\./, '')
+  return title.replace(/^builtins\./, "");
 }
 
 export function buildDescriptionContent(
-  doc: Pick<HoverDoc, 'summary' | 'content'>,
+  doc: Pick<HoverDoc, "summary" | "content">,
 ): string | undefined {
-  const summary = doc.summary?.trim()
-  const content = doc.content?.trim()
+  const summary = doc.summary?.trim();
+  const content = doc.content?.trim();
 
   if (!summary) {
-    return content
+    return content;
   }
 
   if (!content) {
-    return summary
+    return summary;
   }
 
-  const normalizedSummary = normalizeComparableContent(summary)
-  const normalizedContent = normalizeComparableContent(content)
+  const normalizedSummary = normalizeComparableContent(summary);
+  const normalizedContent = normalizeComparableContent(content);
 
   if (!normalizedSummary) {
-    return content
+    return content;
   }
 
   if (!normalizedContent) {
-    return summary
+    return summary;
   }
 
   if (normalizedContent.includes(normalizedSummary)) {
-    return content
+    return content;
   }
 
   if (normalizedSummary.includes(normalizedContent)) {
-    return summary
+    return summary;
   }
 
-  return `${summary}\n\n${content}`
+  return `${summary}\n\n${content}`;
 }
 
 export function normalizeComparableContent(value: string): string {
-  return normalizeText(value)
+  return normalizeText(value);
 }
 
-export function buildCopyableSignature(title: string, signature: string): string {
-  let normalized = cleanSignature(signature)
-  if (normalized.startsWith('(')) {
-    normalized = `${getDisplayTitle(title)}${normalized}`
+export function buildCopyableSignature(
+  title: string,
+  signature: string,
+): string {
+  let normalized = cleanSignature(signature);
+  if (normalized.startsWith("(")) {
+    normalized = `${getDisplayTitle(title)}${normalized}`;
   }
-  return normalized
+  return normalized;
 }
 
 export function getRequiredPythonVersion(
-  doc: Pick<HoverDoc, 'requiresPython'>,
+  doc: Pick<HoverDoc, "requiresPython">,
 ): string | undefined {
-  const match = doc.requiresPython?.match(/(\d+\.\d+)/)
-  return match?.[1]
+  const match = doc.requiresPython?.match(/(\d+\.\d+)/);
+  return match?.[1];
 }
 
-export function getDisplayParameters(doc: Pick<HoverDoc, 'parameters' | 'kind'>): ParameterInfo[] {
-  const parameters = doc.parameters ?? []
+export function getDisplayParameters(
+  doc: Pick<HoverDoc, "parameters" | "kind">,
+): ParameterInfo[] {
+  const parameters = doc.parameters ?? [];
   if (parameters.length === 0) {
-    return []
+    return [];
   }
 
   return parameters.filter(
-    (parameter, index) => !isImplicitReceiverParameter(parameter, index, doc.kind),
-  )
+    (parameter, index) =>
+      !isImplicitReceiverParameter(parameter, index, doc.kind) &&
+      !isSignatureMarkerParameter(parameter),
+  );
 }
 
-export function isMeaningfullyOutdated(installed: string, latest: string): boolean {
+function isSignatureMarkerParameter(parameter: ParameterInfo): boolean {
+  const normalized = (parameter.name ?? "").trim();
+  return normalized === "/" || normalized === "*" || normalized === "";
+}
+
+export function isMeaningfullyOutdated(
+  installed: string,
+  latest: string,
+): boolean {
   if (installed === latest) {
-    return false
+    return false;
   }
 
   const parseVersion = (value: string): number[] => {
-    const normalized = value.replace(/^[^0-9]*/, '')
-    const numeric = normalized.split(/[^0-9.]+/, 1)[0] ?? normalized
+    const normalized = value.replace(/^[^0-9]*/, "");
+    const numeric = normalized.split(/[^0-9.]+/, 1)[0] ?? normalized;
     return numeric
-      .split('.')
-      .map(part => Number(part))
-      .filter(part => Number.isFinite(part))
-  }
+      .split(".")
+      .map((part) => Number(part))
+      .filter((part) => Number.isFinite(part));
+  };
 
-  const installedParts = parseVersion(installed)
-  const latestParts = parseVersion(latest)
-  const maxLength = Math.max(installedParts.length, latestParts.length)
+  const installedParts = parseVersion(installed);
+  const latestParts = parseVersion(latest);
+  const maxLength = Math.max(installedParts.length, latestParts.length);
 
   for (let index = 0; index < maxLength; index++) {
-    const installedPart = installedParts[index] ?? 0
-    const latestPart = latestParts[index] ?? 0
+    const installedPart = installedParts[index] ?? 0;
+    const latestPart = latestParts[index] ?? 0;
     if (installedPart === latestPart) {
-      continue
+      continue;
     }
 
-    return latestPart > installedPart
+    return latestPart > installedPart;
   }
 
-  return false
+  return false;
 }
 
 export function buildImportStatement(
-  doc: Pick<HoverDoc, 'source' | 'title' | 'kind' | 'module'>,
+  doc: Pick<HoverDoc, "source" | "title" | "kind" | "module">,
 ): string | undefined {
-  if (doc.source === 'Local') {
-    return undefined
+  if (doc.source === "Local") {
+    return undefined;
   }
 
-  const rawTitle = getDisplayTitle(doc.title)
+  const rawTitle = getDisplayTitle(doc.title);
   if (!rawTitle || /^__\w+__$/.test(rawTitle)) {
-    return undefined
+    return undefined;
   }
 
-  if (doc.kind === 'module') {
-    return rawTitle === 'builtins' ? undefined : `import ${rawTitle}`
+  if (doc.kind === "module") {
+    return rawTitle === "builtins" ? undefined : `import ${rawTitle}`;
   }
 
-  if (!doc.module || doc.module === 'builtins') {
-    return undefined
+  if (!doc.module || doc.module === "builtins") {
+    return undefined;
   }
 
-  const titleSegments = rawTitle.split('.').filter(Boolean)
-  const moduleSegments = doc.module.split('.').filter(Boolean)
-  const leafName = titleSegments[titleSegments.length - 1] || rawTitle
-  const ownerName = moduleSegments[moduleSegments.length - 1] || doc.module
-  const rootModule = moduleSegments.slice(0, -1).join('.')
-  const titleOwner = titleSegments.length > 1 ? titleSegments[titleSegments.length - 2] : undefined
+  const titleSegments = rawTitle.split(".").filter(Boolean);
+  const moduleSegments = doc.module.split(".").filter(Boolean);
+  const leafName = titleSegments[titleSegments.length - 1] || rawTitle;
+  const ownerName = moduleSegments[moduleSegments.length - 1] || doc.module;
+  const rootModule = moduleSegments.slice(0, -1).join(".");
+  const titleOwner =
+    titleSegments.length > 1
+      ? titleSegments[titleSegments.length - 2]
+      : undefined;
   const looksLikeClassMember =
-    moduleSegments.length > 1 && rawTitle.startsWith(`${doc.module}.`) && /^[A-Z]/.test(ownerName)
+    moduleSegments.length > 1 &&
+    rawTitle.startsWith(`${doc.module}.`) &&
+    /^[A-Z]/.test(ownerName);
   const looksLikeTopLevelClassMember = Boolean(
     titleOwner &&
     titleSegments.length > 1 &&
     moduleSegments.length === 1 &&
     titleSegments[0] === titleOwner &&
     /^[A-Z]/.test(titleOwner) &&
-    /^(?:method|property|field)$/i.test(doc.kind ?? ''),
-  )
+    /^(?:method|property|field)$/i.test(doc.kind ?? ""),
+  );
 
   if (looksLikeClassMember && rootModule) {
-    return `from ${rootModule} import ${ownerName}`
+    return `from ${rootModule} import ${ownerName}`;
   }
 
   if (looksLikeTopLevelClassMember) {
-    return `from ${doc.module} import ${titleOwner}`
+    return `from ${doc.module} import ${titleOwner}`;
   }
 
-  return `from ${doc.module} import ${leafName}`
+  return `from ${doc.module} import ${leafName}`;
 }
 
-export function getVisibleStructuredDescriptionSections(doc: HoverDoc): StructuredHoverSection[] {
-  const sourceSections = doc.structuredContent?.sections ?? []
-  const sections: StructuredHoverSection[] = []
-  const grammarSections: StructuredHoverSection[] = []
-  const seen = new Set<string>()
+export function getVisibleStructuredDescriptionSections(
+  doc: HoverDoc,
+): StructuredHoverSection[] {
+  const sourceSections = doc.structuredContent?.sections ?? [];
+  const sections: StructuredHoverSection[] = [];
+  const grammarSections: StructuredHoverSection[] = [];
+  const seen = new Set<string>();
 
   for (const section of sourceSections) {
-    const cleanedSection = sanitizeStructuredSection(section)
+    const cleanedSection = sanitizeStructuredSection(section);
     if (!cleanedSection) {
-      continue
+      continue;
     }
 
     if (
-      cleanedSection.role === 'example' ||
-      cleanedSection.role === 'note' ||
-      cleanedSection.kind === 'note'
+      cleanedSection.role === "example" ||
+      cleanedSection.role === "note" ||
+      cleanedSection.kind === "note"
     ) {
-      continue
+      continue;
     }
 
     const sectionField =
       getStructuredFieldKind(cleanedSection.title) ??
-      inferStructuredFieldKind(cleanedSection, doc.parameters)
+      inferStructuredFieldKind(cleanedSection, doc.parameters);
 
-    if (sectionField === 'parameters' && doc.parameters?.length) {
-      continue
+    if (sectionField === "parameters" && doc.parameters?.length) {
+      continue;
     }
-    if (sectionField === 'returns' && doc.returns) {
-      continue
+    if (sectionField === "returns" && doc.returns) {
+      continue;
     }
-    if (sectionField === 'raises' && doc.raises?.length) {
-      continue
+    if (sectionField === "raises" && doc.raises?.length) {
+      continue;
     }
 
-    const dedupeKey = getStructuredSectionDedupKey(cleanedSection)
+    const dedupeKey = getStructuredSectionDedupKey(cleanedSection);
     if (seen.has(dedupeKey)) {
-      continue
+      continue;
     }
-    seen.add(dedupeKey)
+    seen.add(dedupeKey);
 
     if (
-      cleanedSection.kind === 'code' &&
-      (cleanedSection.language === 'text' || !cleanedSection.language) &&
-      (cleanedSection.content?.includes('::=') || cleanedSection.title === 'Syntax')
+      cleanedSection.kind === "code" &&
+      (cleanedSection.language === "text" || !cleanedSection.language) &&
+      (cleanedSection.content?.includes("::=") ||
+        cleanedSection.title === "Syntax")
     ) {
-      grammarSections.push(cleanedSection)
-      continue
+      grammarSections.push(cleanedSection);
+      continue;
     }
 
-    sections.push(cleanedSection)
+    sections.push(cleanedSection);
   }
 
-  return [...sections, ...grammarSections]
+  return [...sections, ...grammarSections];
 }
 
-export function getVisibleStructuredNoteSections(doc: HoverDoc): StructuredHoverSection[] {
-  const sections: StructuredHoverSection[] = []
-  const seen = new Set<string>()
+export function getVisibleStructuredNoteSections(
+  doc: HoverDoc,
+): StructuredHoverSection[] {
+  const sections: StructuredHoverSection[] = [];
+  const seen = new Set<string>();
 
   for (const note of doc.notes ?? []) {
-    pushSanitizedSection(sections, seen, { kind: 'note', role: 'note', content: note })
+    pushSanitizedSection(sections, seen, {
+      kind: "note",
+      role: "note",
+      content: note,
+    });
   }
 
   for (const section of doc.structuredContent?.sections ?? []) {
-    if (section.role === 'note' || section.kind === 'note') {
-      pushSanitizedSection(sections, seen, section)
+    if (section.role === "note" || section.kind === "note") {
+      pushSanitizedSection(sections, seen, section);
     }
   }
 
-  return sections
+  return sections;
 }
 
-export function getVisibleNoteItems(doc: HoverDoc): Array<{ label: string; text: string }> {
+export function getVisibleNoteItems(
+  doc: HoverDoc,
+): Array<{ label: string; text: string }> {
   return getVisibleStructuredNoteSections(doc)
-    .map(section => {
-      const text = cleanContent(getStructuredSectionText(section)).trim()
+    .map((section) => {
+      const text = cleanContent(getStructuredSectionText(section)).trim();
       if (!text) {
-        return undefined
+        return undefined;
       }
 
       return {
-        label: section.title?.trim() || 'Note',
+        label: section.title?.trim() || "Note",
         text,
-      }
+      };
     })
-    .filter((item): item is { label: string; text: string } => Boolean(item))
+    .filter((item): item is { label: string; text: string } => Boolean(item));
 }
 
-export function getStructuredExampleSections(doc: HoverDoc): StructuredHoverSection[] {
-  const sections: StructuredHoverSection[] = []
-  const seen = new Set<string>()
+export function getStructuredExampleSections(
+  doc: HoverDoc,
+): StructuredHoverSection[] {
+  const sections: StructuredHoverSection[] = [];
+  const seen = new Set<string>();
 
   for (const section of doc.structuredContent?.sections ?? []) {
-    if (section.role === 'example') {
-      pushSanitizedSection(sections, seen, section)
+    if (section.role === "example") {
+      pushSanitizedSection(sections, seen, section);
     }
   }
 
-  return sections
+  return sections;
 }
 
 export function getCompactExample(doc: HoverDoc): string | undefined {
   const structuredExample = getStructuredExampleSections(doc)
-    .map(section => getStructuredSectionText(section).trim())
-    .find(Boolean)
-  const rawExample = structuredExample || doc.examples?.[0]?.trim()
+    .map((section) => getStructuredSectionText(section).trim())
+    .find(Boolean);
+  const rawExample = structuredExample || doc.examples?.[0]?.trim();
   if (!rawExample) {
-    return undefined
+    return undefined;
   }
 
-  return rawExample.split(/\r?\n/).slice(0, 4).join('\n')
+  return rawExample.split(/\r?\n/).slice(0, 4).join("\n");
 }
 
-function getStructuredFieldKind(title?: string): 'parameters' | 'returns' | 'raises' | undefined {
+function getStructuredFieldKind(
+  title?: string,
+): "parameters" | "returns" | "raises" | undefined {
   if (!title) {
-    return undefined
+    return undefined;
   }
   if (/^(?:Parameters|Args|Arguments)$/i.test(title)) {
-    return 'parameters'
+    return "parameters";
   }
   if (/^Returns?$/i.test(title)) {
-    return 'returns'
+    return "returns";
   }
   if (/^Raises?$/i.test(title)) {
-    return 'raises'
+    return "raises";
   }
-  return undefined
+  return undefined;
 }
 
 function inferStructuredFieldKind(
   section: StructuredHoverSection,
   parameters: ParameterInfo[] | undefined,
-): 'parameters' | 'returns' | 'raises' | undefined {
-  const rawContent = section.kind === 'list' ? (section.items ?? []).join(' ') : section.content
-  const normalized = normalizeText(rawContent)
+): "parameters" | "returns" | "raises" | undefined {
+  const rawContent =
+    section.kind === "list" ? (section.items ?? []).join(" ") : section.content;
+  const normalized = normalizeText(rawContent);
   if (!normalized) {
-    return undefined
+    return undefined;
   }
 
   if (parameters?.length) {
     const parameterNames = parameters
-      .map(parameter => normalizeParameterName(parameter.name))
-      .filter(Boolean)
+      .map((parameter) => normalizeParameterName(parameter.name))
+      .filter(Boolean);
     if (
       parameterNames.some(
-        name =>
+        (name) =>
           normalized.startsWith(`${name}:`) ||
           normalized.startsWith(`${name} `) ||
           normalized.startsWith(`${name},`) ||
           normalized.startsWith(`${name}=`),
       )
     ) {
-      return 'parameters'
+      return "parameters";
     }
   }
 
   // Only infer returns/raises when the content looks like a typed field entry, not prose.
   // "returns: int" or "returns" (bare) → infer; "returns a new list" → do not infer.
   if (/^(?:returns?|yields?)(?:\s*[:()-]|$)/i.test(normalized)) {
-    return 'returns'
+    return "returns";
   }
 
   if (/^(?:raises?|exceptions?)(?:\s*[:()-]|$)/i.test(normalized)) {
-    return 'raises'
+    return "raises";
   }
 
-  return undefined
+  return undefined;
 }
 
 function getStructuredSectionDedupKey(section: StructuredHoverSection): string {
-  const rawContent = section.kind === 'list' ? (section.items ?? []).join(' | ') : section.content
-  const normalizedContent = normalizeText(rawContent)
+  const rawContent =
+    section.kind === "list"
+      ? (section.items ?? []).join(" | ")
+      : section.content;
+  const normalizedContent = normalizeText(rawContent);
   // Note sections can appear both in doc.notes (no title) and in structuredContent.sections
   // (with a title like "Note"). Deduplicate by content only to prevent double-rendering.
-  if (section.kind === 'note' || section.role === 'note') {
-    return `note:${normalizedContent}`
+  if (section.kind === "note" || section.role === "note") {
+    return `note:${normalizedContent}`;
   }
-  const normalizedTitle = normalizeText(section.title ?? '')
-  return `${section.kind}:${section.role ?? ''}:${normalizedTitle}:${normalizedContent}`
+  const normalizedTitle = normalizeText(section.title ?? "");
+  return `${section.kind}:${section.role ?? ""}:${normalizedTitle}:${normalizedContent}`;
 }
 
 function sanitizeStructuredSection(
   section: StructuredHoverSection,
 ): StructuredHoverSection | undefined {
-  if (section.kind === 'code') {
-    const cleanedCode = stripDocumentationBoilerplate(section.content || '')
-    return cleanedCode ? { ...section, content: cleanedCode } : undefined
+  if (section.kind === "code") {
+    const cleanedCode = stripDocumentationBoilerplate(section.content || "");
+    return cleanedCode ? { ...section, content: cleanedCode } : undefined;
   }
 
-  if (section.kind === 'list') {
+  if (section.kind === "list") {
     const items = (section.items ?? [])
-      .map(item => stripDocumentationBoilerplate(item))
-      .filter(Boolean)
+      .map((item) => stripDocumentationBoilerplate(item))
+      .filter(Boolean);
     if (items.length === 0) {
-      return undefined
+      return undefined;
     }
     return {
       ...section,
-      content: items.join('\n'),
+      content: items.join("\n"),
       items,
-    }
+    };
   }
 
-  const cleanedContent = stripDocumentationBoilerplate(section.content || '')
+  const cleanedContent = stripDocumentationBoilerplate(section.content || "");
   if (!cleanedContent) {
-    return undefined
+    return undefined;
   }
 
   return {
     ...section,
     content: cleanedContent,
-  }
+  };
 }
 
 function pushSanitizedSection(
@@ -369,30 +412,30 @@ function pushSanitizedSection(
   seen: Set<string>,
   section: StructuredHoverSection,
 ): void {
-  const cleanedSection = sanitizeStructuredSection(section)
+  const cleanedSection = sanitizeStructuredSection(section);
   if (!cleanedSection) {
-    return
+    return;
   }
 
-  const dedupeKey = getStructuredSectionDedupKey(cleanedSection)
+  const dedupeKey = getStructuredSectionDedupKey(cleanedSection);
   if (!dedupeKey || seen.has(dedupeKey)) {
-    return
+    return;
   }
 
-  seen.add(dedupeKey)
-  sections.push(cleanedSection)
+  seen.add(dedupeKey);
+  sections.push(cleanedSection);
 }
 
 function getStructuredSectionText(section: StructuredHoverSection): string {
-  if (section.kind === 'list') {
-    return (section.items ?? []).join('\n')
+  if (section.kind === "list") {
+    return (section.items ?? []).join("\n");
   }
 
-  return section.content
+  return section.content;
 }
 
 function normalizeParameterName(name: string | undefined): string {
-  return normalizeText((name ?? '').replace(/^\*+/, ''))
+  return normalizeText((name ?? "").replace(/^\*+/, ""));
 }
 
 function isImplicitReceiverParameter(
@@ -401,23 +444,25 @@ function isImplicitReceiverParameter(
   kind?: string,
 ): boolean {
   if (index !== 0) {
-    return false
+    return false;
   }
 
-  const normalizedName = normalizeParameterName(parameter.name)
-  if (normalizedName !== 'self' && normalizedName !== 'cls') {
-    return false
+  const normalizedName = normalizeParameterName(parameter.name);
+  if (normalizedName !== "self" && normalizedName !== "cls") {
+    return false;
   }
 
-  return /^(?:method|classmethod|staticmethod|function|class)$/i.test(kind ?? '')
+  return /^(?:method|classmethod|staticmethod|function|class)$/i.test(
+    kind ?? "",
+  );
 }
 
 function normalizeText(value: string): string {
   return value
-    .replace(/```[\s\S]*?```/g, ' ')
-    .replace(/`([^`]+)`/g, '$1')
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1')
-    .replace(/\s+/g, ' ')
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1")
+    .replace(/\s+/g, " ")
     .trim()
-    .toLowerCase()
+    .toLowerCase();
 }

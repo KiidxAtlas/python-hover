@@ -2,43 +2,45 @@ import { DiskCache } from "#docs-engine/cache/diskCache";
 import { setEngineLogger } from "#docs-engine/engineLogger";
 import {
   HoverDoc,
-  HoverHistoryEntry,
   IndexedSymbolSummary,
   ResolutionSource,
   SavedDocEntry,
 } from "#shared/types";
+import { registerHistoryAndLinkCommands } from "#src/commands/registerHistoryAndLinkCommands";
+import { registerModuleBrowseCommands } from "#src/commands/registerModuleBrowseCommands";
+import { registerPrimaryCommands } from "#src/commands/registerPrimaryCommands";
+import { registerRuntimeCommands } from "#src/commands/registerRuntimeCommands";
+import { registerSavedAndPanelCommands } from "#src/commands/registerSavedAndPanelCommands";
 import { Config } from "#src/config";
 import { updateSettingWithPreferredTarget } from "#src/configTarget";
+import { LspClient } from "#src/core/lspClient";
+import {
+  ALLOWED_MODULE_BROWSER_COMMANDS,
+  ALLOWED_MODULE_BROWSER_SETTING_KEYS,
+  ALLOWED_STUDIO_COMMANDS,
+  ALLOWED_STUDIO_SETTING_KEYS,
+  allowedSettingsQuery,
+} from "#src/core/studioGuards";
+import { createDocsRouting } from "#src/fetch/docsRouting";
 import {
   normalizeRegularHoverSectionOrder,
   RegularHoverSectionId,
 } from "#src/hover/hoverLayout";
 import { HoverProvider } from "#src/hover/hoverProvider";
-import {
-  openHoverDocSource,
-  openIndexedSymbolSource,
-  openSourceTarget,
-} from "#src/integrations/indexedSymbolActions";
-import { LspClient } from "#src/integrations/lspClient";
 import { Logger } from "#src/logger";
-import { registerSearchDocsCommand } from "#src/runtime/browser/searchDocsCommand";
-import { createCacheCommands } from "#src/runtime/commands/cacheCommands";
-import { applyContextMenuContexts } from "#src/runtime/context/contextMenu";
-import { createDocsRouting } from "#src/runtime/docs/docsRouting";
-import { createLibraryState } from "#src/runtime/state/libraryState";
-import {
-  applyStudioPreset as applyStudioPresetEntries,
-  buildStudioState,
-} from "#src/runtime/studio/studioState";
+import { createLibraryState } from "#src/state/libraryState";
 import {
   buildSavedDocEntry,
   MAX_SAVED_DOCS,
   normalizeSavedDocEntry,
 } from "#src/state/savedDocs";
-import { isStdlibTopLevelModule } from "#src/symbols/symbolClassifier";
+import {
+  applyStudioPreset as applyStudioPresetEntries,
+  buildStudioState,
+} from "#src/state/studioState";
+import { TelemetryState } from "#src/state/telemetryState";
+import { applyContextMenuContexts } from "#src/ui/context/contextMenu";
 import { DocsPanel } from "#src/ui/panels/docsPanel";
-import { HoverDebugPanel } from "#src/ui/panels/hoverDebugPanel";
-import { HoverPanel } from "#src/ui/panels/hoverPanel";
 import {
   ModuleBrowserMessage,
   ModuleBrowserPanel,
@@ -55,6 +57,11 @@ import { HoverHistoryView } from "#src/ui/views/hoverHistoryView";
 import { HoverInspectorView } from "#src/ui/views/hoverInspectorView";
 import { RecentPackagesView } from "#src/ui/views/recentPackagesView";
 import { SavedDocsView } from "#src/ui/views/savedDocsView";
+import {
+  openHoverDocSource,
+  openIndexedSymbolSource,
+  openSourceTarget,
+} from "#src/utils/doc-navigation";
 import * as vscode from "vscode";
 
 export function activate(context: vscode.ExtensionContext) {
@@ -75,6 +82,7 @@ export function activate(context: vscode.ExtensionContext) {
     }
     const lspClient = new LspClient();
     const statusBarManager = new StatusBarManager(context);
+    const telemetryState = new TelemetryState(context.globalState);
     const recentPackagesStateKey = "python-hover.recentPackages.v1";
     const savedDocsStateKey = "python-hover.savedDocs.v1";
 
@@ -109,7 +117,7 @@ export function activate(context: vscode.ExtensionContext) {
     let liveRedirectIntegratedHoverToDocsPage =
       config.redirectIntegratedHoverToDocsPage;
     let liveAutoOpenCurrentHoverInIntegratedDocs =
-      config.autoOpenCurrentHoverInIntegratedDocs;
+      config.autoOpenCurrentHoverInIntegratedDocs || config.learnModeEnabled;
     const hoverInspectorView = new HoverInspectorView((moduleName: string) =>
       hoverProvider.getModuleSymbols(moduleName),
     );
@@ -153,6 +161,10 @@ export function activate(context: vscode.ExtensionContext) {
       hoverHistoryView.refresh();
       recentPackagesView.refresh();
       hoverSidebarSubscription = hoverProvider.onDidChangeSidebarState(() => {
+        const latestDoc = hoverProvider.getLastDoc();
+        if (config.telemetryEnabled && latestDoc) {
+          telemetryState.recordHover(latestDoc);
+        }
         hoverInspectorView.showDoc(hoverProvider.getLastDoc());
         hoverHistoryView.refresh();
         recentPackagesView.refresh();
@@ -288,8 +300,21 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Clear session cache when a document is saved (symbols may have changed)
     context.subscriptions.push(
-      vscode.workspace.onDidSaveTextDocument(() => {
-        hoverProvider.clearSessionCache();
+      vscode.workspace.onDidSaveTextDocument((document) => {
+        if (config.isDependencyManifestUri(document.uri)) {
+          hoverProvider.clearSessionCache();
+          rebuildHoverRuntime(
+            "Dependency manifests changed. Recreating disk cache bucket.",
+            true,
+          );
+          warmupImportsForDocument(vscode.window.activeTextEditor?.document);
+          warmupConfiguredPackages();
+          updateStudio();
+          return;
+        }
+        // Only clear document-scoped caches for normal file saves to keep global
+        // caches (hover results, installed versions) intact for better UX.
+        hoverProvider.clearDocumentSessionCache(document);
       }),
     );
 
@@ -367,7 +392,8 @@ export function activate(context: vscode.ExtensionContext) {
           liveRedirectIntegratedHoverToDocsPage =
             config.redirectIntegratedHoverToDocsPage;
           liveAutoOpenCurrentHoverInIntegratedDocs =
-            config.autoOpenCurrentHoverInIntegratedDocs;
+            config.autoOpenCurrentHoverInIntegratedDocs ||
+            config.learnModeEnabled;
           lastAutoOpenedHoverRequest = undefined;
           docsPanel?.configure({
             autoOpenCurrentHoverInIntegratedDocs:
@@ -383,137 +409,11 @@ export function activate(context: vscode.ExtensionContext) {
 
     // ── Commands ─────────────────────────────────────────────────────────
 
-    context.subscriptions.push(
-      vscode.commands.registerCommand(
-        "python-hover.showStatusNotification",
-        async () => {
-          await statusBarManager.showStatusNotification();
-        },
-      ),
-    );
-
-    context.subscriptions.push(
-      vscode.commands.registerCommand(
-        "python-hover.toggleOnlineDiscovery",
-        async () => {
-          await statusBarManager.toggleOnlineDiscovery();
-        },
-      ),
-    );
-
-    context.subscriptions.push(
-      vscode.commands.registerCommand(
-        "python-hover.copyImport",
-        async (importStatement?: string) => {
-          let text = importStatement;
-          if (!text) {
-            const doc = hoverProvider.getLastDoc();
-            if (doc) {
-              text = buildImportStatementForDoc(doc);
-            }
-          }
-          if (text) {
-            await vscode.env.clipboard.writeText(text);
-            vscode.window.showInformationMessage(`Copied: ${text}`);
-          } else {
-            vscode.window.showInformationMessage(
-              "Hover over a Python symbol first to copy its import statement.",
-            );
-          }
-        },
-      ),
-    );
-
-    context.subscriptions.push(
-      vscode.commands.registerCommand("python-hover.pinLast", () => {
-        const doc = hoverProvider.getLastDoc();
-        if (!doc) {
-          vscode.window.showInformationMessage(
-            "No recent hover — hover over a Python symbol first.",
-          );
-          return;
-        }
-        HoverPanel.show(doc);
-      }),
-    );
-
-    context.subscriptions.push(
-      vscode.commands.registerCommand(
-        "python-hover.copyUrl",
-        async (urlOrToken?: string) => {
-          const explicitUrl =
-            typeof urlOrToken === "string" &&
-            /^(?:https?:|file:|\/|[A-Za-z]:\\)/.test(urlOrToken)
-              ? urlOrToken
-              : undefined;
-          const text =
-            explicitUrl || hoverProvider.getDocByCommandToken(urlOrToken)?.url;
-          if (text) {
-            await vscode.env.clipboard.writeText(text);
-            vscode.window.showInformationMessage("URL copied to clipboard");
-          }
-        },
-      ),
-    );
-
-    context.subscriptions.push(
-      vscode.commands.registerCommand(
-        "python-hover.copySignature",
-        async (sigOrToken?: string) => {
-          const explicitSignature =
-            typeof sigOrToken === "string" &&
-            (sigOrToken.includes("(") || sigOrToken.includes("->"))
-              ? sigOrToken
-              : undefined;
-          const text =
-            explicitSignature ||
-            hoverProvider.getDocByCommandToken(sigOrToken)?.signature;
-          if (text) {
-            await vscode.env.clipboard.writeText(text);
-            vscode.window.showInformationMessage(
-              "Signature copied to clipboard",
-            );
-          }
-        },
-      ),
-    );
-
-    context.subscriptions.push(
-      vscode.commands.registerCommand(
-        "python-hover.pinHover",
-        (token?: string) => {
-          const doc = hoverProvider.getDocByCommandToken(token);
-          if (!doc) {
-            vscode.window.showInformationMessage(
-              "Hover over a Python symbol first, then click Pin.",
-            );
-            return;
-          }
-          HoverPanel.show(doc);
-        },
-      ),
-    );
-
-    context.subscriptions.push(
-      vscode.commands.registerCommand(
-        "python-hover.debugPinHover",
-        (token?: string) => {
-          const doc = hoverProvider.getDocByCommandToken(token);
-          if (!doc) {
-            vscode.window.showInformationMessage(
-              "Hover over a Python symbol first, then click Debug.",
-            );
-            return;
-          }
-
-          HoverPanel.show(doc);
-          HoverDebugPanel.show(
-            doc,
-            hoverProvider.getRenderedHoverMarkdown(token) || "",
-          );
-        },
-      ),
-    );
+    registerPrimaryCommands(context, {
+      hoverProvider,
+      statusBarManager,
+      buildImportStatementForDoc,
+    });
 
     // Open a docs URL in a persistent side-panel browser (ViewColumn.Beside).
     // Uses our own WebviewPanel so the column is guaranteed — VS Code's built-in
@@ -533,91 +433,6 @@ export function activate(context: vscode.ExtensionContext) {
         maybeAutoOpenCurrentHoverDocs();
       },
     });
-    const allowedModuleBrowserCommands = new Set(["python-hover.searchDocs"]);
-    const allowedModuleBrowserSettingKeys = new Set([
-      "python-hover.ui.moduleBrowser.defaultSort",
-      "python-hover.ui.moduleBrowser.defaultView",
-      "python-hover.ui.moduleBrowser.defaultDensity",
-      "python-hover.ui.moduleBrowser.showPrivateSymbols",
-      "python-hover.ui.moduleBrowser.autoLoadPreviews",
-      "python-hover.ui.moduleBrowser.showHierarchyHints",
-    ]);
-    const allowedStudioCommands = new Set([
-      "python-hover.searchDocs",
-      "python-hover.browseModule",
-      "python-hover.pinLast",
-      "python-hover.showHistory",
-      "python-hover.buildPythonCorpus",
-      "python-hover.cancelPythonCorpusBuild",
-      "python-hover.clearCache",
-      "python-hover.clearStdlibCorpus",
-      "python-hover.clearAllCache",
-      "python-hover.openCacheFolder",
-      "python-hover.showLogs",
-    ]);
-    const allowedStudioSettingKeys = new Set([
-      "python-hover.ui.compactMode",
-      "python-hover.ui.showToolbar",
-      "python-hover.ui.showProvenance",
-      "python-hover.ui.showBadges",
-      "python-hover.ui.showMetadataChips",
-      "python-hover.ui.showSignatures",
-      "python-hover.ui.showParameterLens",
-      "python-hover.ui.showReturnTypes",
-      "python-hover.ui.showCallouts",
-      "python-hover.ui.showDescription",
-      "python-hover.ui.showParameters",
-      "python-hover.ui.showRaises",
-      "python-hover.ui.showSeeAlso",
-      "python-hover.ui.showNotes",
-      "python-hover.ui.showModuleExports",
-      "python-hover.ui.showModuleStats",
-      "python-hover.ui.showImportHints",
-      "python-hover.ui.showFooter",
-      "python-hover.ui.maxContentLength",
-      "python-hover.maxSnippetLines",
-      "python-hover.ui.maxParameters",
-      "python-hover.ui.maxExamples",
-      "python-hover.ui.maxModuleExports",
-      "python-hover.ui.maxSeeAlsoItems",
-      "python-hover.ui.hoverSectionOrder",
-      "python-hover.showPracticalExamples",
-      "python-hover.onlineDiscovery",
-      "python-hover.runtimeHelper",
-      "python-hover.astFallback",
-      "python-hover.docScraping",
-      "python-hover.buildFullCorpus",
-      "python-hover.warmupImports",
-      "python-hover.useKnownDocsUrls",
-      "python-hover.diagnostics.enabled",
-      "python-hover.enableDebugLogging",
-      "python-hover.docsBrowser",
-      "python-hover.devdocsBrowser",
-      "python-hover.ui.redirectIntegratedHoverToDocsPage",
-      "python-hover.ui.autoOpenCurrentHoverInIntegratedDocs",
-      "python-hover.requestTimeout",
-      "python-hover.hoverActivationDelay",
-      "python-hover.ui.showStatusBar",
-      "python-hover.ui.showDebugPinButton",
-      "python-hover.ui.contextMenu.enabled",
-      "python-hover.ui.contextMenu.searchDocs",
-      "python-hover.ui.contextMenu.browseModule",
-      "python-hover.ui.contextMenu.pinHover",
-      "python-hover.ui.contextMenu.debugPinHover",
-      "python-hover.ui.contextMenu.openStudio",
-      "python-hover.ui.moduleBrowser.defaultView",
-      "python-hover.ui.moduleBrowser.defaultSort",
-      "python-hover.ui.moduleBrowser.defaultDensity",
-      "python-hover.ui.moduleBrowser.showPrivateSymbols",
-      "python-hover.ui.moduleBrowser.autoLoadPreviews",
-      "python-hover.ui.moduleBrowser.showHierarchyHints",
-    ]);
-    const isAllowedSettingsQuery = (
-      query: string | undefined,
-      fallback: string,
-    ): string => {
-      return query && query.startsWith("python-hover") ? query : fallback;
-    };
     const buildModuleBrowserSettings = (): ModuleBrowserSettings => ({
       defaultView: config.moduleBrowserDefaultView,
       defaultSort: config.moduleBrowserDefaultSort,
@@ -672,7 +487,7 @@ export function activate(context: vscode.ExtensionContext) {
               break;
             }
             case "run-command":
-              if (!allowedModuleBrowserCommands.has(message.command)) {
+              if (!ALLOWED_MODULE_BROWSER_COMMANDS.has(message.command)) {
                 Logger.debug(
                   "Ignored unsupported module browser command",
                   message.command,
@@ -684,14 +499,14 @@ export function activate(context: vscode.ExtensionContext) {
             case "open-settings":
               await vscode.commands.executeCommand(
                 "workbench.action.openSettings",
-                isAllowedSettingsQuery(
+                allowedSettingsQuery(
                   message.query,
                   "python-hover.ui.moduleBrowser",
                 ),
               );
               break;
             case "update-setting":
-              if (!allowedModuleBrowserSettingKeys.has(message.key)) {
+              if (!ALLOWED_MODULE_BROWSER_SETTING_KEYS.has(message.key)) {
                 Logger.debug(
                   "Ignored unsupported module browser setting",
                   message.key,
@@ -785,17 +600,6 @@ export function activate(context: vscode.ExtensionContext) {
       limit = 6,
     ): Array<{ name: string; count: number }> =>
       libraryState.getRecentPackageSummaries(limit);
-    const runSearchDocs = registerSearchDocsCommand({
-      hoverProvider,
-      getSavedDocs: () => getSavedDocs(),
-      getRecentPackageSummaries: (limit) => getRecentPackageSummaries(limit),
-      rememberRecentPackage: (packageName) =>
-        rememberRecentPackage(packageName),
-      openConfiguredLink: (url, kind) => openConfiguredLink(url, kind),
-    });
-    context.subscriptions.push(
-      vscode.commands.registerCommand("python-hover.searchDocs", runSearchDocs),
-    );
     const getStudioState = () => {
       const overview = diskCache.getOverview();
       return buildStudioState({
@@ -815,11 +619,21 @@ export function activate(context: vscode.ExtensionContext) {
       studioPanel.update(getStudioState());
       statusBarManager.update();
     };
-    const cacheCommands = createCacheCommands({
+    registerRuntimeCommands({
       context,
       config,
-      diskCache,
       hoverProvider,
+      telemetryState,
+      docsPanelShow: (url) => docsPanel.show(url),
+      docsBrowserMode: () => config.docsBrowser,
+      getSavedDocs,
+      getRecentPackageSummaries,
+      rememberRecentPackage,
+      openConfiguredLink,
+      updateSetting: (setting, value) =>
+        updateSettingWithPreferredTarget("python-hover", setting, value),
+      getLearnModeEnabled: () => config.learnModeEnabled,
+      diskCache,
       activeCorpusBuild: () => activeCorpusBuild,
       setActiveCorpusBuild: (value) => {
         activeCorpusBuild = value;
@@ -828,47 +642,6 @@ export function activate(context: vscode.ExtensionContext) {
       statusBarUpdate: () => statusBarManager.update(),
       refreshAfterCacheMutation,
     });
-    context.subscriptions.push(
-      vscode.commands.registerCommand(
-        "python-hover.clearCache",
-        cacheCommands.clearCache,
-      ),
-    );
-
-    context.subscriptions.push(
-      vscode.commands.registerCommand(
-        "python-hover.clearStdlibCorpus",
-        cacheCommands.clearStdlibCorpus,
-      ),
-    );
-
-    context.subscriptions.push(
-      vscode.commands.registerCommand(
-        "python-hover.clearAllCache",
-        cacheCommands.clearAllCache,
-      ),
-    );
-
-    context.subscriptions.push(
-      vscode.commands.registerCommand(
-        "python-hover.cancelPythonCorpusBuild",
-        cacheCommands.cancelPythonCorpusBuild,
-      ),
-    );
-
-    context.subscriptions.push(
-      vscode.commands.registerCommand(
-        "python-hover.buildPythonCorpus",
-        cacheCommands.buildPythonCorpus,
-      ),
-    );
-
-    context.subscriptions.push(
-      vscode.commands.registerCommand(
-        "python-hover.openCacheFolder",
-        cacheCommands.openCacheFolder,
-      ),
-    );
     const reportSettingUpdateError = (key: string, error: unknown) => {
       Logger.error(`Failed to update setting ${key}`, error);
       void vscode.window.showErrorMessage(
@@ -905,38 +678,6 @@ export function activate(context: vscode.ExtensionContext) {
         next,
       );
     };
-    const ensureIndexedPackageLoaded = async (packageName: string) => {
-      const normalized = packageName.trim();
-      if (!normalized) {
-        return;
-      }
-
-      await hoverProvider.ensureIndexedPackage(
-        normalized,
-        normalized === "builtins" ||
-          normalized === "python" ||
-          isStdlibTopLevelModule(normalized),
-      );
-    };
-    const getBrowseablePackages = async (): Promise<string[]> => {
-      let packages = hoverProvider.getIndexedPackages();
-      if (packages.length > 0) {
-        return packages;
-      }
-
-      packages = await hoverProvider.hydrateCachedInventories();
-      if (packages.length > 0) {
-        return packages;
-      }
-
-      await Promise.all([
-        ensureIndexedPackageLoaded("builtins"),
-        ensureIndexedPackageLoaded("typing"),
-        ensureIndexedPackageLoaded("asyncio"),
-      ]);
-
-      return hoverProvider.getIndexedPackages();
-    };
     statusBarManager.setDataAccessors({
       getHoverHistory: () => hoverProvider.getHoverHistory(),
       getIndexedSymbolCount: () => hoverProvider.getIndexedSymbolCount(),
@@ -952,9 +693,10 @@ export function activate(context: vscode.ExtensionContext) {
     const studioPanel = StudioPanel.getInstance(
       async (message: StudioMessage) => {
         try {
+          Logger.log(`Studio message received: ${JSON.stringify(message)}`);
           switch (message.type) {
             case "run-command":
-              if (!allowedStudioCommands.has(message.command)) {
+              if (!ALLOWED_STUDIO_COMMANDS.has(message.command)) {
                 Logger.debug(
                   "Ignored unsupported studio command",
                   message.command,
@@ -966,11 +708,11 @@ export function activate(context: vscode.ExtensionContext) {
             case "open-settings":
               await vscode.commands.executeCommand(
                 "workbench.action.openSettings",
-                isAllowedSettingsQuery(message.query, "python-hover"),
+                allowedSettingsQuery(message.query, "python-hover"),
               );
               break;
             case "update-setting":
-              if (!allowedStudioSettingKeys.has(message.key)) {
+              if (!ALLOWED_STUDIO_SETTING_KEYS.has(message.key)) {
                 Logger.debug("Ignored unsupported studio setting", message.key);
                 break;
               }
@@ -1014,558 +756,41 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push({ dispose: () => moduleBrowserPanel.dispose() });
     context.subscriptions.push({ dispose: () => studioPanel.dispose() });
 
-    context.subscriptions.push(
-      vscode.commands.registerCommand(
-        "python-hover.toggleSavedHover",
-        async (payload?: string | Partial<SavedDocEntry>) => {
-          await toggleSavedDoc(payload);
-        },
-      ),
-    );
+    registerSavedAndPanelCommands(context, {
+      hoverProvider,
+      hoverInspectorView,
+      toggleSavedDoc,
+      removeSavedDoc,
+      normalizeSavedDocEntry,
+      openConfiguredLink,
+      openSourceTarget,
+      refreshStudio,
+      showLogs: () => Logger.show(),
+    });
 
-    context.subscriptions.push(
-      vscode.commands.registerCommand(
-        "python-hover.removeSavedHover",
-        async (payload?: Partial<SavedDocEntry>) => {
-          await removeSavedDoc(payload);
-        },
-      ),
-    );
+    registerHistoryAndLinkCommands(context, {
+      hoverProvider,
+      hoverInspectorView,
+      openConfiguredLink,
+      openIntegratedDocs,
+      parseDocLinkPayload,
+      parsePreferredDocsPayload,
+      openHoverDocSource,
+      openSourceTarget,
+      openIndexedSymbolSource,
+      liveRedirectIntegratedHoverToDocsPage: () =>
+        liveRedirectIntegratedHoverToDocsPage,
+      docsBrowserMode: () => config.docsBrowser,
+    });
 
-    context.subscriptions.push(
-      vscode.commands.registerCommand(
-        "python-hover.openSavedHoverEntry",
-        async (entry?: Partial<SavedDocEntry>) => {
-          const savedEntry = entry ? normalizeSavedDocEntry(entry) : undefined;
-          if (!savedEntry) {
-            vscode.window.showInformationMessage(
-              "That saved doc entry is no longer available.",
-            );
-            return;
-          }
-
-          const commandToken =
-            typeof savedEntry.commandToken === "string"
-              ? savedEntry.commandToken
-              : undefined;
-          const doc = commandToken
-            ? hoverProvider.getExactDocByCommandToken(commandToken)
-            : null;
-          if (doc) {
-            hoverInspectorView.showDoc(doc);
-            void vscode.commands
-              .executeCommand(`${HoverInspectorView.viewType}.focus`)
-              .then(undefined, () => undefined);
-            return;
-          }
-
-          if (savedEntry.url) {
-            await openConfiguredLink(savedEntry.url, "docs");
-            return;
-          }
-
-          if (savedEntry.module) {
-            await vscode.commands.executeCommand(
-              "python-hover.browseModule",
-              savedEntry.module,
-            );
-            return;
-          }
-
-          if (savedEntry.sourceUrl) {
-            await openSourceTarget(savedEntry.sourceUrl, (url) =>
-              openConfiguredLink(url, "docs"),
-            );
-            return;
-          }
-
-          vscode.window.showInformationMessage(
-            "That saved doc entry no longer has an openable target.",
-          );
-        },
-      ),
-    );
-
-    context.subscriptions.push(
-      vscode.commands.registerCommand("python-hover.openStudio", () => {
-        refreshStudio();
-      }),
-    );
-
-    context.subscriptions.push(
-      vscode.commands.registerCommand("python-hover.showLogs", () => {
-        Logger.show();
-      }),
-    );
-
-    context.subscriptions.push(
-      vscode.commands.registerCommand("python-hover.showHistory", async () => {
-        const history = hoverProvider.getHoverHistory();
-        if (history.length === 0) {
-          vscode.window.showInformationMessage(
-            "No hover history yet — hover over Python symbols to populate it.",
-          );
-          return;
-        }
-        type HistoryItem = vscode.QuickPickItem & { entry: HoverHistoryEntry };
-        const liveEntries = history.filter((entry) => !!entry.commandToken);
-        const linkedEntries = history.filter(
-          (entry) => !entry.commandToken && !!entry.url,
-        );
-        const makeHistoryItem = (
-          entry: HoverHistoryEntry,
-          detail: string,
-        ): HistoryItem => ({
-          label: entry.title,
-          description: [entry.kind, entry.module ?? entry.package]
-            .filter(Boolean)
-            .join(" • "),
-          detail,
-          entry,
-        });
-        const items: Array<HistoryItem | vscode.QuickPickItem> = [];
-        if (liveEntries.length > 0) {
-          items.push({
-            label: `Live Session (${liveEntries.length})`,
-            kind: vscode.QuickPickItemKind.Separator,
-          });
-          items.push(
-            ...liveEntries.map((entry) =>
-              makeHistoryItem(
-                entry,
-                "Reopen this symbol in the PyHover inspector.",
-              ),
-            ),
-          );
-        }
-        if (linkedEntries.length > 0) {
-          items.push({
-            label: `Docs Links (${linkedEntries.length})`,
-            kind: vscode.QuickPickItemKind.Separator,
-          });
-          items.push(
-            ...linkedEntries.map((entry) =>
-              makeHistoryItem(entry, "Open the stored documentation target."),
-            ),
-          );
-        }
-        const picked = (await vscode.window.showQuickPick(items, {
-          title: "PyHover: Hover History",
-          placeHolder:
-            "Recent symbols grouped by live session entries and stored docs links",
-          matchOnDescription: true,
-          matchOnDetail: true,
-        })) as HistoryItem | undefined;
-        if (picked?.entry) {
-          void vscode.commands.executeCommand(
-            "python-hover.openSidebarHistoryEntry",
-            picked.entry,
-          );
-        }
-      }),
-    );
-
-    context.subscriptions.push(
-      vscode.commands.registerCommand(
-        "python-hover.openSidebarHistoryEntry",
-        async (entry?: HoverHistoryEntry) => {
-          const commandToken =
-            typeof entry?.commandToken === "string"
-              ? entry.commandToken
-              : undefined;
-          const doc = commandToken
-            ? hoverProvider.getExactDocByCommandToken(commandToken)
-            : null;
-
-          if (doc) {
-            hoverInspectorView.showDoc(doc);
-            void vscode.commands
-              .executeCommand(`${HoverInspectorView.viewType}.focus`)
-              .then(undefined, () => undefined);
-            return;
-          }
-
-          if (entry?.url) {
-            await openConfiguredLink(entry.url, "docs");
-            return;
-          }
-
-          vscode.window.showInformationMessage(
-            "That history entry is no longer available in the current session.",
-          );
-        },
-      ),
-    );
-
-    context.subscriptions.push(
-      vscode.commands.registerCommand(
-        "python-hover.openDocsSide",
-        (url: string) => {
-          void openIntegratedDocs(url);
-        },
-      ),
-    );
-
-    context.subscriptions.push(
-      vscode.commands.registerCommand(
-        "python-hover.openDocLink",
-        async (payload?: string | { url?: string; kind?: string }) => {
-          const { url, kind } = parseDocLinkPayload(payload);
-          if (!url) {
-            return;
-          }
-          await openConfiguredLink(url, kind);
-        },
-      ),
-    );
-
-    context.subscriptions.push(
-      vscode.commands.registerCommand(
-        "python-hover.openPreferredDocs",
-        async (
-          payload?: string | { url?: string; token?: string; kind?: string },
-        ) => {
-          const { url, token, kind } = parsePreferredDocsPayload(payload);
-          if (!url) {
-            return;
-          }
-
-          if (
-            kind === "docs" &&
-            config.docsBrowser === "integrated" &&
-            liveRedirectIntegratedHoverToDocsPage &&
-            token
-          ) {
-            const doc = hoverProvider.getDocByCommandToken(token);
-            if (doc) {
-              HoverPanel.show(doc);
-              return;
-            }
-          }
-
-          await openConfiguredLink(url, kind);
-        },
-      ),
-    );
-
-    context.subscriptions.push(
-      vscode.commands.registerCommand(
-        "python-hover.openHoverSource",
-        async (payload?: string | { token?: string; target?: string }) => {
-          const token =
-            typeof payload === "string"
-              ? payload
-              : typeof payload?.token === "string"
-                ? payload.token
-                : undefined;
-          const fallbackTarget =
-            typeof payload === "object" &&
-            payload &&
-            typeof payload.target === "string"
-              ? payload.target
-              : undefined;
-
-          const doc = hoverProvider.getDocByCommandToken(token);
-          const opened = doc
-            ? await openHoverDocSource(doc, (url) =>
-                openConfiguredLink(url, "docs"),
-              )
-            : fallbackTarget
-              ? await openSourceTarget(fallbackTarget, (url) =>
-                  openConfiguredLink(url, "docs"),
-                )
-              : false;
-
-          if (!opened) {
-            vscode.window.showInformationMessage(
-              "No source location is available for this hover.",
-            );
-          }
-        },
-      ),
-    );
-
-    context.subscriptions.push(
-      vscode.commands.registerCommand(
-        "python-hover.pinDocReference",
-        async (payload?: {
-          label?: string;
-          url?: string;
-          currentModule?: string;
-          currentPackage?: string;
-          currentTitle?: string;
-        }) => {
-          const label =
-            typeof payload?.label === "string" ? payload.label.trim() : "";
-          const url =
-            typeof payload?.url === "string" ? payload.url.trim() : undefined;
-
-          const doc = label
-            ? await hoverProvider.resolvePinnedReference({
-                label,
-                url,
-                currentModule:
-                  typeof payload?.currentModule === "string"
-                    ? payload.currentModule
-                    : undefined,
-                currentPackage:
-                  typeof payload?.currentPackage === "string"
-                    ? payload.currentPackage
-                    : undefined,
-                currentTitle:
-                  typeof payload?.currentTitle === "string"
-                    ? payload.currentTitle
-                    : undefined,
-              })
-            : null;
-
-          if (doc) {
-            HoverPanel.push(doc);
-            return;
-          }
-
-          if (url) {
-            await openConfiguredLink(url, "docs");
-            return;
-          }
-
-          if (label) {
-            vscode.window.showInformationMessage(
-              `No related documentation is indexed for "${label}" yet.`,
-            );
-          }
-        },
-      ),
-    );
-
-    context.subscriptions.push(
-      vscode.commands.registerCommand("python-hover.pinPanelBack", () => {
-        HoverPanel.goBack();
-      }),
-    );
-
-    context.subscriptions.push(
-      vscode.commands.registerCommand("python-hover.pinPanelForward", () => {
-        HoverPanel.goForward();
-      }),
-    );
-
-    context.subscriptions.push(
-      vscode.commands.registerCommand(
-        "python-hover.pinPanelJump",
-        (index?: number) => {
-          if (typeof index !== "number") {
-            return;
-          }
-          HoverPanel.jumpTo(index);
-        },
-      ),
-    );
-
-    context.subscriptions.push(
-      vscode.commands.registerCommand(
-        "python-hover.getIndexedSymbolPreviews",
-        async (symbols: IndexedSymbolSummary[]) => {
-          return hoverProvider.getIndexedSymbolPreviews(
-            Array.isArray(symbols) ? symbols : [],
-          );
-        },
-      ),
-    );
-
-    context.subscriptions.push(
-      vscode.commands.registerCommand(
-        "python-hover.pinIndexedSymbol",
-        async (symbol: IndexedSymbolSummary) => {
-          if (!symbol?.name) {
-            return;
-          }
-
-          const doc = await hoverProvider.resolveIndexedSymbolDoc(symbol);
-          if (!doc) {
-            vscode.window.showInformationMessage(
-              `No pinned hover content is available for "${symbol.name}" yet.`,
-            );
-            return;
-          }
-
-          HoverPanel.show(doc);
-        },
-      ),
-    );
-
-    context.subscriptions.push(
-      vscode.commands.registerCommand(
-        "python-hover.openIndexedSymbolSource",
-        async (symbol: IndexedSymbolSummary) => {
-          if (!symbol?.name) {
-            return;
-          }
-
-          const opened = await openIndexedSymbolSource(
-            symbol,
-            hoverProvider,
-            (url) => openConfiguredLink(url, "docs"),
-          );
-          if (!opened) {
-            vscode.window.showInformationMessage(
-              `No source location is available for "${symbol.name}".`,
-            );
-          }
-        },
-      ),
-    );
-
-    context.subscriptions.push(
-      vscode.commands.registerCommand(
-        "python-hover.browseModule",
-        async (moduleName: string) => {
-          let targetModule = moduleName?.trim();
-          if (!targetModule) {
-            type ModulePickItem = vscode.QuickPickItem & {
-              moduleName?: string;
-            };
-            const packages = await getBrowseablePackages();
-
-            if (packages.length === 0) {
-              vscode.window.showInformationMessage(
-                config.onlineDiscovery
-                  ? "No indexed packages are available yet. PyHover could not seed its starter indexes. Hover a library symbol once or build the corpus first."
-                  : "No indexed packages are available yet. Online discovery is off, so PyHover needs cached inventories or a built corpus before Browse Modules can populate.",
-              );
-              return;
-            }
-
-            const summaryByName = new Map(
-              hoverProvider
-                .getIndexedPackageSummaries()
-                .map((summary) => [summary.name, summary.count]),
-            );
-            const recentPackageNames = new Set(getRecentPackages());
-            const packageItems = packages
-              .map((pkg) => ({
-                label: `${isStdlibTopLevelModule(pkg) || pkg === "builtins" ? "$(library)" : "$(package)"} ${pkg}`,
-                description: summaryByName.has(pkg)
-                  ? `${(summaryByName.get(pkg) ?? 0).toLocaleString()} indexed symbols`
-                  : "Indexed module/package",
-                detail: recentPackageNames.has(pkg)
-                  ? isStdlibTopLevelModule(pkg) || pkg === "builtins"
-                    ? "Recent standard-library package"
-                    : "Recent package"
-                  : isStdlibTopLevelModule(pkg) || pkg === "builtins"
-                    ? "Python standard library"
-                    : "Indexed third-party or custom library",
-                moduleName: pkg,
-              }))
-              .sort((left, right) => {
-                const leftRecent = left.moduleName
-                  ? recentPackageNames.has(left.moduleName)
-                  : false;
-                const rightRecent = right.moduleName
-                  ? recentPackageNames.has(right.moduleName)
-                  : false;
-                if (leftRecent !== rightRecent) {
-                  return leftRecent ? -1 : 1;
-                }
-                return (left.moduleName ?? left.label).localeCompare(
-                  right.moduleName ?? right.label,
-                );
-              });
-
-            const items: ModulePickItem[] = [];
-            const recentItems = packageItems.filter(
-              (item) =>
-                item.moduleName && recentPackageNames.has(item.moduleName),
-            );
-            const stdlibItems = packageItems.filter(
-              (item) =>
-                item.moduleName &&
-                !recentPackageNames.has(item.moduleName) &&
-                (isStdlibTopLevelModule(item.moduleName) ||
-                  item.moduleName === "builtins"),
-            );
-            const libraryItems = packageItems.filter(
-              (item) =>
-                item.moduleName &&
-                !recentPackageNames.has(item.moduleName) &&
-                !isStdlibTopLevelModule(item.moduleName) &&
-                item.moduleName !== "builtins",
-            );
-            if (recentItems.length > 0) {
-              items.push({
-                label: "Recent Packages",
-                kind: vscode.QuickPickItemKind.Separator,
-              });
-              items.push(...recentItems);
-            }
-            if (stdlibItems.length > 0) {
-              items.push({
-                label: "Standard Library",
-                kind: vscode.QuickPickItemKind.Separator,
-              });
-              items.push(...stdlibItems);
-            }
-            if (libraryItems.length > 0) {
-              items.push({
-                label: "Libraries",
-                kind: vscode.QuickPickItemKind.Separator,
-              });
-              items.push(...libraryItems);
-            }
-
-            const picked = await vscode.window.showQuickPick(items, {
-              title: "Browse Indexed Module",
-              placeHolder: "Select or search for an indexed module or package",
-              matchOnDescription: true,
-              matchOnDetail: true,
-            });
-
-            if (!picked) {
-              return;
-            }
-            const selectedModuleName = (picked as ModulePickItem).moduleName;
-            if (!selectedModuleName) {
-              return;
-            }
-            targetModule = selectedModuleName;
-          }
-
-          let moduleSymbols = hoverProvider.getModuleSymbols(targetModule);
-
-          if (moduleSymbols.length === 0) {
-            const requestedPackage = targetModule.split(".")[0] || targetModule;
-            await ensureIndexedPackageLoaded(requestedPackage);
-
-            moduleSymbols = hoverProvider.getModuleSymbols(targetModule);
-          }
-
-          if (moduleSymbols.length === 0) {
-            await hoverProvider.hydrateCachedInventories();
-            moduleSymbols = hoverProvider.getModuleSymbols(targetModule);
-            if (moduleSymbols.length > 0) {
-              moduleBrowserPanel.show(
-                targetModule,
-                moduleSymbols,
-                buildModuleBrowserSettings(),
-              );
-              return;
-            }
-
-            vscode.window.showInformationMessage(
-              `No indexed symbols found for "${targetModule}". Hover over a symbol from this package once to cache its inventory.`,
-            );
-            return;
-          }
-
-          await rememberRecentPackage(targetModule);
-          moduleBrowserPanel.show(
-            targetModule,
-            moduleSymbols,
-            buildModuleBrowserSettings(),
-          );
-        },
-      ),
-    );
+    registerModuleBrowseCommands(context, {
+      hoverProvider,
+      moduleBrowserPanel,
+      buildModuleBrowserSettings,
+      configOnlineDiscovery: () => config.onlineDiscovery,
+      getRecentPackages,
+      rememberRecentPackage,
+    });
 
     const corpusPromptStateKey = "python-hover.corpusPromptShown.v1";
     const maybeShowCorpusPrompt = async () => {

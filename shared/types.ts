@@ -1,164 +1,177 @@
 export interface DocKey {
-  package: string
-  version?: string
-  module: string
-  name: string
-  qualname: string
-  isStdlib?: boolean
+  package: string;
+  version?: string;
+  module: string;
+  name: string;
+  qualname: string;
+  isStdlib?: boolean;
 }
 
 export enum ResolutionSource {
-  LSP = 'LSP',
-  Runtime = 'Runtime',
-  Sphinx = 'Sphinx',
-  RTD = 'RTD',
-  SearchIndex = 'SearchIndex',
-  DevDocs = 'DevDocs',
-  PyPI = 'PyPI',
-  GitHub = 'GitHub',
-  Fallback = 'Fallback',
-  Static = 'Static',
-  Corpus = 'Corpus',
-  Local = 'Local',
+  LSP = "LSP",
+  Runtime = "Runtime",
+  Sphinx = "Sphinx",
+  RTD = "RTD",
+  SearchIndex = "SearchIndex",
+  DevDocs = "DevDocs",
+  PyPI = "PyPI",
+  GitHub = "GitHub",
+  Fallback = "Fallback",
+  Static = "Static",
+  Corpus = "Corpus",
+  Local = "Local",
 }
 
 export interface IndexedSymbolSummary {
-  name: string
-  url: string
-  kind: string
-  package: string
-  title?: string
-  module?: string
-  signature?: string
-  summary?: string
-  sourceUrl?: string
+  name: string;
+  url: string;
+  kind: string;
+  package: string;
+  title?: string;
+  module?: string;
+  signature?: string;
+  summary?: string;
+  sourceUrl?: string;
 }
 
 export interface IndexedSymbolPreview {
-  name: string
-  title?: string
-  kind?: string
-  module?: string
-  summary?: string
-  signature?: string
-  url?: string
-  sourceUrl?: string
-  source?: ResolutionSource
-  installedVersion?: string
+  name: string;
+  title?: string;
+  kind?: string;
+  module?: string;
+  summary?: string;
+  signature?: string;
+  url?: string;
+  sourceUrl?: string;
+  source?: ResolutionSource;
+  installedVersion?: string;
 }
 
 export interface HoverHistoryEntry {
-  title: string
-  kind?: string
-  module?: string
-  package?: string
-  url?: string
-  commandToken?: string
+  title: string;
+  kind?: string;
+  module?: string;
+  package?: string;
+  url?: string;
+  commandToken?: string;
 }
 
 export interface SavedDocEntry {
-  id: string
-  title: string
-  kind?: string
-  module?: string
-  package?: string
-  url?: string
-  sourceUrl?: string
-  summary?: string
-  commandToken?: string
+  id: string;
+  title: string;
+  kind?: string;
+  module?: string;
+  package?: string;
+  url?: string;
+  sourceUrl?: string;
+  summary?: string;
+  commandToken?: string;
 }
 
 export interface ActiveParameterLens {
-  callable: string
-  signature: string
-  callableDocumentation?: string
-  parameters?: ParameterInfo[]
-  parameterLabel: string
-  parameter: ParameterInfo
-  parameterIndex: number
-  parameterCount: number
-  source: 'signatureHelp' | 'merged'
+  callable: string;
+  signature: string;
+  callableDocumentation?: string;
+  parameters?: ParameterInfo[];
+  parameterLabel: string;
+  parameter: ParameterInfo;
+  parameterIndex: number;
+  parameterCount: number;
+  source: "signatureHelp" | "merged";
+  argumentExpression?: string;
+  validation?: ParameterValidation;
+}
+
+export interface ParameterValidation {
+  status: "valid" | "warning" | "unknown";
+  message: string;
+}
+
+export interface HoverContextHints {
+  tags: string[];
+  summary: string;
 }
 
 export interface CustomLibraryConfig {
-  name: string
-  baseUrl: string
-  inventoryUrl?: string
+  name: string;
+  baseUrl: string;
+  inventoryUrl?: string;
 }
 
 export interface HoverDoc {
-  title: string
-  kind?: string
-  signature?: string
-  summary?: string
-  parameterLens?: ActiveParameterLens
-  parameters?: ParameterInfo[]
-  returns?: ReturnInfo
-  raises?: ExceptionInfo[]
-  notes?: string[]
-  examples?: string[]
-  url?: string
-  devdocsUrl?: string
-  sourceUrl?: string
-  links?: Record<string, string>
-  badges?: Badge[]
-  source: ResolutionSource
-  confidence: number // 0.0 to 1.0
-  metadata?: Record<string, unknown>
-  content?: string // Legacy support
-  structuredContent?: StructuredHoverContent
-  overloads?: string[]
-  protocolHints?: string[]
-  seeAlso?: string[] // Links scraped from Sphinx "See also" sections
-  module?: string // Top-level package/module (e.g. "typing", "pandas")
-  moduleExports?: string[] // Key exported names shown in module overview hover
-  exportCount?: number // Total indexed symbol count for this module
-  installedVersion?: string // Installed package version (from importlib.metadata)
-  latestVersion?: string // Latest version published on PyPI
-  license?: string // Package license (e.g. "MIT", "Apache-2.0")
-  requiresPython?: string // Minimum Python version (e.g. ">=3.9")
+  title: string;
+  kind?: string;
+  signature?: string;
+  summary?: string;
+  parameterLens?: ActiveParameterLens;
+  parameters?: ParameterInfo[];
+  returns?: ReturnInfo;
+  raises?: ExceptionInfo[];
+  notes?: string[];
+  examples?: string[];
+  url?: string;
+  devdocsUrl?: string;
+  sourceUrl?: string;
+  links?: Record<string, string>;
+  badges?: Badge[];
+  source: ResolutionSource;
+  confidence: number; // 0.0 to 1.0
+  metadata?: Record<string, unknown>;
+  content?: string; // Legacy support
+  structuredContent?: StructuredHoverContent;
+  overloads?: string[];
+  protocolHints?: string[];
+  seeAlso?: string[]; // Links scraped from Sphinx "See also" sections
+  module?: string; // Top-level package/module (e.g. "typing", "pandas")
+  moduleExports?: string[]; // Key exported names shown in module overview hover
+  exportCount?: number; // Total indexed symbol count for this module
+  installedVersion?: string; // Installed package version (from importlib.metadata)
+  latestVersion?: string; // Latest version published on PyPI
+  license?: string; // Package license (e.g. "MIT", "Apache-2.0")
+  requiresPython?: string; // Minimum Python version (e.g. ">=3.9")
+  contextHints?: HoverContextHints;
 }
 
 export interface StructuredHoverSection {
-  kind: 'paragraph' | 'code' | 'note' | 'list'
-  role?: 'summary' | 'description' | 'example' | 'note'
-  title?: string
-  content: string
-  language?: string
-  items?: string[]
+  kind: "paragraph" | "code" | "note" | "list";
+  role?: "summary" | "description" | "example" | "note";
+  title?: string;
+  content: string;
+  language?: string;
+  items?: string[];
 }
 
 export interface StructuredHoverContent {
-  signature?: string
-  summary?: string
-  description?: string
-  examples?: string[]
-  notes?: string[]
-  sections: StructuredHoverSection[]
+  signature?: string;
+  summary?: string;
+  description?: string;
+  examples?: string[];
+  notes?: string[];
+  sections: StructuredHoverSection[];
 }
 
 export interface ParameterInfo {
-  name: string
-  type?: string
-  default?: string
-  description?: string
-  isRequired?: boolean
+  name: string;
+  type?: string;
+  default?: string;
+  description?: string;
+  isRequired?: boolean;
 }
 
 export interface ReturnInfo {
-  type?: string
-  description?: string
+  type?: string;
+  description?: string;
 }
 
 export interface ExceptionInfo {
-  type: string
-  description?: string
+  type: string;
+  description?: string;
 }
 
 export interface Badge {
-  label: string
-  color?: string
-  tooltip?: string
+  label: string;
+  color?: string;
+  tooltip?: string;
 }
 
 /**
@@ -167,27 +180,27 @@ export interface Badge {
  * through the hover pipeline before being merged with runtime/doc data.
  */
 export interface LspSymbol {
-  name: string
-  kind?: string
-  module?: string
-  path?: string
-  targetUri?: string
-  signature?: string
-  docstring?: string
-  overloads?: string[]
-  protocolHints?: string[]
-  isStdlib?: boolean
+  name: string;
+  kind?: string;
+  module?: string;
+  path?: string;
+  targetUri?: string;
+  signature?: string;
+  docstring?: string;
+  overloads?: string[];
+  protocolHints?: string[];
+  isStdlib?: boolean;
 }
 
 export interface SymbolInfo {
-  name: string
-  module?: string
-  docstring?: string
-  signature?: string
-  path?: string
-  isStdlib?: boolean
-  qualname?: string
-  kind?: string
-  overloads?: string[]
-  protocolHints?: string[]
+  name: string;
+  module?: string;
+  docstring?: string;
+  signature?: string;
+  path?: string;
+  isStdlib?: boolean;
+  qualname?: string;
+  kind?: string;
+  overloads?: string[];
+  protocolHints?: string[];
 }

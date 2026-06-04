@@ -4,6 +4,18 @@ All notable changes to Python Hover will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.7.7] - 2026-06-03
+
+Release hardening focused on hover rendering, Studio interaction reliability, and runtime helper cleanup.
+
+- Fixed structured hover overviews that were being dropped when the first rendered block exceeded the display limit; long summaries now truncate and still render instead of disappearing.
+- Added a docs-link fallback when hover content is unavailable so users still have an actionable path even if only the canonical URL is present.
+- Relaxed runtime-fallback heuristics for builtin and stdlib symbols so short but valid summaries are less likely to be discarded.
+- Fixed Studio webview loading and command handling so buttons and toggles register reliably after reload.
+- Allowed Pin/Debug hover actions to fall back to the most recent hover when a command token is missing, preventing the "hover a symbol first" dead-end.
+- Corrected the Python helper path so persistent runtime resolution starts from the shipped `extension/python-helper/helper.py` instead of the compiled output tree.
+- Added debug logging around hover cleanup and resolution decisions to make extraction failures easier to diagnose in the output channel.
+
 ## [0.7.5] - 2026-04-15
 
 Release polish focused on hover structure consistency, Studio customization controls, and security hardening.

@@ -2,7 +2,7 @@
   "name": "python-hover",
   "displayName": "Python Hover",
   "description": "Professional Python hover documentation for VS Code with fast symbol resolution, curated docs links, and integrated browsing.",
-  "version": "0.7.6",
+  "version": "0.7.7",
   "imports": {
     "#src/*": "./out/extension/src/*.js",
     "#shared/*": "./out/shared/*.js",
@@ -69,6 +69,15 @@
     "onLanguage:python"
   ],
   "main": "./out/extension/src/activate.js",
+  "scripts": {
+    "compile": "rm -rf out && tsc -p ./",
+    "test": "vitest"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.8",
+    "typescript": "^5.2.2",
+    "@types/node": "^18.16.19"
+  },
   "contributes": {
     "commands": [
       {
@@ -144,6 +153,21 @@
       {
         "command": "python-hover.searchDocs",
         "title": "Search Python Docs…",
+        "category": "Python Hover"
+      },
+      {
+        "command": "python-hover.findMethod",
+        "title": "Find Method Across Libraries…",
+        "category": "Python Hover"
+      },
+      {
+        "command": "python-hover.toggleLearnMode",
+        "title": "Toggle Learn Mode",
+        "category": "Python Hover"
+      },
+      {
+        "command": "python-hover.showTelemetry",
+        "title": "Show Telemetry Snapshot",
         "category": "Python Hover"
       },
       {
@@ -277,6 +301,12 @@
         "when": "editorLangId == python"
       },
       {
+        "command": "python-hover.findMethod",
+        "key": "ctrl+k ctrl+f",
+        "mac": "cmd+k cmd+f",
+        "when": "editorLangId == python"
+      },
+      {
         "command": "python-hover.pinHover",
         "key": "ctrl+k ctrl+p",
         "mac": "cmd+k cmd+p",
@@ -373,6 +403,11 @@
           "minimum": 1000,
           "maximum": 60000,
           "description": "HTTP timeout (ms) for fetching documentation pages."
+        },
+        "python-hover.telemetry.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable privacy-first local telemetry counters (aggregate only) for hover usage and source mix."
         },
         "python-hover.cacheTTL.inventoryDays": {
           "type": "number",
@@ -671,6 +706,20 @@
           "default": false,
           "markdownDescription": "When `python-hover.docsBrowser` is set to `integrated` and the docs panel is already open, replace its current page with the current hover target as hover results resolve."
         },
+        "python-hover.ui.learnMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "Study mode that keeps integrated docs synchronized with your current hover target."
+        },
+        "python-hover.ui.visualStyle": {
+          "type": "string",
+          "enum": [
+            "minimal",
+            "expanded"
+          ],
+          "default": "expanded",
+          "description": "High-level hover visual density preset. Minimal favors concise cards; expanded shows full detail."
+        },
         "python-hover.ui.moduleBrowser.defaultView": {
           "type": "string",
           "enum": [
@@ -755,9 +804,6 @@
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "rm -rf out && tsc -p ./",
-    "audit:hover": "npm run compile && node ./scripts/renderHoverAudit.cjs",
-    "smoke:hover-sweep": "npm run compile && node ./scripts/hoverSweepSmoke.cjs",
-    "smoke:parameter-lens": "npm run compile && node ./scripts/parameterLensSmoke.cjs",
     "watch": "tsc -watch -p ./",
     "lint": "eslint src --ext ts",
     "package": "vsce package",

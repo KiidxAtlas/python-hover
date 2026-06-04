@@ -64,13 +64,13 @@ Most hover extensions show you a one-liner from PyPI. **Python Hover fetches fro
 
 ---
 
-## 🆕 New in 0.7.5
+## 🆕 New in 0.7.7
 
-- **Hover Layout controls in Studio** let you reorder regular hover sections and toggle individual sections on or off without editing JSON.
-- **Configurable hover section order** is now available through `python-hover.ui.hoverSectionOrder`, with safe normalization for unknown/missing section IDs.
-- **New section visibility toggles** add direct controls for Overview (`ui.showDescription`), Active Parameter Lens (`ui.showParameterLens`), and Notes (`ui.showNotes`).
-- **Keyword hover structure polish** improves syntax/overview consistency by honoring pre-extracted structured syntax blocks when available.
-- **Release hardening** includes improved Studio reorder reliability and final security sanity checks for webview messaging and trusted command usage.
+- **Structured overview rendering** now keeps long Sphinx summaries visible instead of dropping the overview when the first block exceeds the display limit.
+- **Docs fallback behavior** now shows a link when content extraction is sparse, so hover cards stay actionable even when prose is thin.
+- **Studio reliability** is improved with webview loading fixes and command fallbacks so Pin/Debug actions still work when a token is missing.
+- **Runtime helper startup** now resolves the shipped `extension/python-helper/helper.py` path correctly, restoring builtin and stdlib runtime enrichment.
+- **Diagnostics** now log when cleanup removes hover text, making it easier to see whether extraction or rendering removed the content.
 
 ---
 

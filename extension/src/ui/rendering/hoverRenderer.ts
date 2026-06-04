@@ -6,6 +6,7 @@ import {
 import { Config } from "#src/config";
 import { RegularHoverSectionId } from "#src/hover/hoverLayout";
 import { isActiveParameterMatch } from "#src/hover/parameterLens";
+import { Logger } from "#src/logger";
 import {
   buildSavedDocEntry,
   getSavedDocModuleTarget,
@@ -258,7 +259,39 @@ export class HoverRenderer {
     const icon = this.getIconForKind(doc.kind);
     const rawTitle = getDisplayTitle(doc.title);
 
-    md.appendMarkdown(`### $(${icon}) \`${rawTitle}\`\n\n`);
+    // If we have a signature for a method, prefer showing the method name
+    // qualified by its owner type/module (e.g. `str.split`) instead of only
+    // showing the owner (`str`). This improves clarity when hovering on
+    // built-in methods where the HoverDoc title is the owner type.
+    let displayTitle = rawTitle;
+    if (doc.signature) {
+      const m = doc.signature.match(
+        /^\s*(?:def\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*\(/,
+      );
+      if (m) {
+        const fn = m[1];
+        if (rawTitle && rawTitle !== fn) {
+          displayTitle = `${rawTitle}.${fn}`;
+        } else {
+          displayTitle = fn;
+        }
+      }
+    }
+
+    md.appendMarkdown(`### $(${icon}) \`${displayTitle}\`\n\n`);
+
+    const breadcrumb = this.buildBreadcrumb(doc);
+    if (breadcrumb) {
+      md.appendMarkdown(`$(symbol-namespace) ${breadcrumb}\n\n`);
+    }
+
+    if (doc.contextHints?.tags?.length) {
+      md.appendMarkdown(
+        `$(sparkle) Context: ${doc.contextHints.tags
+          .map((tag) => `\`${this.escapeMarkdown(tag)}\``)
+          .join(" · ")}\n\n`,
+      );
+    }
 
     const headerDetails = [
       ...(this.config.showProvenance ? this.getProvenanceItems(doc) : []),
@@ -389,6 +422,9 @@ export class HoverRenderer {
       md.appendMarkdown(
         `$(arrow-up) **Update available:** v${doc.installedVersion} → v${doc.latestVersion}\n\n`,
       );
+      md.appendMarkdown(
+        `$(diff) **Version diff hint:** behavior or parameter semantics may differ across these versions; check release notes before copying examples unchanged.\n\n`,
+      );
     }
     const requiredVersion = getRequiredPythonVersion(doc);
     if (
@@ -414,6 +450,19 @@ export class HoverRenderer {
   private renderDescription(md: vscode.MarkdownString, doc: HoverDoc): void {
     let content = buildDescriptionContent(doc);
     if (!content) {
+      // No combined summary/content available — if we have a docs URL, at least
+      // offer a quick link so the user can jump to the canonical docs page.
+      if (doc.url) {
+        const moreUrl = this.buildPreferredDocsLink(doc);
+        md.appendMarkdown(`**$(book) Overview**\n\n`);
+        md.appendMarkdown(
+          `[$(book) Continue reading in documentation…](<${moreUrl}> "Open full documentation")\n\n`,
+        );
+        Logger.debug(
+          "HoverRenderer: no description content; showing docs link",
+          { title: doc.title, url: doc.url },
+        );
+      }
       return;
     }
 
@@ -494,6 +543,16 @@ export class HoverRenderer {
       const visibleLength = this.visibleMarkdownLength(block) + separatorLength;
 
       if (visibleLength > remaining) {
+        if (index === 0) {
+          const truncated = this.smartTruncate(
+            this.toVisibleMarkdownText(block),
+            remaining,
+          );
+          if (truncated.trim()) {
+            md.appendMarkdown(truncated);
+            md.appendMarkdown("\n\n");
+          }
+        }
         wasTruncated = true;
         break;
       }
@@ -1460,18 +1519,18 @@ export class HoverRenderer {
     ];
     if (lens.parameter.type) {
       details.push(
-        `type \`${this.escapeMarkdown(this.cleanContentAnnotations(lens.parameter.type))}\``,
+        `type \`${this.escapeInlineCode(this.cleanContentAnnotations(lens.parameter.type))}\``,
       );
     }
     if (lens.parameter.default !== undefined) {
       details.push(
-        `default \`${this.escapeMarkdown(lens.parameter.default)}\``,
+        `default \`${this.escapeInlineCode(lens.parameter.default)}\``,
       );
     }
 
     md.appendMarkdown(`---\n\n`);
     md.appendMarkdown(
-      `**$(target) Active parameter** \`${this.escapeMarkdown(lens.parameter.name || lens.parameterLabel)}\``,
+      `**$(target) Active parameter** \`${this.escapeInlineCode(lens.parameter.name || lens.parameterLabel)}\``,
     );
     if (details.length > 0) {
       md.appendMarkdown(` — ${details.join(" \u00a0·\u00a0 ")}`);
@@ -1501,6 +1560,43 @@ export class HoverRenderer {
     if (description) {
       md.appendMarkdown(`${description}\n\n`);
     }
+
+    if (lens.validation) {
+      const icon =
+        lens.validation.status === "valid"
+          ? "check"
+          : lens.validation.status === "warning"
+            ? "warning"
+            : "question";
+      md.appendMarkdown(
+        `$(${icon}) ${this.escapeMarkdown(lens.validation.message)}\n\n`,
+      );
+    }
+  }
+
+  private buildBreadcrumb(doc: HoverDoc): string | undefined {
+    const title = getDisplayTitle(doc.title).trim();
+    const modulePath = doc.module?.trim() || title;
+    if (!modulePath.includes(".")) {
+      return undefined;
+    }
+
+    const segments = modulePath.split(".").filter(Boolean);
+    if (segments.length < 2) {
+      return undefined;
+    }
+
+    const crumbs: string[] = [];
+    for (let index = 0; index < segments.length; index++) {
+      const segment = segments[index];
+      const target = segments.slice(0, index + 1).join(".");
+      const args = this.encodeCommandArgs(target);
+      crumbs.push(
+        `[${this.escapeMarkdown(segment)}](<command:python-hover.browseModule?${args}> "Browse ${this.escapeMarkdown(target)}")`,
+      );
+    }
+
+    return crumbs.join(" → ");
   }
 
   private renderModuleOverview(md: vscode.MarkdownString, doc: HoverDoc): void {
@@ -1604,6 +1700,13 @@ export class HoverRenderer {
     md.appendMarkdown(
       `**$(play) Example${this.config.maxExamples > 1 ? "s" : ""}**\n\n`,
     );
+    if (doc.contextHints?.tags?.length) {
+      md.appendMarkdown(
+        `*Context matched:* ${doc.contextHints.tags
+          .map((tag) => `\`${this.escapeMarkdown(tag)}\``)
+          .join(" · ")}\n\n`,
+      );
+    }
 
     const structuredExamples = getStructuredExampleSections(doc);
     const maxShow = this.config.maxExamples;
@@ -2228,6 +2331,10 @@ export class HoverRenderer {
 
   private escapeMarkdown(text: string): string {
     return text.replace(/([\\`*_{}[\]()#+\-.!|])/g, "\\$1");
+  }
+
+  private escapeInlineCode(text: string): string {
+    return text.replace(/`/g, "\\`");
   }
 
   private getCommandToken(doc: HoverDoc): string | undefined {

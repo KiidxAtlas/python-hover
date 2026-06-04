@@ -1,4 +1,9 @@
-import { ActiveParameterLens, HoverDoc, ParameterInfo } from "#shared/types";
+import {
+  ActiveParameterLens,
+  HoverDoc,
+  ParameterInfo,
+  ParameterValidation,
+} from "#shared/types";
 import * as vscode from "vscode";
 
 export async function resolveActiveParameterLens(
@@ -51,6 +56,16 @@ export async function resolveActiveParameterLens(
   });
 
   const callableExpression = extractActiveCallExpression(document, position);
+  const argumentExpression = extractActiveArgumentExpression(
+    document,
+    position,
+    parameterIndex,
+  );
+  const mergedParameter = parseParameterInfo(parameterLabel, documentation);
+  const validation = validateActiveArgument(
+    mergedParameter,
+    argumentExpression,
+  );
 
   return {
     callable: callableExpression || extractCallableLabel(activeSignature.label),
@@ -58,10 +73,12 @@ export async function resolveActiveParameterLens(
     callableDocumentation,
     parameters: signatureParameters,
     parameterLabel,
-    parameter: parseParameterInfo(parameterLabel, documentation),
+    parameter: mergedParameter,
     parameterIndex,
     parameterCount: parameters.length,
     source: "signatureHelp",
+    argumentExpression,
+    validation,
   };
 }
 
@@ -95,6 +112,16 @@ export function mergeActiveParameterLensWithDoc(
       isRequired: matchedParameter.isRequired ?? lens.parameter.isRequired,
     },
     source: "merged",
+    validation: validateActiveArgument(
+      {
+        name: matchedParameter.name || lens.parameter.name,
+        type: matchedParameter.type || lens.parameter.type,
+        default: matchedParameter.default ?? lens.parameter.default,
+        description: matchedParameter.description || lens.parameter.description,
+        isRequired: matchedParameter.isRequired ?? lens.parameter.isRequired,
+      },
+      lens.argumentExpression,
+    ),
   };
 }
 
@@ -292,4 +319,179 @@ function parseParameterInfo(
 
 function normalizeParameterName(name: string | undefined): string {
   return (name ?? "").replace(/^\*+/, "").trim().toLowerCase();
+}
+
+function extractActiveArgumentExpression(
+  document: vscode.TextDocument,
+  position: vscode.Position,
+  parameterIndex: number,
+): string | undefined {
+  const line = document.lineAt(position.line).text;
+  const openParenIndex = findEnclosingCallOpenParen(line, position.character);
+  if (openParenIndex === -1) {
+    return undefined;
+  }
+
+  const cursor = Math.max(openParenIndex + 1, position.character);
+  const slice = line.slice(openParenIndex + 1, cursor);
+  const args = splitTopLevelCommaArgs(slice);
+  const value = args[Math.min(parameterIndex, args.length - 1)]?.trim();
+  return value || undefined;
+}
+
+function splitTopLevelCommaArgs(value: string): string[] {
+  const result: string[] = [];
+  let current = "";
+  let paren = 0;
+  let bracket = 0;
+  let brace = 0;
+  let quote: "'" | '"' | null = null;
+
+  for (let index = 0; index < value.length; index++) {
+    const char = value[index];
+
+    if (quote) {
+      current += char;
+      if (char === quote && value[index - 1] !== "\\") {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (char === "'" || char === '"') {
+      quote = char;
+      current += char;
+      continue;
+    }
+
+    if (char === "(") {
+      paren++;
+      current += char;
+      continue;
+    }
+    if (char === ")") {
+      paren = Math.max(0, paren - 1);
+      current += char;
+      continue;
+    }
+    if (char === "[") {
+      bracket++;
+      current += char;
+      continue;
+    }
+    if (char === "]") {
+      bracket = Math.max(0, bracket - 1);
+      current += char;
+      continue;
+    }
+    if (char === "{") {
+      brace++;
+      current += char;
+      continue;
+    }
+    if (char === "}") {
+      brace = Math.max(0, brace - 1);
+      current += char;
+      continue;
+    }
+
+    if (char === "," && paren === 0 && bracket === 0 && brace === 0) {
+      result.push(current);
+      current = "";
+      continue;
+    }
+
+    current += char;
+  }
+
+  result.push(current);
+  return result;
+}
+
+function validateActiveArgument(
+  parameter: ParameterInfo,
+  argumentExpression?: string,
+): ParameterValidation | undefined {
+  if (!argumentExpression) {
+    return undefined;
+  }
+
+  const argument = argumentExpression.trim();
+  if (!argument) {
+    return undefined;
+  }
+
+  const literalOptions = extractLiteralOptions(parameter.type);
+  const argumentLiteral = extractStringLiteral(argument);
+  if (literalOptions.length > 0 && argumentLiteral) {
+    if (literalOptions.includes(argumentLiteral)) {
+      return {
+        status: "valid",
+        message: `Value looks valid for this parameter (${argumentLiteral}).`,
+      };
+    }
+    return {
+      status: "warning",
+      message: `"${argumentLiteral}" is not in allowed values: ${literalOptions.join(", ")}.`,
+    };
+  }
+
+  if (/^timeout$/i.test(parameter.name)) {
+    if (/^\d+(?:\.\d+)?$/.test(argument) || /^\(.+,.+\)$/.test(argument)) {
+      return {
+        status: "valid",
+        message: "Timeout accepts float seconds or a (connect, read) tuple.",
+      };
+    }
+    return {
+      status: "unknown",
+      message:
+        "Timeout usually accepts float seconds or a (connect, read) tuple.",
+    };
+  }
+
+  if (parameter.type?.toLowerCase().includes("bool")) {
+    if (/^(True|False)$/i.test(argument)) {
+      return {
+        status: "valid",
+        message: "Boolean argument matches expected type.",
+      };
+    }
+  }
+
+  if (
+    parameter.type?.toLowerCase().includes("tuple") &&
+    !/^\(.+\)$/.test(argument)
+  ) {
+    return {
+      status: "warning",
+      message: "Expected a tuple-like value for this parameter.",
+    };
+  }
+
+  return {
+    status: "unknown",
+    message: "Argument shape could not be validated statically.",
+  };
+}
+
+function extractLiteralOptions(typeValue?: string): string[] {
+  if (!typeValue) {
+    return [];
+  }
+
+  const literalMatch = /Literal\[([^\]]+)\]/i.exec(typeValue);
+  if (!literalMatch) {
+    return [];
+  }
+
+  return literalMatch[1]
+    .split(",")
+    .map((part) => extractStringLiteral(part.trim()) ?? part.trim())
+    .filter(Boolean);
+}
+
+function extractStringLiteral(value: string): string | null {
+  const match = /^['"](.+)['"]$/.exec(value.trim());
+  return match?.[1] ?? null;
 }
