@@ -128,7 +128,7 @@ export class Config {
       const normalizedBaseUrl = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
 
       return [{ name, baseUrl: normalizedBaseUrl, inventoryUrl }];
-    };);
+    });
   }
 
   get showSignatures(): boolean {

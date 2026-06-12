@@ -1,4 +1,4 @@
-(function () {
+(function pyhoverModuleBrowser() {
   const vscode = acquireVsCodeApi();
 
   function parsePayload(raw) {
