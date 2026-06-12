@@ -1,4 +1,4 @@
-function () {
+(function () {
   const vscode = acquireVsCodeApi();
 
   function parsePayload(raw) {

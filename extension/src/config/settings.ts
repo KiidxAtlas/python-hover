@@ -1,15 +1,16 @@
 import { CustomLibraryConfig } from "#shared/types";
 import {
-  REGULAR_HOVER_SECTION_ORDER,
-  RegularHoverSectionId,
-  normalizeRegularHoverSectionOrder,
-} from "#src/hover/hoverLayout";
-import {
   buildInterpreterCacheFingerprint,
   FingerprintCache,
   isDependencyManifestUri as isDependencyManifest,
 } from "#src/config/workspaceFingerprint";
+import {
+  normalizeRegularHoverSectionOrder,
+  REGULAR_HOVER_SECTION_ORDER,
+  RegularHoverSectionId,
+} from "#src/hover/hoverLayout";
 import * as vscode from "vscode";
+import { Logger } from "../logger";
 
 export class Config {
   private get config() {
@@ -113,6 +114,7 @@ export class Config {
         return [];
       }
 
+      // Validate URLs — skip malformed entries silently.
       try {
         new URL(baseUrl);
         if (inventoryUrl) {
@@ -122,7 +124,10 @@ export class Config {
         return [];
       }
 
-      return [{ name, baseUrl, inventoryUrl }];
+      // Normalize baseUrl to always end with a trailing slash.
+      const normalizedBaseUrl = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
+
+      return [{ name, baseUrl: normalizedBaseUrl, inventoryUrl }];
     });
   }
 
@@ -178,7 +183,10 @@ export class Config {
     if (configured && configured.trim().length > 0) {
       return configured;
     }
-    return process.platform === "win32" ? "python" : "python3";
+    // Fallback to platform-appropriate default.
+    const fallback = process.platform === "win32" ? "python" : "python3";
+    Logger.debug(`Using fallback Python path: ${fallback}`);
+    return fallback;
   }
 
   /**
@@ -186,7 +194,10 @@ export class Config {
    * and dependency manifests in the current workspace.
    */
   get interpreterCacheFingerprint(): string {
-    return buildInterpreterCacheFingerprint(this.pythonPath, this._fingerprintCache);
+    return buildInterpreterCacheFingerprint(
+      this.pythonPath,
+      this._fingerprintCache,
+    );
   }
 
   isDependencyManifestUri(uri: vscode.Uri): boolean {

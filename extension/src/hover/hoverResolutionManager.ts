@@ -117,7 +117,9 @@ export class HoverResolutionManager {
 
       return doc;
     } catch (e) {
-      // Error isolation: failures in remote fetching shouldn't crash hover
+      // Error isolation: failures in remote fetching shouldn't crash hover.
+      // Log at debug level so users can troubleshoot without spamming the output.
+      Logger.debug(`DocResolver failed for key ${key.name || "unknown"}`, e);
       return null;
     }
   }
@@ -188,7 +190,9 @@ export class HoverResolutionManager {
 
       this.runtimeDocCache.set(cacheKey, runtimeDoc);
       return runtimeDoc;
-    } catch {
+    } catch (e) {
+      // Runtime fallback failure is expected for many symbols — log at debug.
+      Logger.debug(`Runtime fallback failed for ${symbol}`, e);
       this.runtimeDocCache.set(cacheKey, null);
       return null;
     }

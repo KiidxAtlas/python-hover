@@ -167,18 +167,23 @@ class PythonProcess {
           pending.resolve(msg.result);
         }
       } catch (e) {
-        Logger.error("PythonProcess failed to parse response line", e);
+        // Silently skip malformed JSON lines — they may be from stderr leaks.
       }
     }
   }
 
   private handleDeath(): void {
     this.dead = true;
+    const pendingCount = this.pending.size;
     this.proc = null;
-    // Reject all pending requests
+    // Reject all pending requests with a clear error message.
     for (const [id, pending] of this.pending) {
       clearTimeout(pending.timer);
-      pending.reject(new Error("Python process died"));
+      pending.reject(
+        new Error(
+          `Python process exited unexpectedly (${pendingCount} requests lost)`,
+        ),
+      );
       this.pending.delete(id);
     }
   }

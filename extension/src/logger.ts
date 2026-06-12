@@ -1,7 +1,29 @@
 import * as vscode from "vscode";
 
+/** Format an error value into a human-readable string. */
+function formatErrorValue(error: unknown): string {
+  if (error instanceof Error) {
+    return error.stack || error.message;
+  }
+  if (typeof error === "object" && error !== null) {
+    return JSON.stringify(error, null, 2);
+  }
+  return String(error);
+}
+
+/** Format data for log output, handling objects and primitives. */
+function formatLogData(data?: unknown): string {
+  if (!data) {
+    return "";
+  }
+  if (typeof data === "object") {
+    return `\n${JSON.stringify(data, null, 2)}`;
+  }
+  return ` ${data}`;
+}
+
 export class Logger {
-  private static _outputChannel: vscode.OutputChannel;
+  private static _outputChannel: vscode.OutputChannel | undefined;
   private static _debugEnabled = false;
   private static _revealOnError = false;
 
@@ -18,21 +40,12 @@ export class Logger {
   }
 
   public static log(message: string, data?: unknown) {
-    if (!this._outputChannel) {
+    const channel = this._outputChannel;
+    if (!channel) {
       return;
     }
     const timestamp = new Date().toLocaleTimeString();
-    let logMessage = `[${timestamp}] ${message}`;
-
-    if (data) {
-      if (typeof data === "object") {
-        logMessage += `\n${JSON.stringify(data, null, 2)}`;
-      } else {
-        logMessage += ` ${data}`;
-      }
-    }
-
-    this._outputChannel.appendLine(logMessage);
+    channel.appendLine(`[${timestamp}] ${message}${formatLogData(data)}`);
   }
 
   public static debug(message: string, data?: unknown) {
@@ -66,26 +79,33 @@ export class Logger {
     this.log(`[debug] ${message}`, payload);
   }
 
+  /** Log a warning-level message (non-critical, user-visible issues). */
+  public static warn(message: string, data?: unknown) {
+    const channel = this._outputChannel;
+    if (!channel) {
+      return;
+    }
+    const timestamp = new Date().toLocaleTimeString();
+    channel.appendLine(
+      `[${timestamp}] [WARN] ${message}${formatLogData(data)}`,
+    );
+  }
+
   public static error(message: string, error?: unknown) {
-    if (!this._outputChannel) {
+    const channel = this._outputChannel;
+    if (!channel) {
       return;
     }
     const timestamp = new Date().toLocaleTimeString();
     let logMessage = `[${timestamp}] [ERROR] ${message}`;
 
     if (error) {
-      if (error instanceof Error) {
-        logMessage += `\n${error.stack || error.message}`;
-      } else if (typeof error === "object") {
-        logMessage += `\n${JSON.stringify(error, null, 2)}`;
-      } else {
-        logMessage += ` ${error}`;
-      }
+      logMessage += `\n${formatErrorValue(error)}`;
     }
 
-    this._outputChannel.appendLine(logMessage);
+    channel.appendLine(logMessage);
     if (this._revealOnError) {
-      this._outputChannel.show(true);
+      channel.show(true);
     }
   }
 
