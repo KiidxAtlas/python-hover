@@ -94,7 +94,7 @@ export class StatusBarManager {
       tt.appendMarkdown(`History: ${historyPreview}\n\n`);
     }
     tt.appendText(
-      "Click for quick actions like search, browse, hover history, cache tools, and Studio.",
+      "Click for quick actions: search docs, browse modules, hover history, cache tools, and Studio.",
     );
     tt.supportThemeIcons = true;
     this.item.tooltip = tt;

@@ -313,7 +313,7 @@ export class HoverRenderer {
       return;
     }
 
-    md.appendMarkdown(`*Quick actions:* ${primaryActions.join("  ·  ")}\n\n`);
+    md.appendMarkdown(`> *Quick actions:* ${primaryActions.join("  ·  ")}\n\n`);
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -330,7 +330,7 @@ export class HoverRenderer {
           : undefined;
 
     if (overloads && overloads.length > 1) {
-      md.appendMarkdown(`**$(symbol-method) Overloads**\n\n`);
+      md.appendMarkdown(`> **$(symbol-method) Overloads**\n\n`);
       const maxShow = 3;
       overloads
         .slice(0, maxShow)
@@ -344,7 +344,7 @@ export class HoverRenderer {
       if (overloads.length > maxShow) {
         const extra = overloads.length - maxShow;
         md.appendMarkdown(
-          `*+${extra} more overload${extra > 1 ? "s" : ""} — see docs*\n\n`,
+          `> *+${extra} more overload${extra > 1 ? "s" : ""} — see docs*\n\n`,
         );
       } else {
         md.appendMarkdown("\n");
@@ -359,7 +359,7 @@ export class HoverRenderer {
       if (sig.length > MAX_SIG_LEN) {
         sig = this.truncateSignature(sig, MAX_SIG_LEN);
       }
-      md.appendMarkdown(`**$(symbol-method) Signature**\n\n`);
+      md.appendMarkdown(`> **$(symbol-method) Signature**\n\n`);
       this.renderSignatureEntry(md, sig, false);
     }
   }
@@ -388,7 +388,7 @@ export class HoverRenderer {
     asListItem: boolean,
   ): void {
     if (asListItem) {
-      md.appendMarkdown(`*Variant*\n\n`);
+      md.appendMarkdown(`> *Variant*\n\n`);
     }
     md.appendCodeblock(signature, "python");
     md.appendMarkdown("\n");
@@ -410,7 +410,7 @@ export class HoverRenderer {
   private renderCallouts(md: vscode.MarkdownString, doc: HoverDoc): void {
     if (doc.badges?.some((b) => /^deprecated$/i.test(b.label))) {
       md.appendMarkdown(
-        `$(error) **Deprecated** — check the documentation for the recommended alternative\n\n`,
+        `> $(error) **Deprecated** — check the documentation for the recommended alternative\n\n`,
       );
     }
     if (
@@ -420,10 +420,10 @@ export class HoverRenderer {
       isMeaningfullyOutdated(doc.installedVersion, doc.latestVersion)
     ) {
       md.appendMarkdown(
-        `$(arrow-up) **Update available:** v${doc.installedVersion} → v${doc.latestVersion}\n\n`,
+        `> $(arrow-up) **Update available:** v${doc.installedVersion} → v${doc.latestVersion}\n\n`,
       );
       md.appendMarkdown(
-        `$(diff) **Version diff hint:** behavior or parameter semantics may differ across these versions; check release notes before copying examples unchanged.\n\n`,
+        `> *$(diff) Behavior or parameter semantics may differ across these versions; check release notes before copying examples unchanged.*\n\n`,
       );
     }
     const requiredVersion = getRequiredPythonVersion(doc);
@@ -433,12 +433,12 @@ export class HoverRenderer {
       this.isVersionBelow(this.detectedVersion, requiredVersion)
     ) {
       md.appendMarkdown(
-        `$(warning) **Requires Python ${requiredVersion}+** — your runtime is Python ${this.detectedVersion}\n\n`,
+        `> $(warning) **Requires Python ${requiredVersion}+** — your runtime is Python ${this.detectedVersion}\n\n`,
       );
     }
     if (doc.protocolHints && doc.protocolHints.length > 0) {
       doc.protocolHints.forEach((h) =>
-        md.appendMarkdown(`$(lightbulb) *${h}*\n\n`),
+        md.appendMarkdown(`> $(lightbulb) *${h}*\n\n`),
       );
     }
   }
@@ -454,9 +454,9 @@ export class HoverRenderer {
       // offer a quick link so the user can jump to the canonical docs page.
       if (doc.url) {
         const moreUrl = this.buildPreferredDocsLink(doc);
-        md.appendMarkdown(`**$(book) Overview**\n\n`);
+        md.appendMarkdown(`> **$(book) Overview**\n\n`);
         md.appendMarkdown(
-          `[$(book) Continue reading in documentation…](<${moreUrl}> "Open full documentation")\n\n`,
+          `> [$(book) Continue reading in documentation…](<${moreUrl}> "Open full documentation")\n\n`,
         );
         Logger.debug(
           "HoverRenderer: no description content; showing docs link",
@@ -467,7 +467,7 @@ export class HoverRenderer {
     }
 
     if (doc.kind?.toLowerCase() !== "keyword") {
-      md.appendMarkdown(`**$(book) Overview**\n\n`);
+      md.appendMarkdown(`> **$(book) Overview**\n\n`);
     }
 
     if (doc.kind?.toLowerCase() === "keyword") {
@@ -508,7 +508,7 @@ export class HoverRenderer {
     if (wasTruncated && doc.url) {
       const moreUrl = this.buildPreferredDocsLink(doc);
       md.appendMarkdown(
-        `[$(book) Continue reading in documentation…](<${moreUrl}> "Open full documentation")\n\n`,
+        `> [$(book) Continue reading in documentation…](<${moreUrl}> "Open full documentation")\n\n`,
       );
     }
   }
@@ -569,7 +569,7 @@ export class HoverRenderer {
     if (wasTruncated && doc.url) {
       const moreUrl = this.buildPreferredDocsLink(doc);
       md.appendMarkdown(
-        `[$(book) Continue reading in documentation…](<${moreUrl}> "Open full documentation")\n\n`,
+        `> [$(book) Continue reading in documentation…](<${moreUrl}> "Open full documentation")\n\n`,
       );
     }
 
@@ -796,19 +796,18 @@ export class HoverRenderer {
     }
 
     if (overviewBlocks.length > 0) {
-      md.appendMarkdown(`**$(book) Overview**\n\n`);
+      md.appendMarkdown(`> **$(book) Overview**\n\n`);
       md.appendMarkdown(`${overviewBlocks.join("\n\n")}\n\n`);
     }
 
     if (versionBlocks.length > 0) {
-      md.appendMarkdown(`---\n\n`);
       for (const line of versionBlocks) {
         md.appendMarkdown(`> ${line}\n\n`);
       }
     }
 
     if (syntaxBlocks.length > 0) {
-      md.appendMarkdown(`---\n\n**$(code) Syntax**\n\n`);
+      md.appendMarkdown(`> **$(code) Syntax**\n\n`);
       const maxSyntaxLines = Math.max(this.config.maxSnippetLines, 12);
       syntaxBlocks.forEach((syntax, index) => {
         const lines = syntax.split("\n");
@@ -833,14 +832,14 @@ export class HoverRenderer {
     if (exampleBlocks.length > 0) {
       exampleBlocks.forEach((example, index) => {
         md.appendMarkdown(
-          `---\n\n**$(play) ${index === 0 ? "Example" : "Additional example"}**\n\n`,
+          `> **$(play) ${index === 0 ? "Example" : "Additional example"}**\n\n`,
         );
         const lines = example.split("\n");
         const maxLines = Math.max(this.config.maxSnippetLines, 10);
         if (lines.length > maxLines) {
           md.appendCodeblock(lines.slice(0, maxLines).join("\n"), "python");
           md.appendMarkdown(
-            `*+${lines.length - maxLines} more lines in docs*\n\n`,
+            `> *+${lines.length - maxLines} more lines in docs*\n\n`,
           );
         } else {
           md.appendCodeblock(example, "python");
@@ -851,7 +850,7 @@ export class HoverRenderer {
 
     if (wasTruncated && !parsed.seeAlso.length && remaining <= 0) {
       md.appendMarkdown(
-        `*More details are available in the official docs.*\n\n`,
+        `> *More details are available in the official docs.*\n\n`,
       );
     }
 
@@ -1397,7 +1396,7 @@ export class HoverRenderer {
     raw: string,
     doc: HoverDoc,
   ): void {
-    md.appendMarkdown(`---\n\n`);
+    md.appendMarkdown(`> **$(link-external) See also**\n\n`);
     let normalized = raw.replace(/\s+/g, " ").trim();
 
     const peps = [...normalized.matchAll(/\*{0,2}PEP\s*(\d+)\*{0,2}/gi)].map(
@@ -1444,12 +1443,12 @@ export class HoverRenderer {
     }
     if (parts.length > 0) {
       md.appendMarkdown(
-        `$(link-external) **See also:** ${this.rewriteMarkdownLinks(parts.join(" — "))}\n\n`,
+        `> ${this.rewriteMarkdownLinks(parts.join(" — "))}\n\n`,
       );
     }
     if (relatedTopics.length > 0) {
       md.appendMarkdown(
-        `$(symbol-key) **Related:** ${relatedTopics.join(" \u00a0·\u00a0 ")}\n\n`,
+        `> $(symbol-key) **Related:** ${relatedTopics.join(" \u00a0·\u00a0 ")}\n\n`,
       );
     }
   }
@@ -1463,8 +1462,7 @@ export class HoverRenderer {
     if (params.length === 0) {
       return;
     }
-    md.appendMarkdown(`---\n\n`);
-    md.appendMarkdown(`**$(list-unordered) Parameters**\n\n`);
+    md.appendMarkdown(`> **$(list-unordered) Parameters**\n\n`);
     this.renderParameterTable(md, params, doc);
   }
 
@@ -1477,6 +1475,8 @@ export class HoverRenderer {
       return;
     }
     const maxItems = this.config.maxParameters;
+    md.appendMarkdown(`> | Name | Type | Details |\n`);
+    md.appendMarkdown(`> | --- | --- | --- |\n`);
     const rows = params.slice(0, maxItems).map((p, index) => {
       const active = isActiveParameterMatch(doc.parameterLens, p, index);
       const name = `\`${this.escapeTableCell(p.name)}\`${p.default !== undefined ? ` = \`${this.escapeTableCell(p.default)}\`` : ""}`;
@@ -1495,16 +1495,16 @@ export class HoverRenderer {
             `Current argument${baseDescription !== "—" ? `. ${baseDescription}` : ""}`,
           )
         : baseDescription;
-      return `| ${active ? `**${name}**` : name} | ${type} | ${description} |`;
+      return `> | ${active ? `**${this.escapeTableCell(p.name)}**` : this.escapeTableCell(p.name)} | ${type} | ${description} |`;
     });
 
-    md.appendMarkdown("| Name | Type | Details |\n");
-    md.appendMarkdown("| --- | --- | --- |\n");
-    md.appendMarkdown(rows.join("\n") + "\n\n");
+    md.appendMarkdown(`| Name | Type | Details |\n`);
+    md.appendMarkdown(`| --- | --- | --- |\n`);
+    md.appendMarkdown(rows.map((row) => `> ${row}`).join("\n") + "\n\n");
 
     if (params.length > maxItems) {
       md.appendMarkdown(
-        `*+${params.length - maxItems} more parameters in docs*\n\n`,
+        `> *+${params.length - maxItems} more parameters in docs*\n\n`,
       );
     }
   }
@@ -1529,9 +1529,8 @@ export class HoverRenderer {
       );
     }
 
-    md.appendMarkdown(`---\n\n`);
     md.appendMarkdown(
-      `**$(target) Active parameter** \`${this.escapeInlineCode(lens.parameter.name || lens.parameterLabel)}\``,
+      `> **$(target) Active parameter** \`${this.escapeInlineCode(lens.parameter.name || lens.parameterLabel)}\``,
     );
     if (details.length > 0) {
       md.appendMarkdown(` — ${details.join(" \u00a0·\u00a0 ")}`);
@@ -1559,7 +1558,7 @@ export class HoverRenderer {
         )
       : undefined;
     if (description) {
-      md.appendMarkdown(`${description}\n\n`);
+      md.appendMarkdown(`> ${description}\n\n`);
     }
 
     if (lens.validation) {
@@ -1570,7 +1569,7 @@ export class HoverRenderer {
             ? "warning"
             : "question";
       md.appendMarkdown(
-        `$(${icon}) ${this.escapeMarkdown(lens.validation.message)}\n\n`,
+        `> $(${icon}) ${this.escapeMarkdown(lens.validation.message)}\n\n`,
       );
     }
   }
@@ -1606,7 +1605,7 @@ export class HoverRenderer {
 
     if (importStatement) {
       md.appendMarkdown(
-        `$(symbol-namespace) Import: \`${this.escapeMarkdown(importStatement)}\`\n\n`,
+        `> $(symbol-namespace) Import: \`${this.escapeMarkdown(importStatement)}\`\n\n`,
       );
     }
 
@@ -1623,7 +1622,7 @@ export class HoverRenderer {
         doc.moduleExports.length > 4
           ? ` \u00a0·\u00a0 +${doc.moduleExports.length - 4} more`
           : "";
-      md.appendMarkdown(`$(symbol-field) ${preview}${suffix}\n\n`);
+      md.appendMarkdown(`> $(symbol-field) ${preview}${suffix}\n\n`);
     }
 
     if (browseTarget) {
@@ -1632,7 +1631,7 @@ export class HoverRenderer {
         ? ` ${doc.exportCount.toLocaleString()} indexed symbols`
         : " indexed symbols";
       md.appendMarkdown(
-        `[$(symbol-namespace) Browse${countLabel}](<command:python-hover.browseModule?${args}> "Browse module symbols")\n\n`,
+        `> [$(symbol-namespace) Browse${countLabel}](<command:python-hover.browseModule?${args}> "Browse module symbols")\n\n`,
       );
     }
   }
@@ -1662,9 +1661,8 @@ export class HoverRenderer {
           ),
         )
       : undefined;
-    md.appendMarkdown(`---\n\n`);
     md.appendMarkdown(
-      `**$(arrow-right) Returns** \`${ret.type || "unspecified"}\``,
+      `> **$(arrow-right) Returns** \`${ret.type || "unspecified"}\``,
     );
     if (cleanedDescription) {
       md.appendMarkdown(` — ${cleanedDescription}`);
@@ -1673,8 +1671,7 @@ export class HoverRenderer {
   }
 
   private renderRaises(md: vscode.MarkdownString, doc: HoverDoc): void {
-    md.appendMarkdown(`---\n\n`);
-    md.appendMarkdown(`**$(alert) Raises**\n\n`);
+    md.appendMarkdown(`> **$(alert) Raises**\n\n`);
     doc.raises!.forEach((exc) => {
       const cleanedDescription = exc.description
         ? this.rewriteMarkdownLinks(
@@ -1687,7 +1684,7 @@ export class HoverRenderer {
             ),
           )
         : undefined;
-      md.appendMarkdown(`- \`${exc.type}\``);
+      md.appendMarkdown(`> - \`${exc.type}\``);
       if (cleanedDescription) {
         md.appendMarkdown(` — ${cleanedDescription}`);
       }
@@ -1697,13 +1694,12 @@ export class HoverRenderer {
   }
 
   private renderExamples(md: vscode.MarkdownString, doc: HoverDoc): void {
-    md.appendMarkdown(`---\n\n`);
     md.appendMarkdown(
-      `**$(play) Example${this.config.maxExamples > 1 ? "s" : ""}**\n\n`,
+      `> **$(play) Example${this.config.maxExamples > 1 ? "s" : ""}**\n\n`,
     );
     if (doc.contextHints?.tags?.length) {
       md.appendMarkdown(
-        `*Context matched:* ${doc.contextHints.tags
+        `> *Context matched:* ${doc.contextHints.tags
           .map((tag) => `\`${this.escapeMarkdown(tag)}\``)
           .join(" · ")}\n\n`,
       );
@@ -1720,7 +1716,7 @@ export class HoverRenderer {
       if (structuredExamples.length > maxShow) {
         const extra = structuredExamples.length - maxShow;
         md.appendMarkdown(
-          `*+${extra} more example${extra > 1 ? "s" : ""} in docs*\n\n`,
+          `> *+${extra} more example${extra > 1 ? "s" : ""} in docs*\n\n`,
         );
       }
       return;
@@ -1728,7 +1724,7 @@ export class HoverRenderer {
 
     doc.examples!.slice(0, maxShow).forEach((example, index) => {
       if (index > 0) {
-        md.appendMarkdown(`*Additional example*\n\n`);
+        md.appendMarkdown(`> *Additional example*\n\n`);
       }
 
       const lines = example.split("\n");
@@ -1736,7 +1732,7 @@ export class HoverRenderer {
       if (lines.length > maxLines) {
         md.appendCodeblock(lines.slice(0, maxLines).join("\n"), "python");
         md.appendMarkdown(
-          `*+${lines.length - maxLines} more lines in docs*\n\n`,
+          `> *+${lines.length - maxLines} more lines in docs*\n\n`,
         );
       } else {
         md.appendCodeblock(example, "python");
@@ -1746,7 +1742,7 @@ export class HoverRenderer {
     if (doc.examples!.length > maxShow) {
       const extra = doc.examples!.length - maxShow;
       md.appendMarkdown(
-        `*+${extra} more example${extra > 1 ? "s" : ""} in docs*\n\n`,
+        `> *+${extra} more example${extra > 1 ? "s" : ""} in docs*\n\n`,
       );
     }
   }
@@ -1757,9 +1753,9 @@ export class HoverRenderer {
     index: number,
   ): void {
     if (section.title) {
-      md.appendMarkdown(`*${this.escapeMarkdown(section.title)}*\n\n`);
+      md.appendMarkdown(`> *${this.escapeMarkdown(section.title)}*\n\n`);
     } else if (index > 0) {
-      md.appendMarkdown(`*Additional example*\n\n`);
+      md.appendMarkdown(`> *Additional example*\n\n`);
     }
 
     if (section.kind === "code") {
@@ -1771,7 +1767,7 @@ export class HoverRenderer {
           section.language || "python",
         );
         md.appendMarkdown(
-          `*+${lines.length - maxLines} more lines in docs*\n\n`,
+          `> *+${lines.length - maxLines} more lines in docs*\n\n`,
         );
       } else {
         md.appendCodeblock(section.content, section.language || "python");
@@ -1781,7 +1777,7 @@ export class HoverRenderer {
 
     const rendered = this.renderStructuredSection(section);
     if (rendered) {
-      md.appendMarkdown(`${rendered}\n\n`);
+      md.appendMarkdown(`> ${rendered}\n\n`);
     }
   }
 
@@ -1792,18 +1788,18 @@ export class HoverRenderer {
   private renderModuleExports(md: vscode.MarkdownString, doc: HoverDoc): void {
     const exports = doc.moduleExports!;
 
-    md.appendMarkdown(`---\n\n**$(symbol-field) Key exports**\n\n`);
+    md.appendMarkdown(`> **$(symbol-field) Key exports**\n\n`);
 
     const maxShow = this.config.maxModuleExports;
     const shown = exports.slice(0, maxShow);
     md.appendMarkdown(
-      shown.map((name) => `\`${name}\``).join(" \u00a0 ") + "\n\n",
+      `> ${shown.map((name) => `\`${name}\``).join(" \u00a0 ")}\n\n`,
     );
 
     if (exports.length > maxShow) {
       const extra = exports.length - maxShow;
       md.appendMarkdown(
-        `*+${extra} more export${extra > 1 ? "s" : ""} hidden*\n\n`,
+        `> *+${extra} more export${extra > 1 ? "s" : ""} hidden*\n\n`,
       );
     }
 
@@ -1818,7 +1814,7 @@ export class HoverRenderer {
       }
       const args = this.encodeCommandArgs(browseTarget);
       md.appendMarkdown(
-        `[$(symbol-namespace) Browse all ${doc.exportCount.toLocaleString()} indexed symbols](<command:python-hover.browseModule?${args}> "Browse all symbols")\n\n`,
+        `> [$(symbol-namespace) Browse all ${doc.exportCount.toLocaleString()} indexed symbols](<command:python-hover.browseModule?${args}> "Browse all symbols")\n\n`,
       );
     }
   }
@@ -1863,22 +1859,20 @@ export class HoverRenderer {
   // ─────────────────────────────────────────────────────────────────────────
 
   private renderSeeAlso(md: vscode.MarkdownString, doc: HoverDoc): void {
-    md.appendMarkdown(`---\n\n`);
+    md.appendMarkdown(`> **$(link-external) See also**\n\n`);
     const items = doc
       .seeAlso!.map((item) => this.renderInlineReferenceItem(item, doc))
       .filter(Boolean);
     const maxItems = this.config.maxSeeAlsoItems;
     const shown = items.slice(0, maxItems);
     if (shown.length > 0) {
-      md.appendMarkdown(
-        `$(link-external) **See also:** ${shown.join(" \u00a0·\u00a0 ")}\n\n`,
-      );
+      md.appendMarkdown(`> ${shown.join(" \u00a0·\u00a0 ")}\n\n`);
     }
 
     if (items.length > maxItems) {
       const extra = items.length - maxItems;
       md.appendMarkdown(
-        `*+${extra} more related item${extra > 1 ? "s" : ""} in docs*\n\n`,
+        `> *+${extra} more related item${extra > 1 ? "s" : ""} in docs*\n\n`,
       );
     }
   }
@@ -1954,11 +1948,11 @@ export class HoverRenderer {
     md.appendMarkdown("---\n\n");
     if (importStatement) {
       md.appendMarkdown(
-        `$(symbol-namespace) Import: \`${this.escapeMarkdown(importStatement)}\`\n\n`,
+        `> $(symbol-namespace) Import: \`${this.escapeMarkdown(importStatement)}\`\n\n`,
       );
     }
     if (secondaryActions.length > 0) {
-      md.appendMarkdown(`*Tools:* ${secondaryActions.join("  ·  ")}\n\n`);
+      md.appendMarkdown(`> *Tools:* ${secondaryActions.join("  ·  ")}\n\n`);
     }
   }
 
