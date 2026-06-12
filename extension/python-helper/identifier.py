@@ -105,19 +105,19 @@ def _find_target_node(tree: ast.Module, line: int, col: int) -> ast.AST | None:
         assert start_col is not None
         assert end_col is not None
 
-        sl = int(start_line)
-        el = int(end_line)
-        sc = int(start_col)
-        ec = int(end_col)
+        start_line_int = int(start_line)
+        end_line_int = int(end_line)
+        start_col_int = int(start_col)
+        end_col_int = int(end_col)
 
-        if line < sl or line > el:
+        if line < start_line_int or line > end_line_int:
             continue
-        if line == sl and col < sc:
+        if line == start_line_int and col < start_col_int:
             continue
-        if line == el and col > ec:
+        if line == end_line_int and col > end_col_int:
             continue
 
-        size = (el - sl) * 10000 + (ec - sc)
+        size = (end_line_int - start_line_int) * 10000 + (end_col_int - start_col_int)
         if size < min_range:
             min_range = size
             target_node = node
@@ -154,24 +154,36 @@ def _map_literal_type(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> str | N
         return "f-string"
 
     if isinstance(node, ast.Constant):
-        if isinstance(node.value, bool):
-            return "bool"
-        if isinstance(node.value, int):
-            return "int"
-        if isinstance(node.value, float):
-            return "float"
-        if isinstance(node.value, complex):
-            return "complex"
-        if isinstance(node.value, bytes):
-            return "bytes"
-        if node.value is None:
-            return "None"
-        if node.value is ...:
-            return "Ellipsis"
-        if isinstance(node.value, str):
-            parent = parents.get(node)  # ast.Expr wrapper
+        return _infer_constant_value(node.value, parents, node)
+
+    return None
+
+
+def _infer_constant_value(
+    value: Any,
+    parents_map: dict[ast.AST, ast.AST] | None = None,
+    node: ast.AST | None = None,
+) -> str | None:
+    """Infer the type string for a constant value."""
+    if isinstance(value, bool):
+        return "bool"
+    if isinstance(value, int):
+        return "int"
+    if isinstance(value, float):
+        return "float"
+    if isinstance(value, complex):
+        return "complex"
+    if isinstance(value, bytes):
+        return "bytes"
+    if value is None:
+        return "None"
+    if value is ...:
+        return "Ellipsis"
+    if isinstance(value, str):
+        if parents_map is not None and node is not None:
+            parent = parents_map.get(node)  # ast.Expr wrapper
             if isinstance(parent, ast.Expr):
-                grandparent = parents.get(parent)
+                grandparent = parents_map.get(parent)
                 if (
                     isinstance(
                         grandparent,
@@ -186,7 +198,7 @@ def _map_literal_type(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> str | N
                     and grandparent.body[0] is parent
                 ):
                     return "docstring_literal"
-            return "str"
+        return "str"
 
     return None
 
@@ -588,23 +600,26 @@ def _infer_literal_type(node: ast.AST) -> str | None:
     if isinstance(node, ast.JoinedStr):
         return "str"
 
-    if isinstance(node, ast.Constant):
-        if isinstance(node.value, bool):
-            return "bool"
-        if isinstance(node.value, int):
-            return "int"
-        if isinstance(node.value, float):
-            return "float"
-        if isinstance(node.value, complex):
-            return "complex"
-        if isinstance(node.value, str):
-            return "str"
-        if isinstance(node.value, bytes):
-            return "bytes"
-        if node.value is None:
-            return "None"
-        if node.value is ...:
-            return "Ellipsis"
+    if not isinstance(node, ast.Constant):
+        return None
+
+    value = node.value
+    if isinstance(value, bool):
+        return "bool"
+    if isinstance(value, int):
+        return "int"
+    if isinstance(value, float):
+        return "float"
+    if isinstance(value, complex):
+        return "complex"
+    if isinstance(value, str):
+        return "str"
+    if isinstance(value, bytes):
+        return "bytes"
+    if value is None:
+        return "None"
+    if value is ...:
+        return "Ellipsis"
 
     return None
 

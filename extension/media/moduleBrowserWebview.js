@@ -1,3 +1,6 @@
+/* global acquireVsCodeApi */
+/* jshint esversion: 6 */
+
 (function pyhoverModuleBrowser() {
   const vscode = acquireVsCodeApi();
 
@@ -1388,6 +1391,16 @@
       if (!event.source || !("postMessage" in event.source)) {
         return;
       }
+
+      // Verify the message originates from a trusted VS Code origin.
+      const trustedOrigins = ["vscode:webview", "vscode-file://", "file://"];
+      if (
+        event.origin &&
+        !trustedOrigins.some((origin) => event.origin.includes(origin))
+      ) {
+        return;
+      }
+
       const message = event.data;
       if (
         !message ||
@@ -1414,7 +1427,7 @@
       if (didChange) {
         render();
       }
-    });
+    };);
 
     render();
   } catch (error) {
