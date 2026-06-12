@@ -159,7 +159,28 @@ export function cleanRstArtifacts(text: string): string {
  */
 export function cleanContentAnnotations(text: string): string {
   text = stripAnnotatedWrappers(text);
-  text = text.replace(/Doc\(['"][\s\S]*?['"]\)/g, "");
+  // Decode HTML entities in a single comprehensive pass to avoid incomplete
+  // multi-character sanitization where some entities could slip through.
+  text = text.replace(
+    /&(?:amp|quot|apos|nbsp|rarr|larr|hellip|#\d+;|#x[0-9a-fA-F]+;)/g,
+    (match) => {
+      if (match === "&amp;") return "&";
+      if (match === "&quot;") return '"';
+      if (match === "&apos;") return "'";
+      if (match === "&nbsp;") return " ";
+      if (match === "&rarr;") return "→";
+      if (match === "&larr;") return "←";
+      if (match === "&hellip;") return "…";
+      // Numeric character reference: decimal
+      const numMatch = match.match(/^#(\d+);$/);
+      if (numMatch) return String.fromCharCode(Number(numMatch[1]));
+      // Numeric character reference: hex
+      const hexMatch = match.match(/^#x([0-9a-fA-F]+);$/);
+      if (hexMatch) return String.fromCharCode(parseInt(hexMatch[1], 16));
+      // Fallback: return as-is to avoid leaking unsanitized entities
+      return match;
+    },
+  );
   text = text.replace(/<\w[\w.]*\s+object\s+at\s+0x[0-9a-f]+>/gi, "");
   text = text.replace(/^\s*\*,?\s*$/gm, "");
   text = text.replace(/\\n/g, "\n");

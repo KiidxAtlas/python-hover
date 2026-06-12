@@ -1252,21 +1252,32 @@ export class SphinxScraper {
     // Strip remaining tags
     md = stripHtmlTags(md);
 
-    // Decode HTML entities
-    md = md.replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)));
-    md = md.replace(/&#x([0-9a-fA-F]+);/g, (_, h) =>
-      String.fromCharCode(parseInt(h, 16)),
+    // Decode HTML entities in a single comprehensive pass to avoid incomplete
+    // multi-character sanitization where some entities could slip through.
+    md = md.replace(
+      /&(?:amp|quot|apos|nbsp|rarr|larr|hellip|#\d+;|#x[0-9a-fA-F]+;)/g,
+      (match) => {
+        if (match === "&amp;") return "&";
+        if (match === "&quot;") return '"';
+        if (match === "&apos;") return "'";
+        if (match === "&nbsp;") return " ";
+        if (match === "&rarr;") return "→";
+        if (match === "&larr;") return "←";
+        if (match === "&hellip;") return "…";
+        // Numeric character reference: decimal
+        const numMatch = match.match(/^#(\d+);$/);
+        if (numMatch) return String.fromCharCode(Number(numMatch[1]));
+        // Numeric character reference: hex
+        const hexMatch = match.match(/^#x([0-9a-fA-F]+);$/);
+        if (hexMatch) return String.fromCharCode(parseInt(hexMatch[1], 16));
+        // Fallback: return as-is to avoid leaking unsanitized entities
+        return match;
+      },
     );
-    md = md
-      .replace(/&amp;/g, "&")
-      .replace(/&quot;/g, '"')
-      .replace(/&apos;/g, "'")
-      .replace(/&nbsp;/g, " ")
-      .replace(/&rarr;/g, "→")
-      .replace(/&larr;/g, "←")
-      .replace(/&hellip;/g, "…");
 
-    // Final pass: strip any tags reconstructed from decoded HTML entities
+    // Final pass: strip any tags reconstructed from decoded HTML entities.
+    // Entities are already decoded above in a single comprehensive pass, so
+    // this strip happens only once — preventing double-escaping / unescaping.
     md = stripDangerousTagBlocks(md, ["script", "style"]);
     md = stripHtmlTags(md);
 

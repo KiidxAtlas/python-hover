@@ -1,4 +1,5 @@
 import argparse
+import importlib.metadata
 import json
 import sys
 
@@ -53,7 +54,6 @@ def server_mode():
             elif cmd == "pkg_version":
                 pkg = req.get("package", "")
                 try:
-                    import importlib.metadata
                     result = {"version": importlib.metadata.version(pkg)}
                 except Exception:
                     result = {"version": None}

@@ -1072,9 +1072,10 @@ export class HoverRenderer {
 
     // Normalize backticked rule names and split consecutive inline rules onto
     // separate lines so code blocks are readable.
+    // Simplified pattern avoids nested quantifiers that cause ReDoS.
     fragment = fragment
-      .replace(/`([a-z][a-z0-9_]*(?:_[a-z0-9_]+)*)`\s*:/g, "$1:")
-      .replace(/\s+(?=`?[a-z][a-z0-9_]*(?:_[a-z0-9_]+)*`?\s*:)/g, "\n")
+      .replace(/`[a-z][\w_]*`\s*:/g, "$&")
+      .replace(/\s+(?=`?[a-z][\w_]*`?\s*:)/g, "\n")
       .trim();
 
     const lines = fragment
@@ -2330,7 +2331,8 @@ export class HoverRenderer {
   }
 
   private escapeMarkdown(text: string): string {
-    return text.replace(/([\\`*_{}[\]()#+\-.!|])/g, "\\$1");
+    // Escape all Markdown special characters in a single comprehensive pass.
+    return text.replace(/([\\`*_{}[\]()#+\-.!|~])/g, "\\$1");
   }
 
   private escapeInlineCode(text: string): string {

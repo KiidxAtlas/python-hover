@@ -9,6 +9,7 @@ from typing import Any
 
 @dataclass
 class InferenceContext:
+    """Holds type inference state for a parsed AST."""
     aliases: dict[str, str] = field(default_factory=dict)
     assignments: dict[str, str] = field(default_factory=dict)
     class_attrs: dict[str, dict[str, str]] = field(default_factory=dict)
@@ -17,7 +18,7 @@ class InferenceContext:
 COPY_METHODS = {"copy", "__copy__", "__deepcopy__"}
 SOFT_KEYWORDS = {"match", "case"}
 BUILTIN_NAMES = set(dir(py_builtins))
-GLOBAL_NAME_TYPES = {
+GLOBAL_NAME_TYPES: dict[str, str] = {
     "__file__": "str",
     "__name__": "str",
     "__package__": "str",
@@ -58,59 +59,7 @@ def identify_at_position(source: str, line: int, col: int) -> str | None:
         if token_value in BUILTIN_NAMES:
             return token_value
 
-    target_node = None
-    min_range = float("inf")
-
-    # Keep track of parents to reconstruct qualified names
-    parents = {}
-    for node in ast.walk(tree):
-        for _field, value in ast.iter_fields(node):
-            if isinstance(value, list):
-                for item in value:
-                    if isinstance(item, ast.AST):
-                        parents[item] = node
-            elif isinstance(value, ast.AST):
-                parents[value] = node
-
-    for node in ast.walk(tree):
-        # Ensure node has position info (Python 3.8+)
-        start_line = getattr(node, "lineno", None)
-        end_line = getattr(node, "end_lineno", None)
-        start_col = getattr(node, "col_offset", None)
-        end_col = getattr(node, "end_col_offset", None)
-        if None in (start_line, end_line, start_col, end_col):
-            continue
-
-        assert start_line is not None
-        assert end_line is not None
-        assert start_col is not None
-        assert end_col is not None
-
-        start_line = int(start_line)
-        end_line = int(end_line)
-        start_col = int(start_col)
-        end_col = int(end_col)
-
-        # Check if the cursor (line, col) is within this node
-        # Note: line is 1-based, col is 0-based
-
-        # Line check
-        if line < start_line or line > end_line:
-            continue
-
-        # Column check (only relevant if on start or end line)
-        if line == start_line and col < start_col:
-            continue
-        if line == end_line and col > end_col:
-            continue
-
-        # Calculate "size" to find the most specific (smallest) node
-        size = (end_line - start_line) * 10000 + (end_col - start_col)
-
-        if size < min_range:
-            min_range = size
-            target_node = node
-
+    target_node = _find_target_node(tree, line, col)
     if not target_node:
         return None
 
@@ -119,7 +68,61 @@ def identify_at_position(source: str, line: int, col: int) -> str | None:
     if isinstance(target_node, ast.Expr):
         target_node = target_node.value
 
+    parents = _build_parent_map(tree)
     return _map_node_to_type(target_node, parents, context)
+
+
+def _build_parent_map(tree: ast.Module) -> dict[ast.AST, ast.AST]:
+    """Build a mapping from each AST node to its parent."""
+    parents: dict[ast.AST, ast.AST] = {}
+    for node in ast.walk(tree):
+        for _field, value in ast.iter_fields(node):
+            if isinstance(value, list):
+                for item in value:
+                    if isinstance(item, ast.AST):
+                        parents[item] = node
+            elif isinstance(value, ast.AST):
+                parents[value] = node
+    return parents
+
+
+def _find_target_node(tree: ast.Module, line: int, col: int) -> ast.AST | None:
+    """Find the smallest AST node containing the given line/col position."""
+    target_node: ast.AST | None = None
+    min_range = float("inf")
+
+    for node in ast.walk(tree):
+        start_line = getattr(node, "lineno", None)
+        end_line = getattr(node, "end_lineno", None)
+        start_col = getattr(node, "col_offset", None)
+        end_col = getattr(node, "end_col_offset", None)
+        if None in (start_line, end_line, start_col, end_col):
+            continue
+
+        # At this point, all four values are guaranteed non-None.
+        assert start_line is not None
+        assert end_line is not None
+        assert start_col is not None
+        assert end_col is not None
+
+        sl = int(start_line)
+        el = int(end_line)
+        sc = int(start_col)
+        ec = int(end_col)
+
+        if line < sl or line > el:
+            continue
+        if line == sl and col < sc:
+            continue
+        if line == el and col > ec:
+            continue
+
+        size = (el - sl) * 10000 + (ec - sc)
+        if size < min_range:
+            min_range = size
+            target_node = node
+
+    return target_node
 
 
 def _token_at_position(source: str, line: int, col: int) -> Any:
@@ -136,17 +139,9 @@ def _token_at_position(source: str, line: int, col: int) -> Any:
     except (tokenize.TokenError, IndentationError):
         return None
 
-    return None
 
-
-def _map_node_to_type(
-    node: ast.AST, parents: dict[ast.AST, ast.AST], context: InferenceContext
-) -> str | None:
-    if isinstance(node, ast.alias):
-        # Covers import tokens where the narrowest AST node is an alias.
-        return node.name
-
-    # Literals
+def _map_literal_type(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> str | None:
+    """Return the type string for literal AST nodes."""
     if isinstance(node, (ast.List, ast.ListComp)):
         return "list"
     if isinstance(node, (ast.Dict, ast.DictComp)):
@@ -155,13 +150,11 @@ def _map_node_to_type(
         return "set"
     if isinstance(node, ast.Tuple):
         return "tuple"
-
-    # Strings / F-Strings
     if isinstance(node, ast.JoinedStr):
         return "f-string"
 
     if isinstance(node, ast.Constant):
-        if isinstance(node.value, bool):  # bool before int — bool is a subclass of int
+        if isinstance(node.value, bool):
             return "bool"
         if isinstance(node.value, int):
             return "int"
@@ -169,8 +162,13 @@ def _map_node_to_type(
             return "float"
         if isinstance(node.value, complex):
             return "complex"
+        if isinstance(node.value, bytes):
+            return "bytes"
+        if node.value is None:
+            return "None"
+        if node.value is ...:
+            return "Ellipsis"
         if isinstance(node.value, str):
-            # Suppress hover for docstring literals (first expression in a class/function/module body)
             parent = parents.get(node)  # ast.Expr wrapper
             if isinstance(parent, ast.Expr):
                 grandparent = parents.get(parent)
@@ -189,12 +187,19 @@ def _map_node_to_type(
                 ):
                     return "docstring_literal"
             return "str"
-        if isinstance(node.value, bytes):
-            return "bytes"
-        if node.value is None:
-            return "None"
-        if node.value is ...:
-            return "Ellipsis"
+
+    return None
+
+
+def _map_node_to_type(
+    node: ast.AST, parents: dict[ast.AST, ast.AST], context: InferenceContext
+) -> str | None:
+    if isinstance(node, ast.alias):
+        return node.name
+
+    literal_type = _map_literal_type(node, parents)
+    if literal_type:
+        return literal_type
 
     if isinstance(node, ast.Name):
         inferred_name = context.assignments.get(node.id) or context.aliases.get(node.id)
@@ -570,68 +575,8 @@ def _infer_attribute(
     return f"{owner}.{node.attr}"
 
 
-def _infer_expr(
-    node: ast.AST | None,
-    context: InferenceContext,
-    current_class: str | None = None,
-    local_types: dict[str, str] | None = None,
-) -> str | None:
-    if node is None:
-        return None
-
-    if isinstance(node, ast.Name):
-        if local_types and node.id in local_types:
-            return local_types[node.id]
-        if node.id == "self" and current_class:
-            return current_class
-        inferred_name = context.assignments.get(node.id) or context.aliases.get(node.id)
-        if inferred_name:
-            return inferred_name
-        global_name_type = GLOBAL_NAME_TYPES.get(node.id)
-        if global_name_type:
-            return global_name_type
-        if node.id in BUILTIN_NAMES:
-            return node.id
-        return None
-
-    if isinstance(node, ast.Attribute):
-        return _infer_attribute(
-            node, context, current_class=current_class, local_types=local_types
-        )
-
-    if isinstance(node, ast.Call):
-        return _infer_call(
-            node, context, current_class=current_class, local_types=local_types
-        )
-
-    if isinstance(node, ast.Subscript):
-        container = _infer_expr(
-            node.value, context, current_class=current_class, local_types=local_types
-        )
-        if not container:
-            return None
-
-        # Common pandas shape inference:
-        # - DataFrame["col"] -> Series
-        # - DataFrame[["a", "b"]] -> DataFrame
-        # - Series[...] remains Series
-        if container in {"pandas.DataFrame", "pandas.core.frame.DataFrame"}:
-            slice_node = node.slice
-            if isinstance(slice_node, ast.Constant) and isinstance(
-                slice_node.value, str
-            ):
-                return "pandas.Series"
-            if isinstance(slice_node, ast.Name):
-                # unknown dynamic selector; keep DataFrame to avoid over-claiming
-                return container
-            if isinstance(slice_node, ast.List):
-                return container
-
-        if container in {"pandas.Series", "pandas.core.series.Series"}:
-            return "pandas.Series"
-
-        return container
-
+def _infer_literal_type(node: ast.AST) -> str | None:
+    """Infer the type of a literal AST node."""
     if isinstance(node, (ast.List, ast.ListComp)):
         return "list"
     if isinstance(node, (ast.Dict, ast.DictComp)):
@@ -642,6 +587,7 @@ def _infer_expr(
         return "tuple"
     if isinstance(node, ast.JoinedStr):
         return "str"
+
     if isinstance(node, ast.Constant):
         if isinstance(node.value, bool):
             return "bool"
@@ -659,5 +605,72 @@ def _infer_expr(
             return "None"
         if node.value is ...:
             return "Ellipsis"
+
+    return None
+
+
+def _infer_expr(
+    node: ast.AST | None,
+    context: InferenceContext,
+    current_class: str | None = None,
+    local_types: dict[str, str] | None = None,
+) -> str | None:
+    if node is None:
+        return None
+
+    # Name lookup: check local types, self, assignments, aliases, globals, builtins.
+    if isinstance(node, ast.Name):
+        if local_types and node.id in local_types:
+            return local_types[node.id]
+        if node.id == "self" and current_class:
+            return current_class
+        inferred_name = context.assignments.get(node.id) or context.aliases.get(node.id)
+        if inferred_name:
+            return inferred_name
+        global_name_type = GLOBAL_NAME_TYPES.get(node.id)
+        if global_name_type:
+            return global_name_type
+        if node.id in BUILTIN_NAMES:
+            return node.id
+        return None
+
+    # Attribute and Call delegates to specialized helpers.
+    if isinstance(node, ast.Attribute):
+        return _infer_attribute(
+            node, context, current_class=current_class, local_types=local_types
+        )
+
+    if isinstance(node, ast.Call):
+        return _infer_call(
+            node, context, current_class=current_class, local_types=local_types
+        )
+
+    # Subscript: infer container type, then handle pandas special cases.
+    if isinstance(node, ast.Subscript):
+        container = _infer_expr(
+            node.value, context, current_class=current_class, local_types=local_types
+        )
+        if not container:
+            return None
+
+        # Common pandas shape inference.
+        if container in {"pandas.DataFrame", "pandas.core.frame.DataFrame"}:
+            slice_node = node.slice
+            if isinstance(slice_node, ast.Constant) and isinstance(
+                slice_node.value, str
+            ):
+                return "pandas.Series"
+            if isinstance(slice_node, (ast.Name, ast.List)):
+                return container
+
+        if container in {"pandas.Series", "pandas.core.series.Series"}:
+            return "pandas.Series"
+
+        return container
+
+    # Literal types.
+    literal = _infer_literal_type(node)
+    if literal:
+        return literal
 
     return None

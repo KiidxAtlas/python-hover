@@ -1,7 +1,6 @@
 import ast
 import builtins
 import importlib
-import importlib.metadata
 import importlib.util
 import inspect
 import io
@@ -13,68 +12,60 @@ import sys
 SOFT_KEYWORDS = {"match", "case"}
 
 
+def _resolve_keyword(symbol_name: str) -> dict | None:
+    """Handle Python keyword constants (None, True, False) and soft keywords."""
+    _KEYWORD_CONSTANTS = {"None", "True", "False"}
+    if symbol_name in _KEYWORD_CONSTANTS:
+        return None
+
+    is_kw = keyword.iskeyword(symbol_name) or symbol_name in SOFT_KEYWORDS
+    if not is_kw:
+        return None
+
+    capture = io.StringIO()
+    original_stdout = sys.stdout
+    sys.stdout = capture
+    try:
+        pydoc.help(symbol_name)
+    finally:
+        sys.stdout = original_stdout
+
+    return {
+        "docstring": capture.getvalue(),
+        "signature": None,
+        "module": "builtins",
+        "qualname": symbol_name,
+        "kind": "keyword",
+        "is_stdlib": True,
+    }
+
+
 def resolve_symbol(symbol_name):
     """
     Resolves a symbol to its documentation and metadata.
     """
     try:
-        # None, True, False are syntactic keywords in Python 3 but are better
-        # resolved as builtin constants (inspect.getdoc) rather than through
-        # pydoc.help() which dumps the entire NoneType/bool class.
-        _KEYWORD_CONSTANTS = {"None", "True", "False"}
+        # Handle keywords first (None, True, False, match, case, etc.)
+        keyword_result = _resolve_keyword(symbol_name)
+        if keyword_result:
+            return keyword_result
 
-        # 0. Check if it's a keyword
-        if (
-            keyword.iskeyword(symbol_name) or symbol_name in SOFT_KEYWORDS
-        ) and symbol_name not in _KEYWORD_CONSTANTS:
-            # Capture help() output for the keyword
-            capture = io.StringIO()
-            original_stdout = sys.stdout
-            sys.stdout = capture
-            try:
-                pydoc.help(symbol_name)
-            finally:
-                sys.stdout = original_stdout
-
-            doc = capture.getvalue()
-
-            return {
-                "docstring": doc,
-                "signature": None,
-                "module": "builtins",
-                "qualname": symbol_name,
-                "kind": "keyword",
-                "is_stdlib": True,
-            }
-
-        # 1. Try as a builtin
+        # Try as a builtin
         if hasattr(builtins, symbol_name):
             obj = getattr(builtins, symbol_name)
             return _describe(obj, "builtins", symbol_name)
 
-        # 1.5 Strip 'builtins.' prefix if present
-        # This handles cases like 'builtins.list.append' which might fail to import as a module path
+        # Strip 'builtins.' prefix if present (e.g. 'builtins.list.append')
+        short_name = symbol_name
         if symbol_name.startswith("builtins."):
             short_name = symbol_name[9:]
-            # Check if the short name is a builtin (e.g. 'list')
             if hasattr(builtins, short_name):
                 obj = getattr(builtins, short_name)
                 return _describe(obj, "builtins", short_name)
 
-            # Update parts for subsequent strategies
-            parts = short_name.split(".")
-            # Also update symbol_name for Strategy B logic?
-            # Actually, Strategy B uses 'parts', so we just need to update 'parts'.
-            # But Strategy A uses 'parts' too.
+        parts = short_name.split(".")
 
-            # Let's just use the short name for the rest of the logic
-            symbol_name = short_name
-
-        # 2. Try as a dotted path
-        parts = symbol_name.split(".")
-
-        # Strategy A: Try to find a module prefix (longest match first)
-        # This handles 'os.path.join', 'datetime.datetime.now', 'builtins.list.append'
+        # Strategy A: Try to find a module prefix (longest match first).
         for i in range(len(parts), 0, -1):
             module_path = ".".join(parts[:i])
             remainder = parts[i:]
@@ -82,32 +73,27 @@ def resolve_symbol(symbol_name):
             try:
                 module = importlib.import_module(module_path)
             except Exception:
-                # Catching Exception to be robust against weird import errors
-                # e.g. "No module named 'builtins.list'; 'builtins' is not a package"
                 continue
 
-            # Found a module, try to traverse the rest
             try:
                 obj = module
                 for part in remainder:
                     obj = getattr(obj, part)
-                return _describe(obj, module_path, symbol_name)
+                return _describe(obj, module_path, short_name)
             except AttributeError:
-                # Found module but path inside it is wrong.
                 pass
 
-        # Strategy B: Check if the root is a builtin (e.g. list.append)
-        # 'list' is not a module, so Strategy A fails.
+        # Strategy B: Check if the root is a builtin (e.g. list.append).
         if len(parts) > 1 and hasattr(builtins, parts[0]):
             try:
                 obj = getattr(builtins, parts[0])
                 for part in parts[1:]:
                     obj = getattr(obj, part)
-                return _describe(obj, "builtins", symbol_name)
+                return _describe(obj, "builtins", short_name)
             except AttributeError:
                 pass
 
-        raise ImportError(f"Could not resolve {symbol_name}")
+        raise ImportError(f"Could not resolve {short_name}")
 
     except Exception as e:
         return {"error": str(e)}
@@ -182,15 +168,16 @@ def _get_stdlib_url(module_name, qualname, obj):
             # Exceptions are in exceptions.html
             if issubclass(obj, BaseException):
                 return f"{base}/exceptions.html#{qualname}"
-            return f"{base}/stdtypes.html#{qualname}"
-        elif callable(obj):
-            # Builtin functions like len, print are in functions.html
-            # But methods on builtin types (list.append) are in stdtypes.html
-            if "." in qualname:
-                return f"{base}/stdtypes.html#{qualname}"
-            return f"{base}/functions.html#{qualname}"
+            # Builtin functions like len, print are in functions.html.
+            # But methods on builtin types (list.append) are in stdtypes.html.
+            if callable(obj):
+                return (
+                    f"{base}/stdtypes.html#{qualname}"
+                    if "." in qualname
+                    else f"{base}/functions.html#{qualname}"
+                )
 
-    # Standard library modules
+    # Standard library modules.
     return f"{base}/{module_name}.html#{qualname}"
 
 
@@ -336,14 +323,15 @@ def _ast_signature(node) -> str | None:
         reg_defaults_start = len(args.args) - len(args.defaults)
         for i, arg in enumerate(args.args):
             default_idx = i - reg_defaults_start
-            if default_idx >= 0 and default_idx < len(args.defaults):
+            if 0 <= default_idx < len(args.defaults):
                 params.append(f"{arg.arg}={ast.unparse(args.defaults[default_idx])}")
             else:
                 params.append(arg.arg)
 
         if args.vararg:
             params.append(f"*{args.vararg.arg}")
-        elif args.kwonlyargs:
+
+        if args.kwonlyargs:
             params.append("*")
 
         for i, arg in enumerate(args.kwonlyargs):

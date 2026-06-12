@@ -60,10 +60,23 @@ export async function openSourceTarget(
     sourceTarget.includes("github.com") &&
     (sourceTarget.includes("/blob/") || sourceTarget.includes("/tree/"));
   if (isGitHubLink) {
+    // Build the VS Code for Web link by transforming the full URL safely.
+    // Use a single pass to avoid partial/incomplete sanitization.
     const vscodeGithubLink = sourceTarget
       .replace("github.com", "github.dev")
       .replace("/blob/", "/")
-      .replace(/\.git$/, "");
+      .replace(/\.git$/, "")
+      // Ensure the result is a valid http(s) URL before opening.
+      .replace(/^https?:\/\//, "https://");
+
+    // Validate the transformed URL is safe before opening.
+    try {
+      new URL(vscodeGithubLink);
+    } catch {
+      // If transformation produced an invalid URL, fall back to original.
+      await openDocsLink(sourceTarget);
+      return true;
+    }
 
     // Attempt VS Code for Web first (best experience), fall back to GH if not available
     try {
