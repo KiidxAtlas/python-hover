@@ -33,7 +33,6 @@ jobs:
         uses: github/codeql-action/init@v3
         with:
           languages: ${{ matrix.language }}
-          queries: security-and-quality
 
       - name: Setup Python
         if: matrix.language == 'python'
@@ -41,11 +40,14 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: Install dependencies
-        if: matrix.language == 'python'
-        run: |
-          cd extension
-          pip install -r python-helper/requirements.txt
+      - name: Setup Node.js
+        if: matrix.language == 'javascript-typescript'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
