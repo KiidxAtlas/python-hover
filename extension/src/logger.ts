@@ -113,6 +113,11 @@ export class Logger {
     this._outputChannel?.show();
   }
 
+  /** Expose the output channel for error-handling utilities. */
+  public static getOutputChannel() {
+    return this._outputChannel;
+  }
+
   public static dispose() {
     this._outputChannel?.dispose();
   }

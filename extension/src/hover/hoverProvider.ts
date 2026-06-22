@@ -49,6 +49,10 @@ import {
   logWithCooldown,
 } from "#src/utils/cache-utils";
 import {
+  formatStandardErrorMessage,
+  showErrorNotification,
+} from "#src/utils/error-handling";
+import {
   buildInstalledSourceCandidates,
   isWeakLibrarySignature,
   moduleFromLibraryPath,
@@ -1073,6 +1077,16 @@ export class HoverProvider implements vscode.HoverProvider {
             `no-symbol:${posKey}:${segmentText}`,
             `Hover: no symbol recognized for ${segmentText || "<unknown>"}`,
           );
+          // Notify user when LSP couldn't identify any symbol — this is the
+          // most common case where users expect hover info but see nothing.
+          if (this.config.showHoverErrorNotifications) {
+            showErrorNotification(
+              formatStandardErrorMessage("lsp-error", segmentText),
+              {
+                logData: { file: document.uri.fsPath, line: position.line + 1 },
+              },
+            );
+          }
           return this.parameterLensService.decorateHoverWithParameterLens(
             null,
             undefined,
@@ -1693,6 +1707,14 @@ export class HoverProvider implements vscode.HoverProvider {
           `skip-local-chain:${cacheKey}:${symbolInfo.name}`,
           `Hover: unresolved local chain ${symbolInfo.name} has no library ownership evidence.`,
         );
+        // Notify user when we can't resolve a local chain — common for
+        // third-party symbols that haven't been imported yet.
+        if (this.config.showHoverErrorNotifications) {
+          showErrorNotification(
+            formatStandardErrorMessage("resolution-failed", symbolInfo.name),
+            { logData: { cacheKey, symbolInfo } },
+          );
+        }
         return null;
       }
 
@@ -1705,6 +1727,18 @@ export class HoverProvider implements vscode.HoverProvider {
           `skip-unimported:${cacheKey}:${symbolInfo.name}`,
           `Hover: skipped unimported symbol guess for ${symbolInfo.name}`,
         );
+        // Notify user when a symbol is skipped because it's not imported —
+        // this helps users understand why their hover shows nothing.
+        if (this.config.showHoverErrorNotifications) {
+          showErrorNotification(
+            formatStandardErrorMessage(
+              "resolution-failed",
+              symbolInfo.name,
+              "Ensure the module is imported before hovering.",
+            ),
+            { logData: { cacheKey, rootName } },
+          );
+        }
         return null;
       }
 

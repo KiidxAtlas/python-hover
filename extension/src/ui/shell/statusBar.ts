@@ -25,6 +25,8 @@ export class StatusBarManager {
   private cacheSizeWalking = false;
   /** Cached extension version — read once from package.json. */
   private cachedVersion: string | undefined;
+  /** Active loading state — shows a spinner while async operations are in flight. */
+  private _loadingState: string | undefined;
 
   constructor(context: vscode.ExtensionContext) {
     this.context = context;
@@ -43,6 +45,12 @@ export class StatusBarManager {
         }
       }),
     );
+  }
+
+  /** Set the loading state (shows a spinner in the status bar). */
+  public setLoadingState(state: string | undefined): void {
+    this._loadingState = state;
+    this.render();
   }
 
   /** Force a re-render (e.g. after cache wipe). */
@@ -77,10 +85,13 @@ export class StatusBarManager {
       return;
     }
 
-    this.item.text = `${online ? "$(globe)" : "$(circle-slash)"} PyHover ${cacheSize}${historyPreview ? ` · ${historyPreview}` : ""}`;
+    this.item.text = `${online ? "$(globe)" : "$(circle-slash)"} PyHover ${cacheSize}${historyPreview ? ` · ${historyPreview}` : ""}${this._loadingState ? ` $(sync-spin) ${this._loadingState}` : ""}`;
     const mode = online ? "$(globe) Online" : "$(circle-slash) Offline";
     const tt = new vscode.MarkdownString();
     tt.appendMarkdown(`**PyHover** v${version}\n\n`);
+    if (this._loadingState) {
+      tt.appendMarkdown(`**Loading:** ${this._loadingState}\n\n`);
+    }
     tt.appendMarkdown(
       `${mode}  ·  $(database) ${cacheSize}${typeof indexedSymbols === "number" ? `  ·  $(symbol-key) ${indexedSymbols.toLocaleString()} indexed` : ""}\n\n`,
     );

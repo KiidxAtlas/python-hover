@@ -1,16 +1,16 @@
-import { HoverDoc } from '#shared/types'
-import { HOVER_DEBUG_PANEL_COMMANDS } from '#src/ui/webview/webviewCommandAllowlist'
-import { createWebviewNonce } from '#src/ui/webview/webviewNonce'
-import * as vscode from 'vscode'
+import { HoverDoc } from "#shared/types";
+import { HOVER_DEBUG_PANEL_COMMANDS } from "#src/ui/webview/webviewCommandAllowlist";
+import { createWebviewNonce } from "#src/ui/webview/webviewNonce";
+import * as vscode from "vscode";
 
 export class HoverDebugPanel {
-  static currentPanel: HoverDebugPanel | undefined
+  static currentPanel: HoverDebugPanel | undefined;
 
-  private readonly panel: vscode.WebviewPanel
+  private readonly panel: vscode.WebviewPanel;
 
   private constructor(doc: HoverDoc, hoverMarkdown: string) {
     this.panel = vscode.window.createWebviewPanel(
-      'pythonHoverDebugPanel',
+      "pythonHoverDebugPanel",
       `${this.displayTitle(doc)} Debug`,
       { viewColumn: vscode.ViewColumn.Three, preserveFocus: true },
       {
@@ -19,63 +19,67 @@ export class HoverDebugPanel {
         retainContextWhenHidden: false,
         localResourceRoots: [],
       },
-    )
-    this.panel.webview.html = this.renderHtml(doc, hoverMarkdown)
+    );
+    this.panel.webview.html = this.renderHtml(doc, hoverMarkdown);
     this.panel.onDidDispose(() => {
-      HoverDebugPanel.currentPanel = undefined
-    })
+      HoverDebugPanel.currentPanel = undefined;
+    });
   }
 
   static show(doc: HoverDoc, hoverMarkdown: string): void {
     if (HoverDebugPanel.currentPanel) {
-      HoverDebugPanel.currentPanel.update(doc, hoverMarkdown)
+      HoverDebugPanel.currentPanel.update(doc, hoverMarkdown);
     } else {
-      HoverDebugPanel.currentPanel = new HoverDebugPanel(doc, hoverMarkdown)
+      HoverDebugPanel.currentPanel = new HoverDebugPanel(doc, hoverMarkdown);
     }
   }
 
   update(doc: HoverDoc, hoverMarkdown: string): void {
-    this.panel.title = `${this.displayTitle(doc)} Debug`
-    this.panel.webview.html = this.renderHtml(doc, hoverMarkdown)
-    this.panel.reveal(vscode.ViewColumn.Three, true)
+    this.panel.title = `${this.displayTitle(doc)} Debug`;
+    this.panel.webview.html = this.renderHtml(doc, hoverMarkdown);
+    this.panel.reveal(vscode.ViewColumn.Three, true);
   }
 
   private displayTitle(doc: HoverDoc): string {
-    return doc.title.replace(/^builtins\./, '')
+    return doc.title.replace(/^builtins\./, "");
   }
 
   private escape(value: string): string {
     return value
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
   }
 
   private renderHtml(doc: HoverDoc, hoverMarkdown: string): string {
-    const payload = JSON.stringify(doc, null, 2)
+    const payload = JSON.stringify(doc, null, 2);
     const summary =
-      doc.summary || doc.structuredContent?.summary || doc.content || 'No summary available.'
-    const examplesCount = doc.examples?.length || doc.structuredContent?.examples?.length || 0
-    const displayTitle = this.displayTitle(doc)
-    const nonce = createWebviewNonce()
+      doc.summary ||
+      doc.structuredContent?.summary ||
+      doc.content ||
+      "No summary available.";
+    const examplesCount =
+      doc.examples?.length || doc.structuredContent?.examples?.length || 0;
+    const displayTitle = this.displayTitle(doc);
+    const nonce = createWebviewNonce();
     const docStateKey = JSON.stringify([
       displayTitle,
-      doc.url || '',
-      doc.sourceUrl || '',
-      doc.module || '',
-      'debug',
-    ])
+      doc.url || "",
+      doc.sourceUrl || "",
+      doc.module || "",
+      "debug",
+    ]);
     const commandToken =
-      typeof doc.metadata?.commandToken === 'string'
+      typeof doc.metadata?.commandToken === "string"
         ? encodeURIComponent(JSON.stringify(doc.metadata.commandToken))
-            .replace(/\(/g, '%28')
-            .replace(/\)/g, '%29')
-            .replace(/'/g, '%27')
-        : ''
+            .replace(/\(/g, "%28")
+            .replace(/\)/g, "%29")
+            .replace(/'/g, "%27")
+        : "";
     const pinHref = commandToken
       ? `command:python-hover.pinHover?${commandToken}`
-      : 'command:python-hover.pinHover'
+      : "command:python-hover.pinHover";
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -245,8 +249,8 @@ export class HoverDebugPanel {
       <p class="note">This view shows the exact markdown and HoverDoc payload that powered the visible hover. Use it when source selection, structure, or formatting looks wrong.</p>
     </div>
     <div class="meta">
-      <div class="meta-card"><strong>${this.escape(doc.kind || 'Unknown')}</strong><span>Kind</span></div>
-      <div class="meta-card"><strong>${this.escape(doc.module || 'n/a')}</strong><span>Module</span></div>
+      <div class="meta-card"><strong>${this.escape(doc.kind || "Unknown")}</strong><span>Kind</span></div>
+      <div class="meta-card"><strong>${this.escape(doc.module || "n/a")}</strong><span>Module</span></div>
       <div class="meta-card"><strong>${this.escape(doc.source)}</strong><span>Source</span></div>
       <div class="meta-card"><strong>${String(doc.confidence)}</strong><span>Confidence</span></div>
       <div class="meta-card"><strong>${String(examplesCount)}</strong><span>Examples</span></div>
@@ -272,7 +276,7 @@ export class HoverDebugPanel {
   <section class="card">
     <div class="section-kicker">Rendered hover markdown</div>
     <h2>Markdown emitted to VS Code</h2>
-    <pre>${this.escape(hoverMarkdown || '<empty>')}</pre>
+    <pre>${this.escape(hoverMarkdown || "<empty>")}</pre>
   </section>
   </div>
   <aside class="side-column">
@@ -309,6 +313,6 @@ export class HoverDebugPanel {
   }, { passive: true });
 </script>
 </body>
-</html>`
+</html>`;
   }
 }

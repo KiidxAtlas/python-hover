@@ -349,6 +349,11 @@ export class Config {
     return this.config.get("ui.visualStyle", "expanded");
   }
 
+  /** Show user-facing notifications when hover resolution fails (off by default to avoid notification spam). */
+  get showHoverErrorNotifications(): boolean {
+    return this.config.get("ui.showHoverErrorNotifications", false);
+  }
+
   get moduleBrowserDefaultView(): "hierarchy" | "flat" {
     return this.config.get("ui.moduleBrowser.defaultView", "flat");
   }

@@ -1,5 +1,9 @@
-import { createWebviewNonce } from '#src/ui/webview/webviewNonce'
-import * as vscode from 'vscode'
+import { createWebviewNonce } from "#src/ui/webview/webviewNonce";
+import {
+  formatStandardErrorMessage,
+  showErrorNotification,
+} from "#src/utils/error-handling";
+import * as vscode from "vscode";
 
 /**
  * Persistent side-panel docs browser.
@@ -12,181 +16,193 @@ import * as vscode from 'vscode'
  * A small toolbar lets the user type a URL or pop the page out to the system browser.
  */
 export class DocsPanel {
-  private static _instance: DocsPanel | undefined
-  private panel: vscode.WebviewPanel | undefined
-  private pendingNavigationTimer: ReturnType<typeof setTimeout> | undefined
-  private autoOpenCurrentHoverInIntegratedDocs = false
+  private static _instance: DocsPanel | undefined;
+  private panel: vscode.WebviewPanel | undefined;
+  private pendingNavigationTimer: ReturnType<typeof setTimeout> | undefined;
+  private autoOpenCurrentHoverInIntegratedDocs = false;
   private onDidToggleAutoOpenCurrentHoverInIntegratedDocs:
     | ((enabled: boolean) => void | Promise<void>)
-    | undefined
+    | undefined;
 
   private isDocsPanelMessage(
     message: unknown,
   ): message is
-    | { type: 'openExternal' | 'syncTitle' | 'copyUrl'; url: string }
-    | { type: 'setAutoOpenCurrentHover'; enabled: boolean } {
+    | { type: "openExternal" | "syncTitle" | "copyUrl"; url: string }
+    | { type: "setAutoOpenCurrentHover"; enabled: boolean } {
     if (
       !message ||
-      typeof message !== 'object' ||
+      typeof message !== "object" ||
       (message as { type?: unknown }).type === undefined
     ) {
-      return false
+      return false;
     }
 
-    const type = (message as { type?: unknown }).type
-    if (type === 'setAutoOpenCurrentHover') {
-      return typeof (message as { enabled?: unknown }).enabled === 'boolean'
+    const type = (message as { type?: unknown }).type;
+    if (type === "setAutoOpenCurrentHover") {
+      return typeof (message as { enabled?: unknown }).enabled === "boolean";
     }
 
     return (
-      (type === 'openExternal' || type === 'syncTitle' || type === 'copyUrl') &&
-      typeof (message as { url?: unknown }).url === 'string'
-    )
+      (type === "openExternal" || type === "syncTitle" || type === "copyUrl") &&
+      typeof (message as { url?: unknown }).url === "string"
+    );
   }
 
   static getInstance(): DocsPanel {
     if (!DocsPanel._instance) {
-      DocsPanel._instance = new DocsPanel()
+      DocsPanel._instance = new DocsPanel();
     }
-    return DocsPanel._instance
+    return DocsPanel._instance;
   }
 
   isOpen(): boolean {
-    return !!this.panel
+    return !!this.panel;
   }
 
   configure(options: {
-    autoOpenCurrentHoverInIntegratedDocs?: boolean
-    onDidToggleAutoOpenCurrentHoverInIntegratedDocs?: (enabled: boolean) => void | Promise<void>
+    autoOpenCurrentHoverInIntegratedDocs?: boolean;
+    onDidToggleAutoOpenCurrentHoverInIntegratedDocs?: (
+      enabled: boolean,
+    ) => void | Promise<void>;
   }): void {
-    if (typeof options.autoOpenCurrentHoverInIntegratedDocs === 'boolean') {
-      this.autoOpenCurrentHoverInIntegratedDocs = options.autoOpenCurrentHoverInIntegratedDocs
+    if (typeof options.autoOpenCurrentHoverInIntegratedDocs === "boolean") {
+      this.autoOpenCurrentHoverInIntegratedDocs =
+        options.autoOpenCurrentHoverInIntegratedDocs;
     }
 
     if (options.onDidToggleAutoOpenCurrentHoverInIntegratedDocs) {
       this.onDidToggleAutoOpenCurrentHoverInIntegratedDocs =
-        options.onDidToggleAutoOpenCurrentHoverInIntegratedDocs
+        options.onDidToggleAutoOpenCurrentHoverInIntegratedDocs;
     }
 
     void this.panel?.webview.postMessage({
-      type: 'syncAutoOpenCurrentHover',
+      type: "syncAutoOpenCurrentHover",
       enabled: this.autoOpenCurrentHoverInIntegratedDocs,
-    })
+    });
   }
 
   show(url: string, options?: { createIfMissing?: boolean }): void {
-    const safeUrl = this.normalizeWebUrl(url)
+    const safeUrl = this.normalizeWebUrl(url);
     if (!safeUrl) {
-      return
+      return;
     }
 
-    const createIfMissing = options?.createIfMissing ?? true
+    const createIfMissing = options?.createIfMissing ?? true;
     if (!this.panel && !createIfMissing) {
-      return
+      return;
     }
 
-    if (this.panel) {
-      // Panel already exists — navigate to the new URL, stay in whatever column it's in
-      this.panel.title = this.titleFromUrl(safeUrl)
-      this.panel.reveal(undefined, /* preserveFocus */ true)
-      // Small delay so the webview is visible before we post a message
-      clearTimeout(this.pendingNavigationTimer)
-      this.pendingNavigationTimer = setTimeout(() => {
-        this.pendingNavigationTimer = undefined
-        this.panel?.webview.postMessage({ type: 'navigate', url: safeUrl })
-      }, 50)
-    } else {
-      // First open — create in the beside column so it never covers the code editor
-      this.panel = vscode.window.createWebviewPanel(
-        'pyhover.docsBrowser',
-        this.titleFromUrl(safeUrl),
-        { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true },
-        {
-          enableScripts: true,
-          retainContextWhenHidden: false,
-          localResourceRoots: [],
-        },
-      )
-      this.panel.webview.onDidReceiveMessage(message => {
-        if (!this.isDocsPanelMessage(message)) {
-          return
-        }
-
-        if (message.type === 'syncTitle') {
-          const safeTitleUrl = this.normalizeWebUrl(message.url)
-          if (safeTitleUrl && this.panel) {
-            this.panel.title = this.titleFromUrl(safeTitleUrl)
-          }
-          return
-        }
-
-        if (message.type === 'setAutoOpenCurrentHover') {
-          this.autoOpenCurrentHoverInIntegratedDocs = message.enabled
-          void this.onDidToggleAutoOpenCurrentHoverInIntegratedDocs?.(message.enabled)
-          return
-        }
-
-        if (message.type === 'copyUrl') {
-          const copyUrl = this.normalizeWebUrl(message.url)
-          if (!copyUrl) {
-            return
+    try {
+      if (this.panel) {
+        // Panel already exists — navigate to the new URL, stay in whatever column it's in
+        this.panel.title = this.titleFromUrl(safeUrl);
+        this.panel.reveal(undefined, /* preserveFocus */ true);
+        // Small delay so the webview is visible before we post a message
+        clearTimeout(this.pendingNavigationTimer);
+        this.pendingNavigationTimer = setTimeout(() => {
+          this.pendingNavigationTimer = undefined;
+          this.panel?.webview.postMessage({ type: "navigate", url: safeUrl });
+        }, 50);
+      } else {
+        // First open — create in the beside column so it never covers the code editor
+        this.panel = vscode.window.createWebviewPanel(
+          "pyhover.docsBrowser",
+          this.titleFromUrl(safeUrl),
+          { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true },
+          {
+            enableScripts: true,
+            retainContextWhenHidden: false,
+            localResourceRoots: [],
+          },
+        );
+        this.panel.webview.onDidReceiveMessage((message) => {
+          if (!this.isDocsPanelMessage(message)) {
+            return;
           }
 
-          void vscode.env.clipboard.writeText(copyUrl)
-          return
-        }
+          if (message.type === "syncTitle") {
+            const safeTitleUrl = this.normalizeWebUrl(message.url);
+            if (safeTitleUrl && this.panel) {
+              this.panel.title = this.titleFromUrl(safeTitleUrl);
+            }
+            return;
+          }
 
-        const externalUrl = this.normalizeWebUrl(message.url)
-        if (!externalUrl) {
-          return
-        }
+          if (message.type === "setAutoOpenCurrentHover") {
+            this.autoOpenCurrentHoverInIntegratedDocs = message.enabled;
+            void this.onDidToggleAutoOpenCurrentHoverInIntegratedDocs?.(
+              message.enabled,
+            );
+            return;
+          }
 
-        void vscode.env.openExternal(vscode.Uri.parse(externalUrl))
-      })
-      this.panel.webview.html = this.buildHtml(safeUrl)
-      this.panel.onDidDispose(() => {
-        clearTimeout(this.pendingNavigationTimer)
-        this.pendingNavigationTimer = undefined
-        this.panel = undefined
-      })
+          if (message.type === "copyUrl") {
+            const copyUrl = this.normalizeWebUrl(message.url);
+            if (!copyUrl) {
+              return;
+            }
+
+            void vscode.env.clipboard.writeText(copyUrl);
+            return;
+          }
+
+          const externalUrl = this.normalizeWebUrl(message.url);
+          if (!externalUrl) {
+            return;
+          }
+
+          void vscode.env.openExternal(vscode.Uri.parse(externalUrl));
+        });
+        this.panel.webview.html = this.buildHtml(safeUrl);
+        this.panel.onDidDispose(() => {
+          clearTimeout(this.pendingNavigationTimer);
+          this.pendingNavigationTimer = undefined;
+          this.panel = undefined;
+        });
+      }
+    } catch (error) {
+      showErrorNotification(
+        formatStandardErrorMessage("network-error", "docs panel"),
+        { logData: error },
+      );
     }
   }
 
   dispose(): void {
-    clearTimeout(this.pendingNavigationTimer)
-    this.pendingNavigationTimer = undefined
-    this.panel?.dispose()
-    this.panel = undefined
+    clearTimeout(this.pendingNavigationTimer);
+    this.pendingNavigationTimer = undefined;
+    this.panel?.dispose();
+    this.panel = undefined;
   }
 
   private normalizeWebUrl(url: string): string | null {
     try {
-      const parsed = new URL(url.trim())
-      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-        return null
+      const parsed = new URL(url.trim());
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        return null;
       }
-      return parsed.toString()
+      return parsed.toString();
     } catch {
-      return null
+      return null;
     }
   }
 
   private titleFromUrl(url: string): string {
     try {
-      const host = new URL(url).hostname.replace(/^www\./, '')
-      return host || 'Python Docs'
+      const host = new URL(url).hostname.replace(/^www\./, "");
+      return host || "Python Docs";
     } catch {
-      return 'Python Docs'
+      return "Python Docs";
     }
   }
 
   private buildHtml(initialUrl: string): string {
-    const nonce = createWebviewNonce()
+    const nonce = createWebviewNonce();
     const safe = initialUrl
-      .replace(/&/g, '&amp;')
-      .replace(/"/g, '&quot;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
+      .replace(/&/g, "&amp;")
+      .replace(/"/g, "&quot;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
     return /* html */ `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -455,9 +471,9 @@ export class DocsPanel {
         <span id="path-label">Loading…</span>
       </div>
       <div class="helper-copy">
-        <button class="toggle-chip${this.autoOpenCurrentHoverInIntegratedDocs ? ' active' : ''}" id="auto-open-btn" type="button" aria-pressed="${this.autoOpenCurrentHoverInIntegratedDocs ? 'true' : 'false'}" title="Automatically open the current hover in this browser panel">
+        <button class="toggle-chip${this.autoOpenCurrentHoverInIntegratedDocs ? " active" : ""}" id="auto-open-btn" type="button" aria-pressed="${this.autoOpenCurrentHoverInIntegratedDocs ? "true" : "false"}" title="Automatically open the current hover in this browser panel">
           <span class="toggle-dot"></span>
-          <span id="auto-open-label">${this.autoOpenCurrentHoverInIntegratedDocs ? 'Auto-open hover on' : 'Auto-open hover off'}</span>
+          <span id="auto-open-label">${this.autoOpenCurrentHoverInIntegratedDocs ? "Auto-open hover on" : "Auto-open hover off"}</span>
         </button>
         <span>Cmd/Ctrl+L focuses URL</span>
         <span>Cmd/Ctrl+R reloads</span>
@@ -488,7 +504,7 @@ export class DocsPanel {
   let historyIndex = -1;
   let pendingNavigationMode = 'push';
   let isExpanded = false;
-  let autoOpenCurrentHover = ${this.autoOpenCurrentHoverInIntegratedDocs ? 'true' : 'false'};
+  let autoOpenCurrentHover = ${this.autoOpenCurrentHoverInIntegratedDocs ? "true" : "false"};
 
   function normalizeUrl(url) {
     try {
@@ -646,6 +662,6 @@ export class DocsPanel {
   setExpanded(false);
 </script>
 </body>
-</html>`
+</html>`;
   }
 }

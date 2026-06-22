@@ -797,6 +797,11 @@
             "type": "string"
           },
           "markdownDescription": "Glob patterns for files where hover resolution is skipped entirely (e.g. `[\"**/migrations/**\", \"**/_generated/**\"]`)."
+        },
+        "python-hover.ui.showHoverErrorNotifications": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show user-facing notifications when hover resolution fails (e.g. no symbol found, unresolved local chains). Disabled by default to avoid notification spam — enable for debugging or when you want explicit feedback on failed resolutions."
         }
       }
     }

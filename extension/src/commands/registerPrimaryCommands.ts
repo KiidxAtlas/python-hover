@@ -1,6 +1,10 @@
 import { HoverDoc } from "#shared/types";
 import { HoverDebugPanel } from "#src/ui/panels/hoverDebugPanel";
 import { HoverPanel } from "#src/ui/panels/hoverPanel";
+import {
+  formatStandardErrorMessage,
+  formatStandardInfoMessage,
+} from "#src/utils/error-handling";
 import * as vscode from "vscode";
 
 type HoverProviderCommands = {
@@ -55,10 +59,12 @@ export function registerPrimaryCommands(
         }
         if (text) {
           await vscode.env.clipboard.writeText(text);
-          vscode.window.showInformationMessage(`Copied: ${text}`);
+          vscode.window.showInformationMessage(
+            formatStandardInfoMessage("Copied", text),
+          );
         } else {
           vscode.window.showInformationMessage(
-            "Hover over a Python symbol first to copy its import statement.",
+            formatStandardErrorMessage("resolution-failed", "current hover"),
           );
         }
       },
@@ -70,7 +76,7 @@ export function registerPrimaryCommands(
       const doc = deps.hoverProvider.getLastDoc();
       if (!doc) {
         vscode.window.showInformationMessage(
-          "No recent hover — hover over a Python symbol first.",
+          formatStandardErrorMessage("resolution-failed", "last hover"),
         );
         return;
       }
@@ -92,7 +98,9 @@ export function registerPrimaryCommands(
           deps.hoverProvider.getDocByCommandToken(urlOrToken)?.url;
         if (text) {
           await vscode.env.clipboard.writeText(text);
-          vscode.window.showInformationMessage("URL copied to clipboard");
+          vscode.window.showInformationMessage(
+            formatStandardInfoMessage("Copied URL"),
+          );
         }
       },
     ),
