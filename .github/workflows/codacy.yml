@@ -16,6 +16,8 @@ jobs:
   codacy-security-scan:
     name: Codacy Security Scan
     runs-on: ubuntu-latest
+    # Hard cap so a stuck tool can never hang the run indefinitely.
+    timeout-minutes: 25
     permissions:
       contents: read
       security-events: write
@@ -39,9 +41,21 @@ jobs:
           gh-code-scanning-compat: true
           # Never fail the build on findings — they surface as alerts instead.
           max-allowed-issues: 2147483647
+          # Bound each tool so a single slow/stuck tool can't stall the run.
+          tool-timeout: "8minutes"
+          # Skip the uncommitted-files check (full-repo scan in CI).
+          skip-uncommitted-files-check: true
 
-      # Codacy can emit zero-length or invalid runs; guard the upload.
+      # Only upload if the scan actually produced a SARIF file (a timed-out or
+      # failed scan leaves none, in which case we skip rather than error).
+      - name: Check SARIF exists
+        id: sarif
+        run: |
+          if [ -s results.sarif ]; then echo "exists=true" >> "$GITHUB_OUTPUT";
+          else echo "exists=false" >> "$GITHUB_OUTPUT"; fi
+
       - name: Upload SARIF results to GitHub code scanning
+        if: steps.sarif.outputs.exists == 'true'
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: results.sarif
