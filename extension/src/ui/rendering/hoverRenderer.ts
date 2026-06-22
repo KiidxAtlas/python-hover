@@ -1637,7 +1637,13 @@ export class HoverRenderer {
   }
 
   private escapeTableCell(value: string): string {
-    return value.replace(/\|/g, "\\|").replace(/\n+/g, " ").trim();
+    // Escape backslashes first so existing backslashes can't combine with the
+    // escapes we add below (incomplete sanitization).
+    return value
+      .replace(/\\/g, "\\\\")
+      .replace(/\|/g, "\\|")
+      .replace(/\n+/g, " ")
+      .trim();
   }
 
   private buildImportStatement(doc: HoverDoc): string | undefined {
@@ -2330,7 +2336,9 @@ export class HoverRenderer {
   }
 
   private escapeInlineCode(text: string): string {
-    return text.replace(/`/g, "\\`");
+    // Escape backslashes first so a literal backslash before a backtick can't
+    // form an unintended escape sequence (incomplete sanitization).
+    return text.replace(/\\/g, "\\\\").replace(/`/g, "\\`");
   }
 
   private getCommandToken(doc: HoverDoc): string | undefined {

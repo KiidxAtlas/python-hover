@@ -56,8 +56,19 @@ export async function openSourceTarget(
     return false;
   }
 
+  // Parse the host so "github.com" must be the actual hostname, not an
+  // arbitrary substring (e.g. https://github.com.evil.com or
+  // https://evil.com/github.com), which would otherwise bypass the check.
+  let gitHubHost = false;
+  try {
+    const host = new URL(sourceTarget).hostname.toLowerCase();
+    gitHubHost = host === "github.com" || host.endsWith(".github.com");
+  } catch {
+    gitHubHost = false;
+  }
+
   const isGitHubLink =
-    sourceTarget.includes("github.com") &&
+    gitHubHost &&
     (sourceTarget.includes("/blob/") || sourceTarget.includes("/tree/"));
   if (isGitHubLink) {
     // Build the VS Code for Web link by transforming the full URL safely.

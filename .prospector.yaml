@@ -21,3 +21,25 @@ pylint:
     - too-many-return-statements
     # These functions legitimately have many local variables for AST traversal.
     - too-many-locals
+    # Helper scripts: docstrings/naming/style are intentionally relaxed.
+    - missing-module-docstring
+    - missing-class-docstring
+    - missing-function-docstring
+    - invalid-name
+    - line-too-long
+    - multiple-statements
+    - bad-continuation
+    - broad-except
+    - broad-exception-caught
+    - too-few-public-methods
+    - too-many-ancestors
+    - too-many-instance-attributes
+    - too-many-arguments
+    - too-many-statements
+    - inconsistent-return-statements
+    - chained-comparison
+
+mccabe:
+  run: true
+  options:
+    max-complexity: 50

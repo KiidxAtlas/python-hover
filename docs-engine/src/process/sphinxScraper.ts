@@ -191,7 +191,7 @@ export class SphinxScraper {
         /<a[^>]+href=["']([^"'#][^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi;
       let linkMatch: RegExpExecArray | null;
       while ((linkMatch = linkRegex.exec(seealsoMatch[1])) !== null) {
-        const text = linkMatch[2].replace(/<[^>]+>/g, "").trim();
+        const text = stripHtmlTags(linkMatch[2]).trim();
         const href = linkMatch[1];
         if (!text || !href) {
           continue;

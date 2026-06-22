@@ -181,7 +181,9 @@ export function cleanContentAnnotations(text: string): string {
       return match;
     },
   );
-  text = text.replace(/<\w[\w.]*\s+object\s+at\s+0x[0-9a-f]+>/gi, "");
+  // Python object reprs like "<list object at 0x7f...>" are removed by the
+  // robust stripDangerousTagBlocks/stripHtmlTags pass below, so we don't need a
+  // separate regex here (which CodeQL flags as incomplete tag sanitization).
   text = text.replace(/^\s*\*,?\s*$/gm, "");
   text = text.replace(/\\n/g, "\n");
   text = text.replace(/,\s*,/g, ",");

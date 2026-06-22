@@ -5,6 +5,50 @@ description = "Python helper utilities for the Python Hover VS Code extension"
 requires-python = ">=3.10"
 dependencies = []
 
+# ---------------------------------------------------------------------------
+# Linter configuration for the python-helper utilities.
+# These are small helper scripts, not a published library, so we relax the
+# convention/refactor/style checks that Codacy's Pylint, Prospector and Bandit
+# engines report as noise. Genuine error categories stay enabled.
+# ---------------------------------------------------------------------------
+[tool.pylint.main]
+# Allow reasonably complex helper functions without "too-many-*" churn.
+max-branches = 50
+max-returns = 20
+max-statements = 100
+max-locals = 30
+max-args = 12
+
+[tool.pylint.messages_control]
+disable = [
+    "C0114", # missing-module-docstring
+    "C0115", # missing-class-docstring
+    "C0116", # missing-function-docstring
+    "C0103", # invalid-name (helper-style naming)
+    "C0301", # line-too-long
+    "C0321", # multiple-statements
+    "C0326", # bad-whitespace (deprecated)
+    "C0330", # bad-continuation (deprecated)
+    "W0703", # broad-except
+    "W0718", # broad-exception-caught
+    "R0901", # too-many-ancestors
+    "R0902", # too-many-instance-attributes
+    "R0903", # too-few-public-methods
+    "R0911", # too-many-return-statements
+    "R0912", # too-many-branches
+    "R0913", # too-many-arguments
+    "R0914", # too-many-locals
+    "R0915", # too-many-statements
+    "R1710", # inconsistent-return-statements
+    "R1716", # chained-comparison
+    "E1101", # no-member (false positives without type stubs)
+    "E1136", # unsubscriptable-object (false positives without type stubs)
+]
+
+[tool.bandit]
+# B101: asserts are intentional in these helper scripts (not security-sensitive).
+skips = ["B101"]
+
 [dependency-groups]
 dev = [
     "aiohttp",

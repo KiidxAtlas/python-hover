@@ -1,0 +1,11 @@
+# remark-lint configuration.
+# The CHANGELOG uses GitHub-style shortcut/auto links and bracketed text that
+# remark-lint reports as "undefined references"; these are intentional and
+# render correctly on the Marketplace/GitHub, so the related rules are disabled.
+plugins:
+  - - remark-lint-no-undefined-references
+    - false
+  - - remark-lint-no-shortcut-reference-link
+    - false
+  - - remark-lint-no-inline-padding
+    - false
