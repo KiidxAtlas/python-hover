@@ -64,13 +64,13 @@ Most hover extensions show you a one-liner from PyPI. **Python Hover fetches fro
 
 ---
 
-## 🆕 New in 0.7.7
+## 🆕 New in 0.7.8
 
-- **Structured overview rendering** now keeps long Sphinx summaries visible instead of dropping the overview when the first block exceeds the display limit.
-- **Docs fallback behavior** now shows a link when content extraction is sparse, so hover cards stay actionable even when prose is thin.
-- **Studio reliability** is improved with webview loading fixes and command fallbacks so Pin/Debug actions still work when a token is missing.
-- **Runtime helper startup** now resolves the shipped `extension/python-helper/helper.py` path correctly, restoring builtin and stdlib runtime enrichment.
-- **Diagnostics** now log when cleanup removes hover text, making it easier to see whether extraction or rendering removed the content.
+- **Rewrote keyword hover rendering** — `def`, `for`, `class`, `match`, and every other language keyword now render through the same robust pipeline as regular symbols, fixing grammar-block corruption and mangled sentences.
+- **Flattened hover layout** for consistent, easy-to-scan formatting across every section.
+- **Fixed a batch of hover accuracy bugs**: duplicated titles, corrupted parameter tables, literal backslashes in code, leaked HTML entities, and wrong symbol resolution for variables assigned from factory functions like `numpy.array(...)`.
+- **Added Retry and Settings actions** to low-confidence hovers, a **Copy button** on code examples, and a status bar **"Resolving…"** indicator for genuinely slow hovers.
+- **Module Browser** rows now show color-coded kind badges for faster scanning.
 
 ---
 
@@ -309,8 +309,6 @@ Love Python Hover? Here is how to help:
 - 🐛 **Report a bug** — [open an issue](https://github.com/KiidxAtlas/python-hover/issues)
 - 💡 **Suggest a feature** — [start a discussion](https://github.com/KiidxAtlas/python-hover/discussions)
 
-[View Contributing Guide →](CONTRIBUTING.md)
-
 ---
 
 <div align="center">
@@ -326,7 +324,7 @@ Python Hover is free and open source. If it saves you time every day, a coffee k
 
 **Made with ❤️ by [KiidxAtlas](https://github.com/KiidxAtlas)**
 
-MIT License · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md)
+MIT License · [Changelog](CHANGELOG.md)
 
 <br />
 

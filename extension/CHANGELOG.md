@@ -4,6 +4,24 @@ All notable changes to Python Hover will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.7.8] - 2026-07-10
+
+A major accuracy and layout pass across hover rendering and documentation extraction, plus several new hover actions.
+
+- **Rewrote keyword hover rendering** (`def`, `for`, `class`, `match`, and every other language keyword) to use the same robust, structured content pipeline as regular symbol hovers instead of a separate heuristic parser — fixes recurring grammar-block corruption, ordinary sentences getting mangled into fake syntax blocks, and the syntax/grammar section landing in the wrong place or getting truncated out entirely.
+- **Flattened hover layout** for consistent formatting: removed inconsistent indentation between section headers and body content so every hover reads cleanly instead of zig-zagging between indented and flush-left sections.
+- **Fixed duplicated hover titles** — methods and functions with an already-qualified name (e.g. `Widget.resize`, `json.dumps`) no longer show up doubled as `Widget.resize.resize` / `json.dumps.dumps`.
+- **Fixed corrupted parameter tables** that rendered broken markup instead of a clean table.
+- **Fixed literal backslashes leaking into inline code** (e.g. import statements showing `numpy\.array` instead of `numpy.array`).
+- **Fixed HTML entities leaking into hover text** unescaped (`&gt;`, `&amp;`, `&nbsp;`, and friends now render as their real characters everywhere, including inside third-party documentation and Python's own language-reference grammar).
+- **Fixed wrong symbol resolution for variables assigned from factory functions** — hovering a method on a NumPy array (or similar) no longer misattributes it to a nonexistent symbol; it now resolves to the real owning type and shows a correct, importable suggestion.
+- **Fixed a documentation-URL discovery bug** where following an HTTP redirect could silently land on the wrong, unverified base URL instead of the real one.
+- **Added a status bar "Resolving…" indicator** for hovers that genuinely need a slow network or subprocess round trip, without flickering on the common cache-hit path.
+- **Added Retry and Settings actions** to low-confidence or failed hovers, so a bad resolution is one click away from being fixed instead of a dead end.
+- **Added a Copy button under code examples** in hover cards.
+- **Common built-in types** (`int`, `str`, `list`, `dict`, …) now always render in compact mode, regardless of the global setting.
+- **Module Browser rows** now show color-coded kind badges for faster visual scanning.
+
 ## [0.7.7] - 2026-06-03
 
 Release hardening focused on hover rendering, Studio interaction reliability, and runtime helper cleanup.
