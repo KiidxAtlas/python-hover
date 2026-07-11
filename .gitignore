@@ -12,3 +12,4 @@ cache/
 *.log
 *.vsix
 .claude
+agent_notes.md

@@ -70,13 +70,23 @@
   ],
   "main": "./out/extension/src/activate.js",
   "scripts": {
+    "vscode:prepublish": "npm run compile",
     "compile": "rm -rf out && tsc -p ./",
-    "test": "vitest"
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts",
+    "package": "npx @vscode/vsce package",
+    "verify": "npm run compile && npm run lint && npm run package",
+    "test:hovers": "tsx scripts/testHovers.ts"
   },
   "devDependencies": {
-    "vitest": "^4.1.8",
-    "typescript": "^5.2.2",
-    "@types/node": "^18.16.19"
+    "@types/node": "18.x",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^8.59.0",
+    "@typescript-eslint/parser": "^8.59.0",
+    "@vscode/test-electron": "^3.0.0",
+    "eslint": "^8.56.0",
+    "tsx": "^4.23.0",
+    "typescript": "^6.0.3"
   },
   "contributes": {
     "commands": [
@@ -806,23 +816,7 @@
       }
     }
   },
-  "scripts": {
-    "vscode:prepublish": "npm run compile",
-    "compile": "rm -rf out && tsc -p ./",
-    "watch": "tsc -watch -p ./",
-    "lint": "eslint src --ext ts",
-    "package": "npx @vscode/vsce package",
-    "verify": "npm run compile && npm run lint && npm run package"
-  },
   "dependencies": {
     "minimatch": "^9.0.7"
-  },
-  "devDependencies": {
-    "@types/vscode": "^1.85.0",
-    "@types/node": "18.x",
-    "@typescript-eslint/eslint-plugin": "^8.59.0",
-    "@typescript-eslint/parser": "^8.59.0",
-    "eslint": "^8.56.0",
-    "typescript": "^6.0.3"
   }
 }

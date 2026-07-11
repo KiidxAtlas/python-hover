@@ -1,406 +1,121 @@
 import { CustomLibraryConfig } from "#shared/types";
-import {
-  buildInterpreterCacheFingerprint,
-  FingerprintCache,
-  isDependencyManifestUri as isDependencyManifest,
-} from "#src/config/workspaceFingerprint";
-import {
-  normalizeRegularHoverSectionOrder,
-  REGULAR_HOVER_SECTION_ORDER,
-  RegularHoverSectionId,
-} from "#src/hover/hoverLayout";
+import { buildInterpreterCacheFingerprint, FingerprintCache, isDependencyManifestUri as isDependencyManifest } from "#src/config/workspaceFingerprint";
 import * as vscode from "vscode";
-import { Logger } from "../logger";
+import { CoreConfig, UiConfig, DiagnosticsConfig } from "./subConfigs";
 
+// Re-export sub-configs for consumers that may import them directly.
+export { CoreConfig, UiConfig, DiagnosticsConfig } from "./subConfigs";
+
+/**
+ * Unified Config facade — delegates to sub-configs for logical grouping.
+ * This replaces the previous god-object with 45+ getters with a clean,
+ * testable facade that exposes CoreConfig, UiConfig, and DiagnosticsConfig.
+ */
 export class Config {
-  private get config() {
-    return vscode.workspace.getConfiguration("python-hover");
-  }
-
-  /** Memoized interpreter+workspace fingerprint. */
+  private readonly core: CoreConfig;
+  private readonly ui: UiConfig;
+  private readonly diagnostics: DiagnosticsConfig;
   private _fingerprintCache: FingerprintCache = {};
 
-  get isEnabled(): boolean {
-    return this.config.get("enable", true);
+  constructor(private readonly config: vscode.WorkspaceConfiguration) {
+    this.core = new CoreConfig(config);
+    this.ui = new UiConfig(config);
+    this.diagnostics = new DiagnosticsConfig(config);
   }
 
-  get onlineDiscovery(): boolean {
-    return this.config.get("onlineDiscovery", true);
-  }
+  // ── Core Config delegation (extension, discovery, caching) ───────────
+  get isEnabled(): boolean { return this.core.isEnabled; }
+  get onlineDiscovery(): boolean { return this.core.onlineDiscovery; }
+  get warmupImports(): boolean { return this.core.warmupImports; }
+  get useKnownDocsUrls(): boolean { return this.core.useKnownDocsUrls; }
+  get buildFullCorpus(): boolean { return this.core.buildFullCorpus; }
+  get docsVersion(): string { return this.core.docsVersion; }
+  get maxSnippetLines(): number { return this.core.maxSnippetLines; }
+  get inventoryCacheDays(): number { return this.core.inventoryCacheDays; }
+  get snippetCacheHours(): number { return this.core.snippetCacheHours; }
+  get requestTimeout(): number { return this.core.requestTimeout; }
+  get runtimeHelperEnabled(): boolean { return this.core.runtimeHelperEnabled; }
+  get docScrapingEnabled(): boolean { return this.core.docScrapingEnabled; }
+  get astFallbackEnabled(): boolean { return this.core.astFallbackEnabled; }
+  get customLibraries(): CustomLibraryConfig[] { return this.core.customLibraries; }
+  get enableDebugLogging(): boolean { return this.core.enableDebugLogging; }
+  get revealOutputOnStartup(): boolean { return this.core.revealOutputOnStartup; }
+  get revealOutputOnError(): boolean { return this.core.revealOutputOnError; }
+  get telemetryEnabled(): boolean { return this.core.telemetryEnabled; }
+  get preloadPackages(): string[] { return this.core.preloadPackages; }
+  get excludePatterns(): string[] { return this.core.excludePatterns; }
+  get hoverActivationDelay(): number { return this.core.hoverActivationDelay; }
 
-  /** Pre-fetch objects.inv for imports in the active editor (off by default — lazy load on hover). */
-  get warmupImports(): boolean {
-    return this.config.get("warmupImports", false);
-  }
+  // ── Ui Config delegation (rendering, display, interaction) ───────────
+  get showPracticalExamples(): boolean { return this.ui.showPracticalExamples; }
+  get docsBrowser(): "integrated" | "external" { return this.ui.docsBrowser; }
+  get devdocsBrowser(): "integrated" | "external" { return this.ui.devdocsBrowser; }
+  get showSignatures(): boolean { return this.ui.showSignatures; }
+  get showReturnTypes(): boolean { return this.ui.showReturnTypes; }
+  get showDebugPinButton(): boolean { return this.ui.showDebugPinButton; }
+  get showStatusBar(): boolean { return this.ui.showStatusBar; }
+  get showEditorContextMenu(): boolean { return this.ui.contextMenuEnabled; }
+  get showSearchDocsContextMenu(): boolean { return this.ui.contextMenuSearchDocs; }
+  get showBrowseModuleContextMenu(): boolean { return this.ui.contextMenuBrowseModule; }
+  get showPinHoverContextMenu(): boolean { return this.ui.contextMenuPinHover; }
+  get showDebugPinHoverContextMenu(): boolean { return this.ui.contextMenuDebugPinHover; }
+  get showOpenStudioContextMenu(): boolean { return this.ui.contextMenuOpenStudio; }
+  get maxContentLength(): number { return this.ui.maxContentLength; }
+  get compactMode(): boolean { return this.ui.compactMode; }
+  get showBadges(): boolean { return this.ui.showBadges; }
+  get showMetadataChips(): boolean { return this.ui.showMetadataChips; }
+  get showProvenance(): boolean { return this.ui.showProvenance; }
+  get showToolbar(): boolean { return this.ui.showToolbar; }
+  get showCallouts(): boolean { return this.ui.showCallouts; }
+  get showDescription(): boolean { return this.ui.showDescription; }
+  get showParameterLens(): boolean { return this.ui.showParameterLens; }
+  get showNotes(): boolean { return this.ui.showNotes; }
+  get showParameters(): boolean { return this.ui.showParameters; }
+  get maxParameters(): number { return this.ui.maxParameters; }
+  get showSeeAlso(): boolean { return this.ui.showSeeAlso; }
+  get showRaises(): boolean { return this.ui.showRaises; }
+  get showModuleExports(): boolean { return this.ui.showModuleExports; }
+  get showModuleStats(): boolean { return this.ui.showModuleStats; }
+  get showFooter(): boolean { return this.ui.showFooter; }
+  get showImportHints(): boolean { return this.ui.showImportHints; }
+  get hoverSectionOrder() { return this.ui.hoverSectionOrder; }
+  get maxExamples(): number { return this.ui.maxExamples; }
+  get maxModuleExports(): number { return this.ui.maxModuleExports; }
+  get maxSeeAlsoItems(): number { return this.ui.maxSeeAlsoItems; }
+  get showUpdateWarning(): boolean { return this.ui.showUpdateWarning; }
+  get redirectIntegratedHoverToDocsPage(): boolean { return this.ui.redirectIntegratedHoverToDocsPage; }
+  get autoOpenCurrentHoverInIntegratedDocs(): boolean { return this.ui.autoOpenCurrentHoverInIntegratedDocs; }
+  get learnModeEnabled(): boolean { return this.ui.learnMode; }
+  get hoverVisualStyle(): "minimal" | "expanded" { return this.ui.visualStyle; }
+  get showHoverErrorNotifications(): boolean { return this.ui.showHoverErrorNotifications; }
+  get moduleBrowserDefaultView() { return this.ui.moduleBrowserDefaultView; }
+  get moduleBrowserDefaultSort() { return this.ui.moduleBrowserDefaultSort; }
+  get moduleBrowserDefaultDensity() { return this.ui.moduleBrowserDefaultDensity; }
+  get moduleBrowserShowPrivateSymbols(): boolean { return this.ui.moduleBrowserShowPrivateSymbols; }
+  get moduleBrowserShowHierarchyHints(): boolean { return this.ui.moduleBrowserShowHierarchyHints; }
+  get moduleBrowserAutoLoadPreviews(): boolean { return this.ui.moduleBrowserAutoLoadPreviews; }
+  get moduleBrowserPreviewBatchSize(): number { return this.ui.moduleBrowserPreviewBatchSize; }
 
-  /**
-   * Use the bundled package → docs base URL map for fast resolution.
-   * When false, discovery uses PyPI project URLs + objects.inv probes only.
-   */
-  get useKnownDocsUrls(): boolean {
-    return this.config.get("useKnownDocsUrls", false);
-  }
+  // ── Diagnostics Config delegation (Python, diagnostics) ───────────────
+  get pythonPath(): string { return this.diagnostics.pythonPath; }
+  get diagnosticsEnabled(): boolean { return this.diagnostics.diagnosticsEnabled; }
 
-  get buildFullCorpus(): boolean {
-    return this.config.get("buildFullCorpus", false);
-  }
-
-  get docsVersion(): string {
-    return this.config.get("docsVersion", "auto");
-  }
-
-  get maxSnippetLines(): number {
-    return this.config.get("maxSnippetLines", 12);
-  }
-
-  get inventoryCacheDays(): number {
-    return this.config.get("cacheTTL.inventoryDays", 7);
-  }
-
-  get snippetCacheHours(): number {
-    return this.config.get("cacheTTL.snippetHours", 48);
-  }
-
-  get showPracticalExamples(): boolean {
-    // Read from the canonical ui.* key; fall back to the legacy top-level key for existing user configs
-    const legacy = this.config.get<boolean | undefined>(
-      "showPracticalExamples",
-      undefined,
-    );
-    return this.config.get("ui.showPracticalExamples", legacy ?? true);
-  }
-
-  get requestTimeout(): number {
-    const raw = this.config.get("requestTimeout", 10000);
-    return Math.min(Math.max(raw, 1000), 60000);
-  }
-
-  /** Where to open official docs links: 'integrated' (VS Code integrated browser), 'external' (system browser) */
-  get docsBrowser(): "integrated" | "external" {
-    return this.config.get("docsBrowser", "integrated");
-  }
-
-  /** Where to open DevDocs links: 'integrated' (VS Code integrated browser), 'external' (system browser) */
-  get devdocsBrowser(): "integrated" | "external" {
-    return this.config.get("devdocsBrowser", "integrated");
-  }
-
-  get customLibraries(): CustomLibraryConfig[] {
-    const raw = this.config.get<unknown[]>("customLibraries", []);
-    return raw.flatMap((entry) => {
-      if (!entry || typeof entry !== "object") {
-        return [];
-      }
-
-      const candidate = entry as {
-        name?: unknown;
-        baseUrl?: unknown;
-        inventoryUrl?: unknown;
-      };
-      if (
-        typeof candidate.name !== "string" ||
-        typeof candidate.baseUrl !== "string"
-      ) {
-        return [];
-      }
-
-      const name = candidate.name.trim();
-      const baseUrl = candidate.baseUrl.trim();
-      const inventoryUrl =
-        typeof candidate.inventoryUrl === "string"
-          ? candidate.inventoryUrl.trim()
-          : undefined;
-      if (!name || !baseUrl) {
-        return [];
-      }
-
-      // Validate URLs — skip malformed entries silently.
-      try {
-        new URL(baseUrl);
-        if (inventoryUrl) {
-          new URL(inventoryUrl);
-        }
-      } catch {
-        return [];
-      }
-
-      // Normalize baseUrl to always end with a trailing slash.
-      const normalizedBaseUrl = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
-
-      return [{ name, baseUrl: normalizedBaseUrl, inventoryUrl }];
-    });
-  }
-
-  get showSignatures(): boolean {
-    return this.config.get("ui.showSignatures", true);
-  }
-
-  get showReturnTypes(): boolean {
-    return this.config.get("ui.showReturnTypes", true);
-  }
-
-  get showDebugPinButton(): boolean {
-    return this.config.get("ui.showDebugPinButton", false);
-  }
-
-  get showStatusBar(): boolean {
-    return this.config.get("ui.showStatusBar", true);
-  }
-
-  get showEditorContextMenu(): boolean {
-    return this.config.get("ui.contextMenu.enabled", true);
-  }
-
-  get showSearchDocsContextMenu(): boolean {
-    return this.config.get("ui.contextMenu.searchDocs", true);
-  }
-
-  get showBrowseModuleContextMenu(): boolean {
-    return this.config.get("ui.contextMenu.browseModule", true);
-  }
-
-  get showPinHoverContextMenu(): boolean {
-    return this.config.get("ui.contextMenu.pinHover", true);
-  }
-
-  get showDebugPinHoverContextMenu(): boolean {
-    return this.config.get("ui.contextMenu.debugPinHover", true);
-  }
-
-  get showOpenStudioContextMenu(): boolean {
-    return this.config.get("ui.contextMenu.openStudio", true);
-  }
-
-  get maxContentLength(): number {
-    return this.config.get("ui.maxContentLength", 800);
-  }
-
-  get pythonPath(): string {
-    const pythonConfig = vscode.workspace.getConfiguration("python");
-    const configured =
-      pythonConfig.get<string>("defaultInterpreterPath") ||
-      pythonConfig.get<string>("pythonPath");
-    if (configured && configured.trim().length > 0) {
-      return configured;
-    }
-    // Fallback to platform-appropriate default.
-    const fallback = process.platform === "win32" ? "python" : "python3";
-    Logger.debug(`Using fallback Python path: ${fallback}`);
-    return fallback;
-  }
-
-  /**
-   * Stable id for cache keys — ties disk + session caches to interpreter path
-   * and dependency manifests in the current workspace.
-   */
+  /** Stable id for cache keys — ties disk + session caches to interpreter path and workspace. */
   get interpreterCacheFingerprint(): string {
-    return buildInterpreterCacheFingerprint(
-      this.pythonPath,
-      this._fingerprintCache,
-    );
+    return this.diagnostics.buildInterpreterCacheFingerprint(this._fingerprintCache);
   }
 
   isDependencyManifestUri(uri: vscode.Uri): boolean {
-    return isDependencyManifest(uri);
+    return this.diagnostics.isDependencyManifestUri(uri);
   }
 
-  /** Persistent Python subprocess: import/inspect/pydoc (enabled by default for richer hover resolution). */
-  get runtimeHelperEnabled(): boolean {
-    return this.config.get("runtimeHelper", true);
-  }
+  /** Access the sub-configs directly for advanced usage. */
+  get coreConfig() { return this.core; }
+  get uiConfig() { return this.ui; }
+  get diagnosticsConfig() { return this.diagnostics; }
+}
 
-  /** Fetch & parse remote HTML for richer third-party hovers (off by default). */
-  get docScrapingEnabled(): boolean {
-    return this.config.get("docScraping", false);
-  }
-
-  /** When runtime helper is on, also use AST identify when LSP gives an incomplete symbol. */
-  get astFallbackEnabled(): boolean {
-    return this.config.get("astFallback", true);
-  }
-
-  get enableDebugLogging(): boolean {
-    return this.config.get("enableDebugLogging", false);
-  }
-
-  get revealOutputOnStartup(): boolean {
-    return this.config.get("revealOutputOnStartup", false);
-  }
-
-  get revealOutputOnError(): boolean {
-    return this.config.get("revealOutputOnError", false);
-  }
-
-  get compactMode(): boolean {
-    if (this.hoverVisualStyle === "minimal") {
-      return true;
-    }
-    return this.config.get("ui.compactMode", false);
-  }
-
-  get showBadges(): boolean {
-    return this.config.get("ui.showBadges", true);
-  }
-
-  get showMetadataChips(): boolean {
-    return this.config.get("ui.showMetadataChips", true);
-  }
-
-  get showProvenance(): boolean {
-    return this.config.get("ui.showProvenance", true);
-  }
-
-  get showToolbar(): boolean {
-    return this.config.get("ui.showToolbar", true);
-  }
-
-  get showCallouts(): boolean {
-    return this.config.get("ui.showCallouts", true);
-  }
-
-  get showDescription(): boolean {
-    return this.config.get("ui.showDescription", true);
-  }
-
-  get showParameterLens(): boolean {
-    return this.config.get("ui.showParameterLens", true);
-  }
-
-  get showNotes(): boolean {
-    return this.config.get("ui.showNotes", true);
-  }
-
-  get showParameters(): boolean {
-    return this.config.get("ui.showParameters", true);
-  }
-
-  get maxParameters(): number {
-    const raw = this.config.get("ui.maxParameters", 6);
-    return Math.min(Math.max(raw, 1), 20);
-  }
-
-  get showSeeAlso(): boolean {
-    return this.config.get("ui.showSeeAlso", true);
-  }
-
-  get showRaises(): boolean {
-    return this.config.get("ui.showRaises", true);
-  }
-
-  get showModuleExports(): boolean {
-    return this.config.get("ui.showModuleExports", true);
-  }
-
-  get showModuleStats(): boolean {
-    return this.config.get("ui.showModuleStats", true);
-  }
-
-  get showFooter(): boolean {
-    return this.config.get("ui.showFooter", true);
-  }
-
-  get showImportHints(): boolean {
-    return this.config.get("ui.showImportHints", true);
-  }
-
-  get hoverSectionOrder(): RegularHoverSectionId[] {
-    const raw = this.config.get<unknown>("ui.hoverSectionOrder", [
-      ...REGULAR_HOVER_SECTION_ORDER,
-    ]);
-    return normalizeRegularHoverSectionOrder(raw);
-  }
-
-  get maxExamples(): number {
-    const raw = this.config.get("ui.maxExamples", 2);
-    return Math.min(Math.max(raw, 1), 10);
-  }
-
-  get maxModuleExports(): number {
-    const raw = this.config.get("ui.maxModuleExports", 20);
-    return Math.min(Math.max(raw, 1), 100);
-  }
-
-  get maxSeeAlsoItems(): number {
-    const raw = this.config.get("ui.maxSeeAlsoItems", 8);
-    return Math.min(Math.max(raw, 1), 30);
-  }
-
-  get showUpdateWarning(): boolean {
-    return this.config.get("ui.showUpdateWarning", true);
-  }
-
-  get redirectIntegratedHoverToDocsPage(): boolean {
-    return this.config.get("ui.redirectIntegratedHoverToDocsPage", false);
-  }
-
-  get autoOpenCurrentHoverInIntegratedDocs(): boolean {
-    return this.config.get("ui.autoOpenCurrentHoverInIntegratedDocs", false);
-  }
-
-  get learnModeEnabled(): boolean {
-    return this.config.get("ui.learnMode", false);
-  }
-
-  get telemetryEnabled(): boolean {
-    return this.config.get("telemetry.enabled", false);
-  }
-
-  get hoverVisualStyle(): "minimal" | "expanded" {
-    return this.config.get("ui.visualStyle", "expanded");
-  }
-
-  /** Show user-facing notifications when hover resolution fails (off by default to avoid notification spam). */
-  get showHoverErrorNotifications(): boolean {
-    return this.config.get("ui.showHoverErrorNotifications", false);
-  }
-
-  get moduleBrowserDefaultView(): "hierarchy" | "flat" {
-    return this.config.get("ui.moduleBrowser.defaultView", "flat");
-  }
-
-  get moduleBrowserDefaultSort(): "name" | "kind" | "package" {
-    return this.config.get("ui.moduleBrowser.defaultSort", "name");
-  }
-
-  get moduleBrowserDefaultDensity(): "comfortable" | "compact" {
-    return this.config.get("ui.moduleBrowser.defaultDensity", "comfortable");
-  }
-
-  get moduleBrowserShowPrivateSymbols(): boolean {
-    return this.config.get("ui.moduleBrowser.showPrivateSymbols", false);
-  }
-
-  get moduleBrowserShowHierarchyHints(): boolean {
-    return this.config.get("ui.moduleBrowser.showHierarchyHints", true);
-  }
-
-  get moduleBrowserAutoLoadPreviews(): boolean {
-    return this.config.get("ui.moduleBrowser.autoLoadPreviews", true);
-  }
-
-  get moduleBrowserPreviewBatchSize(): number {
-    const raw = this.config.get("ui.moduleBrowser.previewBatchSize", 18);
-    return Math.min(Math.max(raw, 4), 50);
-  }
-
-  get diagnosticsEnabled(): boolean {
-    return this.config.get("diagnostics.enabled", true);
-  }
-
-  get hoverActivationDelay(): number {
-    return Math.min(
-      Math.max(this.config.get("hoverActivationDelay", 75), 0),
-      2000,
-    );
-  }
-
-  get preloadPackages(): string[] {
-    return this.config
-      .get<string[]>("preloadPackages", [])
-      .filter((p) => typeof p === "string" && p.trim().length > 0);
-  }
-
-  get excludePatterns(): string[] {
-    return this.config.get<string[]>("excludePatterns", []);
-  }
+/** Convenience: access the vscode workspace configuration directly. */
+function getVscodeConfig(section = "python-hover"): vscode.WorkspaceConfiguration {
+  return vscode.workspace.getConfiguration(section);
 }

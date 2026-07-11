@@ -118,7 +118,15 @@ export class SearchFallback {
     return `https://devdocs.io/#q=${encodeURIComponent(term)}`
   }
 
-  async search(key: DocKey): Promise<HoverDoc> {
+  /**
+   * @param knownBaseUrl Best-known documentation site for this package (from a
+   *   prior successful inventory resolution this session, or the bundled known-docs
+   *   map) — passed in by DocResolver via InventoryFetcher.getKnownBaseUrl(). Used
+   *   so a hover that reaches this last-resort tier still gets a real "Docs" link
+   *   pointing at the package's actual site, not just a DevDocs search box, even
+   *   though we don't have inventory data for this specific symbol's exact page.
+   */
+  async search(key: DocKey, knownBaseUrl?: string): Promise<HoverDoc> {
     const devdocsUrl = this.getDevDocsUrl(key)
 
     // For stdlib symbols, construct the module page URL so the hover always
@@ -126,6 +134,11 @@ export class SearchFallback {
     let url: string | undefined
     if (key.isStdlib && (key.module || key.package || key.name) && key.package !== 'builtins') {
       url = buildStdlibDocsUrl(key.module || key.package || key.name, '3')
+    } else if (knownBaseUrl) {
+      // Not stdlib and no exact symbol page — link to the package's docs
+      // homepage rather than nothing. Correct and useful even though it isn't
+      // deep-linked to this specific symbol.
+      url = knownBaseUrl
     }
 
     return {

@@ -22,7 +22,7 @@ export type ModuleBrowserMessage =
       requestId: number;
       symbols: IndexedSymbolSummary[];
     }
-  | { type: "run-command"; command: string }
+  | { type: "run-command"; command: string; arg?: string }
   | { type: "open-settings"; query?: string }
   | { type: "update-setting"; key: string; value: boolean | string | number };
 
@@ -73,7 +73,10 @@ function isModuleBrowserMessage(value: unknown): value is ModuleBrowserMessage {
         value.symbols.every(isIndexedSymbolSummary)
       );
     case "run-command":
-      return typeof value.command === "string";
+      return (
+        typeof value.command === "string" &&
+        (value.arg === undefined || typeof value.arg === "string")
+      );
     case "open-settings":
       return value.query === undefined || typeof value.query === "string";
     case "update-setting":
@@ -254,7 +257,7 @@ export class ModuleBrowserPanel {
     moduleName: string,
   ): string {
     const exactRoot = symbols.find((symbol) => symbol.name === moduleName);
-    if (!exactRoot?.url) {
+    if (!this.isHttpUrl(exactRoot?.url)) {
       return '<div class="sidebar-note">Interactive actions load when the browser script is ready.</div>';
     }
 
@@ -292,7 +295,7 @@ export class ModuleBrowserPanel {
           : "",
         `<div class="detail-copy">${summary || "No cached summary is available for this symbol yet."}</div>`,
         `<div class="detail-copy">${this.escapeHtml(this.formatInitialRowMeta(selected))}</div>`,
-        selected.url
+        this.isHttpUrl(selected.url)
           ? `<div class="stack"><a class="ghost" href="${this.escapeHtml(selected.url)}" target="_blank" rel="noopener noreferrer">Open docs</a></div>`
           : "",
       ]
@@ -371,7 +374,7 @@ export class ModuleBrowserPanel {
                 const signature = symbol.signature
                   ? `<div class="signature">${this.escapeHtml(this.truncate(symbol.signature, 180))}</div>`
                   : "";
-                const docsLink = symbol.url
+                const docsLink = this.isHttpUrl(symbol.url)
                   ? `<div class="actions"><a class="action" href="${this.escapeHtml(symbol.url)}" target="_blank" rel="noopener noreferrer">Docs</a></div>`
                   : "";
                 return [
@@ -827,11 +830,65 @@ export class ModuleBrowserPanel {
     gap: 3px;
   }
 
+  .row-title-line {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+  }
+
   .row-title {
     font-size: 14px;
     font-weight: 650;
     line-height: 1.2;
     word-break: break-word;
+  }
+
+  /* Kind badges — a single glyph per symbol kind so the list can be scanned by
+     shape/color alone, without reading the "class · pkg · docs" meta line. */
+  .kind-badge {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 5px;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    background: color-mix(in srgb, var(--accent) 16%, var(--bg));
+    color: var(--accent);
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  }
+
+  .kind-badge.kind-module {
+    background: color-mix(in srgb, #8957e5 18%, var(--bg));
+    color: #8957e5;
+    border-color: color-mix(in srgb, #8957e5 32%, transparent);
+  }
+
+  .kind-badge.kind-function,
+  .kind-badge.kind-method {
+    background: color-mix(in srgb, #2ea44f 18%, var(--bg));
+    color: #2ea44f;
+    border-color: color-mix(in srgb, #2ea44f 32%, transparent);
+  }
+
+  .kind-badge.kind-exception {
+    background: color-mix(in srgb, #cf222e 18%, var(--bg));
+    color: #cf222e;
+    border-color: color-mix(in srgb, #cf222e 32%, transparent);
+  }
+
+  .kind-badge.kind-constant,
+  .kind-badge.kind-variable,
+  .kind-badge.kind-field,
+  .kind-badge.kind-data {
+    background: color-mix(in srgb, #9a6700 18%, var(--bg));
+    color: #9a6700;
+    border-color: color-mix(in srgb, #9a6700 32%, transparent);
   }
 
   .signature {
@@ -1020,6 +1077,25 @@ export class ModuleBrowserPanel {
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&#39;");
+  }
+
+  /**
+   * These static pre-hydration rows build real `<a href="...">` tags directly from
+   * `IndexedSymbolSummary.url` with only HTML-entity escaping — no scheme check. They're
+   * also the only interactive links available if the client script (moduleBrowserWebview.js)
+   * ever fails to load, so unlike the hydrated rows (which route through the extension
+   * host's own openConfiguredLink URL normalization) there's no other backstop here.
+   */
+  private isHttpUrl(url: string | undefined): url is string {
+    if (!url) {
+      return false;
+    }
+    try {
+      const parsed = new URL(url);
+      return parsed.protocol === "http:" || parsed.protocol === "https:";
+    } catch {
+      return false;
+    }
   }
 
   private serializeForScript(value: unknown): string {

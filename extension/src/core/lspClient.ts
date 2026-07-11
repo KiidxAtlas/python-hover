@@ -1,5 +1,6 @@
 import { BUILTIN_TYPES } from '#shared/pythonBuiltins'
 import { LspSymbol } from '#shared/types'
+import { Logger } from '#src/logger'
 import { isStdlibTopLevelModule } from '#src/symbols/symbolClassifier'
 import * as vscode from 'vscode'
 
@@ -400,10 +401,23 @@ export class LspClient {
   // ─── LSP helpers ─────────────────────────────────────────────────────────
 
   private lspQuery<T>(command: string, ...args: unknown[]): Promise<T | undefined> {
+    const startedAt = Date.now()
+    const TIMEOUT_SENTINEL = Symbol('lspQueryTimeout')
     return Promise.race([
       vscode.commands.executeCommand<T>(command, ...args),
-      new Promise<undefined>(r => setTimeout(() => r(undefined), LSP_TIMEOUT_MS)),
-    ]).catch(() => undefined)
+      new Promise<typeof TIMEOUT_SENTINEL>(r => setTimeout(() => r(TIMEOUT_SENTINEL), LSP_TIMEOUT_MS)),
+    ])
+      .then(result => {
+        if (result === TIMEOUT_SENTINEL) {
+          Logger.debug(`lspQuery: '${command}' timed out after ${LSP_TIMEOUT_MS}ms (no LSP response)`)
+          return undefined
+        }
+        return result as T
+      })
+      .catch(e => {
+        Logger.debug(`lspQuery: '${command}' failed after ${Date.now() - startedAt}ms: ${e instanceof Error ? e.message : String(e)}`)
+        return undefined
+      })
   }
 
   private async executeExternalHoverQuery(

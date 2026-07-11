@@ -300,6 +300,33 @@
     return kind || "symbol";
   }
 
+  /** Single-letter glyph shown in the kind badge — lets users scan the hierarchy by
+   *  shape/color instead of reading the kind label on every row. */
+  const KIND_GLYPHS = {
+    class: "C",
+    type: "C",
+    module: "M",
+    function: "ƒ",
+    method: "m",
+    property: "P",
+    field: "F",
+    data: "F",
+    variable: "V",
+    constant: "K",
+    enum: "E",
+    exception: "!",
+    interface: "I",
+    keyword: "kw",
+  };
+
+  function kindBadge(kind) {
+    const normalized = normalizeKind(kind).toLowerCase();
+    const glyph = KIND_GLYPHS[normalized] || "?";
+    const badge = createElement("span", "kind-badge kind-" + normalized, glyph);
+    badge.title = normalized;
+    return badge;
+  }
+
   function tailName(item) {
     return item.name.split(".").pop() || item.name;
   }
@@ -916,6 +943,13 @@
         }),
       );
     }
+    const leafName = selected.name.split(".").pop() || selected.name;
+    stack.appendChild(
+      createButton("ghost", "Find similar across libraries", {
+        "data-run-command": "python-hover.findMethod",
+        "data-run-command-arg": leafName,
+      }),
+    );
     detailChildren.push(stack);
     detailPanelEl.replaceChildren(...detailChildren);
   }
@@ -979,9 +1013,12 @@
 
       const rowHead = createElement("div", "row-head");
       const titleGroup = createElement("div", "row-title-group");
-      titleGroup.appendChild(
+      const titleLine = createElement("div", "row-title-line");
+      titleLine.appendChild(kindBadge(preview.kind || item.kind));
+      titleLine.appendChild(
         createElement("div", "row-title", displayName(item)),
       );
+      titleGroup.appendChild(titleLine);
       titleGroup.appendChild(createElement("div", "row-path", item.name));
       rowHead.appendChild(titleGroup);
 
@@ -1257,7 +1294,8 @@
 
       const command = target.getAttribute("data-run-command");
       if (command) {
-        vscode.postMessage({ type: "run-command", command });
+        const arg = target.getAttribute("data-run-command-arg") || undefined;
+        vscode.postMessage({ type: "run-command", command, arg });
         return;
       }
 
@@ -1392,11 +1430,20 @@
         return;
       }
 
-      // Verify the message originates from a trusted VS Code origin.
-      const trustedOrigins = ["vscode:webview", "vscode-file://", "file://"];
+      // Verify the message originates from a trusted VS Code origin, when the browser
+      // actually supplies one. Real protection against arbitrary external content is
+      // structural, not this check: this script only ever runs inside a VS Code
+      // webview whose content VS Code itself generates, with no embedded iframe
+      // loading external sites (unlike DocsPanel) — nothing outside the extension
+      // host has a reference to this window to post into. `event.origin` is empty
+      // for some VS Code webview implementations, so this intentionally fails open
+      // (does not reject) when it's empty rather than risk silently breaking the
+      // message channel; prefix-matching (not substring) when an origin is present
+      // avoids trusting a string that merely *contains* "file://" anywhere in it.
+      const trustedOriginPrefixes = ["vscode-webview://", "vscode-file://", "file://"];
       if (
         event.origin &&
-        !trustedOrigins.some((origin) => event.origin.includes(origin))
+        !trustedOriginPrefixes.some((prefix) => event.origin.startsWith(prefix))
       ) {
         return;
       }
@@ -1427,7 +1474,7 @@
       if (didChange) {
         render();
       }
-    };);
+    });
 
     render();
   } catch (error) {

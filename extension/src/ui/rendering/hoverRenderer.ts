@@ -54,7 +54,7 @@ export class HoverRenderer {
       this.renderToolbar(md, doc);
     }
 
-    const compact = this.config.compactMode;
+    const compact = this.config.compactMode || this.isCommonBuiltinType(doc);
 
     if (doc.kind === "module") {
       if (doc.signature && this.config.showSignatures) {
@@ -85,10 +85,18 @@ export class HoverRenderer {
           this.renderNotes(md, doc);
         }
       }
-    } else if (doc.kind?.toLowerCase() === "keyword") {
-      this.renderDescription(md, doc);
     } else {
-      this.renderRegularHoverSections(md, doc, compact);
+      // Keyword docs render through this same structuredContent-based path as
+      // every other symbol kind — they used to have their own ~300-line
+      // heuristic re-parser (parseKeywordContent et al.) that guessed
+      // paragraph/code-block boundaries from a flat string instead of using
+      // the already-correct boundaries docs-engine's own block splitter
+      // established at extraction time. That guessing was a real, recurring
+      // bug source (see git history), not just a style choice.
+      const renderedAnySection = this.renderRegularHoverSections(md, doc, compact);
+      if (!renderedAnySection && this.isLowConfidenceEmptyResult(doc)) {
+        this.renderNoDocsFoundHint(md);
+      }
     }
 
     if (this.config.showFooter) {
@@ -103,9 +111,14 @@ export class HoverRenderer {
     md: vscode.MarkdownString,
     doc: HoverDoc,
     compact: boolean,
-  ): void {
+  ): boolean {
     const order = this.config.hoverSectionOrder;
     let hasRenderedSection = false;
+    // The footer (DevDocs/Pin/Save/History toolbar) renders for virtually every doc
+    // regardless of how much real content was found — it must not count as "we showed
+    // something substantive" or the empty-result hint below would never fire, since
+    // the footer alone almost always renders.
+    let hasRenderedSubstantiveSection = false;
 
     for (const sectionId of order) {
       if (!this.shouldRenderRegularHoverSection(sectionId, doc, compact)) {
@@ -124,7 +137,65 @@ export class HoverRenderer {
         ),
       );
       hasRenderedSection = true;
+      if (sectionId !== "footer") {
+        hasRenderedSubstantiveSection = true;
+      }
     }
+
+    return hasRenderedSubstantiveSection;
+  }
+
+  /** Well-known builtin types whose docs are short and familiar enough that showing
+   *  the full expanded layout (parameters table, raises, see-also, notes) is more
+   *  noise than help — even when the user's global setting is "Expanded." */
+  private static readonly ALWAYS_COMPACT_BUILTINS = new Set([
+    "int",
+    "str",
+    "float",
+    "bool",
+    "list",
+    "dict",
+    "tuple",
+    "set",
+    "frozenset",
+    "bytes",
+    "bytearray",
+    "complex",
+    "none",
+    "nonetype",
+    "object",
+  ]);
+
+  /** True for a bare reference to a common builtin type (`int`, `str`, `list`, …) —
+   *  triggers compact rendering regardless of the global compactMode setting. */
+  private isCommonBuiltinType(doc: HoverDoc): boolean {
+    if (doc.module !== "builtins" && doc.module !== undefined) {
+      return false;
+    }
+    if (doc.kind?.toLowerCase() !== "class" && doc.kind?.toLowerCase() !== "type") {
+      return false;
+    }
+    const leafName = getDisplayTitle(doc.title).split(".").pop() ?? "";
+    return HoverRenderer.ALWAYS_COMPACT_BUILTINS.has(leafName.toLowerCase());
+  }
+
+  /** True when a resolution came back so thin (no signature/summary/content — the
+   *  "Fallback" tier hit when nothing better was found) that the hover would
+   *  otherwise show only a header with no indication anything is missing. */
+  private isLowConfidenceEmptyResult(doc: HoverDoc): boolean {
+    return (
+      doc.source === ResolutionSource.Fallback &&
+      doc.confidence > 0 &&
+      doc.confidence <= 0.5
+    );
+  }
+
+  private renderNoDocsFoundHint(md: vscode.MarkdownString): void {
+    md.appendMarkdown(
+      "$(info) No cached documentation was found for this symbol — try " +
+        "[Search Docs](command:python-hover.searchDocs \"Search indexed Python symbols\") " +
+        "or the DevDocs link below.\n\n",
+    );
   }
 
   private shouldRenderRegularHoverSection(
@@ -262,7 +333,10 @@ export class HoverRenderer {
     // If we have a signature for a method, prefer showing the method name
     // qualified by its owner type/module (e.g. `str.split`) instead of only
     // showing the owner (`str`). This improves clarity when hovering on
-    // built-in methods where the HoverDoc title is the owner type.
+    // built-in methods where the HoverDoc title is the owner type. Guard
+    // against double-appending when `rawTitle` is already fully qualified
+    // (e.g. "Widget.resize" or "json.dumps") — otherwise this produced
+    // "Widget.resize.resize" / "json.dumps.dumps" for every such symbol.
     let displayTitle = rawTitle;
     if (doc.signature) {
       const m = doc.signature.match(
@@ -270,10 +344,11 @@ export class HoverRenderer {
       );
       if (m) {
         const fn = m[1];
-        if (rawTitle && rawTitle !== fn) {
-          displayTitle = `${rawTitle}.${fn}`;
-        } else {
+        const rawLeaf = rawTitle.split(".").pop();
+        if (!rawTitle) {
           displayTitle = fn;
+        } else if (rawLeaf !== fn) {
+          displayTitle = `${rawTitle}.${fn}`;
         }
       }
     }
@@ -288,7 +363,7 @@ export class HoverRenderer {
     if (doc.contextHints?.tags?.length) {
       md.appendMarkdown(
         `$(sparkle) Context: ${doc.contextHints.tags
-          .map((tag) => `\`${this.escapeMarkdown(tag)}\``)
+          .map((tag) => `\`${this.escapeInlineCode(tag)}\``)
           .join(" · ")}\n\n`,
       );
     }
@@ -313,7 +388,7 @@ export class HoverRenderer {
       return;
     }
 
-    md.appendMarkdown(`> *Quick actions:* ${primaryActions.join("  ·  ")}\n\n`);
+    md.appendMarkdown(`*Quick actions:* ${primaryActions.join("  ·  ")}\n\n`);
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -330,7 +405,7 @@ export class HoverRenderer {
           : undefined;
 
     if (overloads && overloads.length > 1) {
-      md.appendMarkdown(`> **$(symbol-method) Overloads**\n\n`);
+      md.appendMarkdown(`**$(symbol-method) Overloads**\n\n`);
       const maxShow = 3;
       overloads
         .slice(0, maxShow)
@@ -344,7 +419,7 @@ export class HoverRenderer {
       if (overloads.length > maxShow) {
         const extra = overloads.length - maxShow;
         md.appendMarkdown(
-          `> *+${extra} more overload${extra > 1 ? "s" : ""} — see docs*\n\n`,
+          `*+${extra} more overload${extra > 1 ? "s" : ""} — see docs*\n\n`,
         );
       } else {
         md.appendMarkdown("\n");
@@ -359,7 +434,7 @@ export class HoverRenderer {
       if (sig.length > MAX_SIG_LEN) {
         sig = this.truncateSignature(sig, MAX_SIG_LEN);
       }
-      md.appendMarkdown(`> **$(symbol-method) Signature**\n\n`);
+      md.appendMarkdown(`**$(symbol-method) Signature**\n\n`);
       this.renderSignatureEntry(md, sig, false);
     }
   }
@@ -388,7 +463,7 @@ export class HoverRenderer {
     asListItem: boolean,
   ): void {
     if (asListItem) {
-      md.appendMarkdown(`> *Variant*\n\n`);
+      md.appendMarkdown(`*Variant*\n\n`);
     }
     md.appendCodeblock(signature, "python");
     md.appendMarkdown("\n");
@@ -410,7 +485,7 @@ export class HoverRenderer {
   private renderCallouts(md: vscode.MarkdownString, doc: HoverDoc): void {
     if (doc.badges?.some((b) => /^deprecated$/i.test(b.label))) {
       md.appendMarkdown(
-        `> $(error) **Deprecated** — check the documentation for the recommended alternative\n\n`,
+        `$(error) **Deprecated** — check the documentation for the recommended alternative\n\n`,
       );
     }
     if (
@@ -420,10 +495,10 @@ export class HoverRenderer {
       isMeaningfullyOutdated(doc.installedVersion, doc.latestVersion)
     ) {
       md.appendMarkdown(
-        `> $(arrow-up) **Update available:** v${doc.installedVersion} → v${doc.latestVersion}\n\n`,
+        `$(arrow-up) **Update available:** v${doc.installedVersion} → v${doc.latestVersion}\n\n`,
       );
       md.appendMarkdown(
-        `> *$(diff) Behavior or parameter semantics may differ across these versions; check release notes before copying examples unchanged.*\n\n`,
+        `*$(diff) Behavior or parameter semantics may differ across these versions; check release notes before copying examples unchanged.*\n\n`,
       );
     }
     const requiredVersion = getRequiredPythonVersion(doc);
@@ -433,12 +508,12 @@ export class HoverRenderer {
       this.isVersionBelow(this.detectedVersion, requiredVersion)
     ) {
       md.appendMarkdown(
-        `> $(warning) **Requires Python ${requiredVersion}+** — your runtime is Python ${this.detectedVersion}\n\n`,
+        `$(warning) **Requires Python ${requiredVersion}+** — your runtime is Python ${this.detectedVersion}\n\n`,
       );
     }
     if (doc.protocolHints && doc.protocolHints.length > 0) {
       doc.protocolHints.forEach((h) =>
-        md.appendMarkdown(`> $(lightbulb) *${h}*\n\n`),
+        md.appendMarkdown(`$(lightbulb) *${h}*\n\n`),
       );
     }
   }
@@ -454,9 +529,9 @@ export class HoverRenderer {
       // offer a quick link so the user can jump to the canonical docs page.
       if (doc.url) {
         const moreUrl = this.buildPreferredDocsLink(doc);
-        md.appendMarkdown(`> **$(book) Overview**\n\n`);
+        md.appendMarkdown(`**$(book) Overview**\n\n`);
         md.appendMarkdown(
-          `> [$(book) Continue reading in documentation…](<${moreUrl}> "Open full documentation")\n\n`,
+          `[$(book) Continue reading in documentation…](<${moreUrl}> "Open full documentation")\n\n`,
         );
         Logger.debug(
           "HoverRenderer: no description content; showing docs link",
@@ -466,16 +541,7 @@ export class HoverRenderer {
       return;
     }
 
-    if (doc.kind?.toLowerCase() !== "keyword") {
-      md.appendMarkdown(`> **$(book) Overview**\n\n`);
-    }
-
-    if (doc.kind?.toLowerCase() === "keyword") {
-      // Use a single renderer path for keyword content to avoid duplicated
-      // section headings and repeated grammar blocks from mixed structured/raw docs.
-      this.renderKeywordContent(md, content, doc);
-      return;
-    }
+    md.appendMarkdown(`**$(book) Overview**\n\n`);
 
     if (doc.structuredContent?.sections?.length) {
       if (this.renderStructuredDescription(md, doc)) {
@@ -508,7 +574,7 @@ export class HoverRenderer {
     if (wasTruncated && doc.url) {
       const moreUrl = this.buildPreferredDocsLink(doc);
       md.appendMarkdown(
-        `> [$(book) Continue reading in documentation…](<${moreUrl}> "Open full documentation")\n\n`,
+        `[$(book) Continue reading in documentation…](<${moreUrl}> "Open full documentation")\n\n`,
       );
     }
   }
@@ -531,7 +597,15 @@ export class HoverRenderer {
     if (blocks.length === 0) {
       return false;
     }
-    const maxLen = this.config.maxContentLength;
+    // Keyword/language-reference content (BNF grammar, multi-paragraph spec
+    // prose) is inherently denser than a typical docstring — the same budget
+    // that's reasonable for a function's Overview would cut most keyword
+    // docs off right after the summary sentence, before the Syntax block
+    // even gets a chance to render.
+    const maxLen =
+      doc.kind?.toLowerCase() === "keyword"
+        ? Math.max(this.config.maxContentLength * 2, 1800)
+        : this.config.maxContentLength;
     let remaining = maxLen;
     let wasTruncated = false;
 
@@ -569,7 +643,7 @@ export class HoverRenderer {
     if (wasTruncated && doc.url) {
       const moreUrl = this.buildPreferredDocsLink(doc);
       md.appendMarkdown(
-        `> [$(book) Continue reading in documentation…](<${moreUrl}> "Open full documentation")\n\n`,
+        `[$(book) Continue reading in documentation…](<${moreUrl}> "Open full documentation")\n\n`,
       );
     }
 
@@ -654,6 +728,13 @@ export class HoverRenderer {
     if (
       /^(?:overview|summary|description|details?)$/i.test(section.title.trim())
     ) {
+      return undefined;
+    }
+    // Numbered reference-doc chapter headings (e.g. "8.6. The match
+    // statement") occasionally get misattributed as a later section's own
+    // title during extraction — always meaningless as a section label here,
+    // since it names the whole page, not this specific block.
+    if (/^\d+(?:\.\d+)*\.?\s+\S/.test(section.title.trim())) {
       return undefined;
     }
     return section.title;
@@ -796,18 +877,18 @@ export class HoverRenderer {
     }
 
     if (overviewBlocks.length > 0) {
-      md.appendMarkdown(`> **$(book) Overview**\n\n`);
+      md.appendMarkdown(`**$(book) Overview**\n\n`);
       md.appendMarkdown(`${overviewBlocks.join("\n\n")}\n\n`);
     }
 
     if (versionBlocks.length > 0) {
       for (const line of versionBlocks) {
-        md.appendMarkdown(`> ${line}\n\n`);
+        md.appendMarkdown(`${line}\n\n`);
       }
     }
 
     if (syntaxBlocks.length > 0) {
-      md.appendMarkdown(`> **$(code) Syntax**\n\n`);
+      md.appendMarkdown(`**$(code) Syntax**\n\n`);
       const maxSyntaxLines = Math.max(this.config.maxSnippetLines, 12);
       syntaxBlocks.forEach((syntax, index) => {
         const lines = syntax.split("\n");
@@ -832,25 +913,27 @@ export class HoverRenderer {
     if (exampleBlocks.length > 0) {
       exampleBlocks.forEach((example, index) => {
         md.appendMarkdown(
-          `> **$(play) ${index === 0 ? "Example" : "Additional example"}**\n\n`,
+          `**$(play) ${index === 0 ? "Example" : "Additional example"}**\n\n`,
         );
         const lines = example.split("\n");
         const maxLines = Math.max(this.config.maxSnippetLines, 10);
         if (lines.length > maxLines) {
-          md.appendCodeblock(lines.slice(0, maxLines).join("\n"), "python");
+          const shown = lines.slice(0, maxLines).join("\n");
+          md.appendCodeblock(shown, "python");
           md.appendMarkdown(
-            `> *+${lines.length - maxLines} more lines in docs*\n\n`,
+            `*+${lines.length - maxLines} more lines in docs*\n\n`,
           );
+          this.renderCopyExampleLink(md, shown);
         } else {
           md.appendCodeblock(example, "python");
-          md.appendMarkdown("\n");
+          this.renderCopyExampleLink(md, example);
         }
       });
     }
 
     if (wasTruncated && !parsed.seeAlso.length && remaining <= 0) {
       md.appendMarkdown(
-        `> *More details are available in the official docs.*\n\n`,
+        `*More details are available in the official docs.*\n\n`,
       );
     }
 
@@ -866,6 +949,17 @@ export class HoverRenderer {
     }>;
     seeAlso: string[];
   } {
+    // Grammar rule names (funcdef, decorator, parameter_list, …) arrive here
+    // already bold-wrapped by the general <dt> handler upstream
+    // (sphinxScraper.ts), e.g. "**funcdef**: [decorators] ...". The syntax
+    // detectors below (isKeywordSyntaxStart/isRuleToken/etc.) all expect a
+    // bare "funcdef: ..." line — the "**" prefix makes every rule line
+    // invisible to them, so a whole grammar block falls through to generic
+    // paragraph/inline-extraction handling instead of becoming one clean
+    // "Syntax" code block, producing an inconsistent bold/code mix. Strip the
+    // wrapper before classification; it isn't needed once the line renders
+    // inside a monospace syntax block anyway.
+    content = content.replace(/^(\s*)\*\*([a-z][a-z0-9_]*)\*\*:/gm, "$1$2:");
     const lines = content.split("\n");
     const blocks: Array<{
       kind: "syntax" | "paragraph" | "code" | "version";
@@ -1211,7 +1305,19 @@ export class HoverRenderer {
       return false;
     }
     const left = this.stripRuleNameBackticks(fragment.slice(0, colon)).trim();
-    return this.isRuleToken(left);
+    if (!this.isRuleToken(left)) {
+      return false;
+    }
+    // A bare "word:" match on its own is far too permissive — ordinary prose
+    // constantly ends a sentence with an identifier-shaped word immediately
+    // before a colon that introduces a list ("The outcomes are:", "flow of a
+    // match statement:"), and `isRuleToken` alone can't tell that apart from
+    // a real grammar rule name. Require the production side to actually look
+    // like BNF (quoted literals, brackets, or an alternation pipe) within a
+    // short window after the colon — real grammar always has this right next
+    // to the rule name; prose introducing a list never does.
+    const production = fragment.slice(colon + 1, colon + 81);
+    return /["'[\]|]/.test(production);
   }
 
   private looksLikeGrammarRuleLine(line: string): boolean {
@@ -1303,7 +1409,12 @@ export class HoverRenderer {
       if (isAlphaNum || ch === "_" || ch === " " || ch === "\t") {
         continue;
       }
-      if ("()[]{}|\"':.+*,-".includes(ch)) {
+      // ">" is needed for the "->" return-type arrow that appears in Python's
+      // own reference grammar (e.g. funcdef's `["->" expression] ":" suite`
+      // continuation line) — without it, that line fails this all-or-nothing
+      // check and gets stranded as stray prose instead of staying attached to
+      // its syntax block.
+      if ("()[]{}|\"':.+*,->".includes(ch)) {
         continue;
       }
       return false;
@@ -1347,8 +1458,13 @@ export class HoverRenderer {
     if (/^>>>/.test(line) || /^\.\.\.\s/.test(line)) {
       return true;
     }
-    // Common code patterns with enough syntax to distinguish from prose.
-    if (/^(?:class|def|for|if|elif|while)\s/.test(line)) {
+    // Common code patterns with enough syntax to distinguish from prose. These
+    // five keywords all head a Python compound statement, which always ends
+    // the line in ":" — requiring that suffix is what separates real code
+    // ("if x > 0:") from an ordinary sentence that happens to start with the
+    // same word ("if present, is executed..."). A bare prefix match alone
+    // false-positives on common English constructions using "if"/"for".
+    if (/^(?:class|def|for|if|elif|while)\b.*:\s*$/.test(line)) {
       return true;
     }
     if (/^with\s.+:\s*$/.test(line)) {
@@ -1396,7 +1512,7 @@ export class HoverRenderer {
     raw: string,
     doc: HoverDoc,
   ): void {
-    md.appendMarkdown(`> **$(link-external) See also**\n\n`);
+    md.appendMarkdown(`**$(link-external) See also**\n\n`);
     let normalized = raw.replace(/\s+/g, " ").trim();
 
     const peps = [...normalized.matchAll(/\*{0,2}PEP\s*(\d+)\*{0,2}/gi)].map(
@@ -1443,12 +1559,12 @@ export class HoverRenderer {
     }
     if (parts.length > 0) {
       md.appendMarkdown(
-        `> ${this.rewriteMarkdownLinks(parts.join(" — "))}\n\n`,
+        `${this.rewriteMarkdownLinks(parts.join(" — "))}\n\n`,
       );
     }
     if (relatedTopics.length > 0) {
       md.appendMarkdown(
-        `> $(symbol-key) **Related:** ${relatedTopics.join(" \u00a0·\u00a0 ")}\n\n`,
+        `$(symbol-key) **Related:** ${relatedTopics.join(" \u00a0·\u00a0 ")}\n\n`,
       );
     }
   }
@@ -1462,7 +1578,7 @@ export class HoverRenderer {
     if (params.length === 0) {
       return;
     }
-    md.appendMarkdown(`> **$(list-unordered) Parameters**\n\n`);
+    md.appendMarkdown(`**$(list-unordered) Parameters**\n\n`);
     this.renderParameterTable(md, params, doc);
   }
 
@@ -1475,8 +1591,8 @@ export class HoverRenderer {
       return;
     }
     const maxItems = this.config.maxParameters;
-    md.appendMarkdown(`> | Name | Type | Details |\n`);
-    md.appendMarkdown(`> | --- | --- | --- |\n`);
+    md.appendMarkdown(`| Name | Type | Details |\n`);
+    md.appendMarkdown(`| --- | --- | --- |\n`);
     const rows = params.slice(0, maxItems).map((p, index) => {
       const active = isActiveParameterMatch(doc.parameterLens, p, index);
       const name = `\`${this.escapeTableCell(p.name)}\`${p.default !== undefined ? ` = \`${this.escapeTableCell(p.default)}\`` : ""}`;
@@ -1495,16 +1611,14 @@ export class HoverRenderer {
             `Current argument${baseDescription !== "—" ? `. ${baseDescription}` : ""}`,
           )
         : baseDescription;
-      return `> | ${active ? `**${this.escapeTableCell(p.name)}**` : this.escapeTableCell(p.name)} | ${type} | ${description} |`;
+      return `| ${active ? `**${this.escapeTableCell(p.name)}**` : this.escapeTableCell(p.name)} | ${type} | ${description} |`;
     });
 
-    md.appendMarkdown(`| Name | Type | Details |\n`);
-    md.appendMarkdown(`| --- | --- | --- |\n`);
-    md.appendMarkdown(rows.map((row) => `> ${row}`).join("\n") + "\n\n");
+    md.appendMarkdown(rows.join("\n") + "\n\n");
 
     if (params.length > maxItems) {
       md.appendMarkdown(
-        `> *+${params.length - maxItems} more parameters in docs*\n\n`,
+        `*+${params.length - maxItems} more parameters in docs*\n\n`,
       );
     }
   }
@@ -1530,7 +1644,7 @@ export class HoverRenderer {
     }
 
     md.appendMarkdown(
-      `> **$(target) Active parameter** \`${this.escapeInlineCode(lens.parameter.name || lens.parameterLabel)}\``,
+      `**$(target) Active parameter** \`${this.escapeInlineCode(lens.parameter.name || lens.parameterLabel)}\``,
     );
     if (details.length > 0) {
       md.appendMarkdown(` — ${details.join(" \u00a0·\u00a0 ")}`);
@@ -1558,7 +1672,7 @@ export class HoverRenderer {
         )
       : undefined;
     if (description) {
-      md.appendMarkdown(`> ${description}\n\n`);
+      md.appendMarkdown(`${description}\n\n`);
     }
 
     if (lens.validation) {
@@ -1569,7 +1683,7 @@ export class HoverRenderer {
             ? "warning"
             : "question";
       md.appendMarkdown(
-        `> $(${icon}) ${this.escapeMarkdown(lens.validation.message)}\n\n`,
+        `$(${icon}) ${this.escapeMarkdown(lens.validation.message)}\n\n`,
       );
     }
   }
@@ -1586,14 +1700,28 @@ export class HoverRenderer {
       return undefined;
     }
 
+    // A module hover's own dotted path is all genuinely browseable modules — but for
+    // anything else (class/function/variable/symbol), the *last* segment is the
+    // symbol name itself, not a submodule, and must not render as a "Browse module"
+    // link (it isn't one — clicking it would try to browse a module that doesn't
+    // exist). Render it as plain text instead.
+    const lastIsBrowseableModule = doc.kind === "module";
+    const linkedCount = lastIsBrowseableModule
+      ? segments.length
+      : segments.length - 1;
+
     const crumbs: string[] = [];
     for (let index = 0; index < segments.length; index++) {
       const segment = segments[index];
-      const target = segments.slice(0, index + 1).join(".");
-      const args = this.encodeCommandArgs(target);
-      crumbs.push(
-        `[${this.escapeMarkdown(segment)}](<command:python-hover.browseModule?${args}> "Browse ${this.escapeMarkdown(target)}")`,
-      );
+      if (index < linkedCount) {
+        const target = segments.slice(0, index + 1).join(".");
+        const args = this.encodeCommandArgs(target);
+        crumbs.push(
+          `[${this.escapeMarkdown(segment)}](<command:python-hover.browseModule?${args}> "Browse ${this.escapeMarkdown(target)}")`,
+        );
+      } else {
+        crumbs.push(this.escapeMarkdown(segment));
+      }
     }
 
     return crumbs.join(" → ");
@@ -1605,7 +1733,7 @@ export class HoverRenderer {
 
     if (importStatement) {
       md.appendMarkdown(
-        `> $(symbol-namespace) Import: \`${this.escapeMarkdown(importStatement)}\`\n\n`,
+        `$(symbol-namespace) Import: \`${this.escapeInlineCode(importStatement)}\`\n\n`,
       );
     }
 
@@ -1622,7 +1750,7 @@ export class HoverRenderer {
         doc.moduleExports.length > 4
           ? ` \u00a0·\u00a0 +${doc.moduleExports.length - 4} more`
           : "";
-      md.appendMarkdown(`> $(symbol-field) ${preview}${suffix}\n\n`);
+      md.appendMarkdown(`$(symbol-field) ${preview}${suffix}\n\n`);
     }
 
     if (browseTarget) {
@@ -1631,7 +1759,7 @@ export class HoverRenderer {
         ? ` ${doc.exportCount.toLocaleString()} indexed symbols`
         : " indexed symbols";
       md.appendMarkdown(
-        `> [$(symbol-namespace) Browse${countLabel}](<command:python-hover.browseModule?${args}> "Browse module symbols")\n\n`,
+        `[$(symbol-namespace) Browse${countLabel}](<command:python-hover.browseModule?${args}> "Browse module symbols")\n\n`,
       );
     }
   }
@@ -1668,7 +1796,7 @@ export class HoverRenderer {
         )
       : undefined;
     md.appendMarkdown(
-      `> **$(arrow-right) Returns** \`${ret.type || "unspecified"}\``,
+      `**$(arrow-right) Returns** \`${ret.type || "unspecified"}\``,
     );
     if (cleanedDescription) {
       md.appendMarkdown(` — ${cleanedDescription}`);
@@ -1677,7 +1805,7 @@ export class HoverRenderer {
   }
 
   private renderRaises(md: vscode.MarkdownString, doc: HoverDoc): void {
-    md.appendMarkdown(`> **$(alert) Raises**\n\n`);
+    md.appendMarkdown(`**$(alert) Raises**\n\n`);
     doc.raises!.forEach((exc) => {
       const cleanedDescription = exc.description
         ? this.rewriteMarkdownLinks(
@@ -1690,7 +1818,7 @@ export class HoverRenderer {
             ),
           )
         : undefined;
-      md.appendMarkdown(`> - \`${exc.type}\``);
+      md.appendMarkdown(`- \`${exc.type}\``);
       if (cleanedDescription) {
         md.appendMarkdown(` — ${cleanedDescription}`);
       }
@@ -1701,12 +1829,12 @@ export class HoverRenderer {
 
   private renderExamples(md: vscode.MarkdownString, doc: HoverDoc): void {
     md.appendMarkdown(
-      `> **$(play) Example${this.config.maxExamples > 1 ? "s" : ""}**\n\n`,
+      `**$(play) Example${this.config.maxExamples > 1 ? "s" : ""}**\n\n`,
     );
     if (doc.contextHints?.tags?.length) {
       md.appendMarkdown(
-        `> *Context matched:* ${doc.contextHints.tags
-          .map((tag) => `\`${this.escapeMarkdown(tag)}\``)
+        `*Context matched:* ${doc.contextHints.tags
+          .map((tag) => `\`${this.escapeInlineCode(tag)}\``)
           .join(" · ")}\n\n`,
       );
     }
@@ -1722,7 +1850,7 @@ export class HoverRenderer {
       if (structuredExamples.length > maxShow) {
         const extra = structuredExamples.length - maxShow;
         md.appendMarkdown(
-          `> *+${extra} more example${extra > 1 ? "s" : ""} in docs*\n\n`,
+          `*+${extra} more example${extra > 1 ? "s" : ""} in docs*\n\n`,
         );
       }
       return;
@@ -1730,25 +1858,28 @@ export class HoverRenderer {
 
     doc.examples!.slice(0, maxShow).forEach((example, index) => {
       if (index > 0) {
-        md.appendMarkdown(`> *Additional example*\n\n`);
+        md.appendMarkdown(`*Additional example*\n\n`);
       }
 
       const lines = example.split("\n");
       const maxLines = this.config.maxSnippetLines;
       if (lines.length > maxLines) {
-        md.appendCodeblock(lines.slice(0, maxLines).join("\n"), "python");
+        const shown = lines.slice(0, maxLines).join("\n");
+        md.appendCodeblock(shown, "python");
         md.appendMarkdown(
-          `> *+${lines.length - maxLines} more lines in docs*\n\n`,
+          `*+${lines.length - maxLines} more lines in docs*\n\n`,
         );
+        this.renderCopyExampleLink(md, shown);
       } else {
         md.appendCodeblock(example, "python");
+        this.renderCopyExampleLink(md, example);
       }
     });
 
     if (doc.examples!.length > maxShow) {
       const extra = doc.examples!.length - maxShow;
       md.appendMarkdown(
-        `> *+${extra} more example${extra > 1 ? "s" : ""} in docs*\n\n`,
+        `*+${extra} more example${extra > 1 ? "s" : ""} in docs*\n\n`,
       );
     }
   }
@@ -1759,32 +1890,46 @@ export class HoverRenderer {
     index: number,
   ): void {
     if (section.title) {
-      md.appendMarkdown(`> *${this.escapeMarkdown(section.title)}*\n\n`);
+      md.appendMarkdown(`*${this.escapeMarkdown(section.title)}*\n\n`);
     } else if (index > 0) {
-      md.appendMarkdown(`> *Additional example*\n\n`);
+      md.appendMarkdown(`*Additional example*\n\n`);
     }
 
     if (section.kind === "code") {
       const lines = section.content.split("\n");
       const maxLines = this.config.maxSnippetLines;
       if (lines.length > maxLines) {
-        md.appendCodeblock(
-          lines.slice(0, maxLines).join("\n"),
-          section.language || "python",
-        );
+        const shown = lines.slice(0, maxLines).join("\n");
+        md.appendCodeblock(shown, section.language || "python");
         md.appendMarkdown(
-          `> *+${lines.length - maxLines} more lines in docs*\n\n`,
+          `*+${lines.length - maxLines} more lines in docs*\n\n`,
         );
+        this.renderCopyExampleLink(md, shown);
       } else {
         md.appendCodeblock(section.content, section.language || "python");
+        this.renderCopyExampleLink(md, section.content);
       }
       return;
     }
 
     const rendered = this.renderStructuredSection(section);
     if (rendered) {
-      md.appendMarkdown(`> ${rendered}\n\n`);
+      md.appendMarkdown(`${rendered}\n\n`);
     }
+  }
+
+  /** Small "Copy" affordance directly under an example code block — VS Code hover
+   *  markdown code fences have no built-in copy button (unlike editor/chat code
+   *  blocks), so this is the only way to get example code onto the clipboard
+   *  without manually selecting text inside the hover. */
+  private renderCopyExampleLink(md: vscode.MarkdownString, code: string): void {
+    const trimmed = code.trim();
+    if (!trimmed) {
+      return;
+    }
+    md.appendMarkdown(
+      `${this.buildCommandLink("$(copy) Copy", "python-hover.copyExample", trimmed, "Copy this example to the clipboard")}\n\n`,
+    );
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -1794,18 +1939,18 @@ export class HoverRenderer {
   private renderModuleExports(md: vscode.MarkdownString, doc: HoverDoc): void {
     const exports = doc.moduleExports!;
 
-    md.appendMarkdown(`> **$(symbol-field) Key exports**\n\n`);
+    md.appendMarkdown(`**$(symbol-field) Key exports**\n\n`);
 
     const maxShow = this.config.maxModuleExports;
     const shown = exports.slice(0, maxShow);
     md.appendMarkdown(
-      `> ${shown.map((name) => `\`${name}\``).join(" \u00a0 ")}\n\n`,
+      `${shown.map((name) => `\`${name}\``).join(" \u00a0 ")}\n\n`,
     );
 
     if (exports.length > maxShow) {
       const extra = exports.length - maxShow;
       md.appendMarkdown(
-        `> *+${extra} more export${extra > 1 ? "s" : ""} hidden*\n\n`,
+        `*+${extra} more export${extra > 1 ? "s" : ""} hidden*\n\n`,
       );
     }
 
@@ -1820,7 +1965,7 @@ export class HoverRenderer {
       }
       const args = this.encodeCommandArgs(browseTarget);
       md.appendMarkdown(
-        `> [$(symbol-namespace) Browse all ${doc.exportCount.toLocaleString()} indexed symbols](<command:python-hover.browseModule?${args}> "Browse all symbols")\n\n`,
+        `[$(symbol-namespace) Browse all ${doc.exportCount.toLocaleString()} indexed symbols](<command:python-hover.browseModule?${args}> "Browse all symbols")\n\n`,
       );
     }
   }
@@ -1865,20 +2010,20 @@ export class HoverRenderer {
   // ─────────────────────────────────────────────────────────────────────────
 
   private renderSeeAlso(md: vscode.MarkdownString, doc: HoverDoc): void {
-    md.appendMarkdown(`> **$(link-external) See also**\n\n`);
+    md.appendMarkdown(`**$(link-external) See also**\n\n`);
     const items = doc
       .seeAlso!.map((item) => this.renderInlineReferenceItem(item, doc))
       .filter(Boolean);
     const maxItems = this.config.maxSeeAlsoItems;
     const shown = items.slice(0, maxItems);
     if (shown.length > 0) {
-      md.appendMarkdown(`> ${shown.join(" \u00a0·\u00a0 ")}\n\n`);
+      md.appendMarkdown(`${shown.join(" \u00a0·\u00a0 ")}\n\n`);
     }
 
     if (items.length > maxItems) {
       const extra = items.length - maxItems;
       md.appendMarkdown(
-        `> *+${extra} more related item${extra > 1 ? "s" : ""} in docs*\n\n`,
+        `*+${extra} more related item${extra > 1 ? "s" : ""} in docs*\n\n`,
       );
     }
   }
@@ -1903,7 +2048,7 @@ export class HoverRenderer {
 
     if (/^[A-Za-z_]\w*(?:\.\w+)*$/.test(cleaned)) {
       return this.buildCommandLink(
-        `\`${this.escapeMarkdown(cleaned)}\``,
+        `\`${this.escapeInlineCode(cleaned)}\``,
         "python-hover.pinDocReference",
         this.buildPinnedReferenceArg(doc, cleaned),
         `Open related reference: ${cleaned}`,
@@ -1954,11 +2099,11 @@ export class HoverRenderer {
     md.appendMarkdown("---\n\n");
     if (importStatement) {
       md.appendMarkdown(
-        `> $(symbol-namespace) Import: \`${this.escapeMarkdown(importStatement)}\`\n\n`,
+        `$(symbol-namespace) Import: \`${this.escapeInlineCode(importStatement)}\`\n\n`,
       );
     }
     if (secondaryActions.length > 0) {
-      md.appendMarkdown(`> *Tools:* ${secondaryActions.join("  ·  ")}\n\n`);
+      md.appendMarkdown(`*Tools:* ${secondaryActions.join("  ·  ")}\n\n`);
     }
   }
 
@@ -1984,6 +2129,20 @@ export class HoverRenderer {
       );
       primaryActions.push(
         `[$(book) Docs](<${docsLink}> "Open official documentation in your preferred browser")`,
+      );
+    }
+
+    if (this.isLowConfidenceEmptyResult(doc) && commandToken) {
+      primaryActions.push(
+        this.buildCommandLink(
+          "$(refresh) Retry",
+          "python-hover.retryHover",
+          commandToken,
+          "Clear this symbol's cache and try resolving again",
+        ),
+      );
+      primaryActions.push(
+        `[$(gear) Settings](<command:workbench.action.openSettings?${this.encodeCommandArgs("python-hover")}> "Open Python Hover settings")`,
       );
     }
 

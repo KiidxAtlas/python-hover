@@ -1,5 +1,6 @@
 export const ALLOWED_MODULE_BROWSER_COMMANDS = new Set([
   "python-hover.searchDocs",
+  "python-hover.findMethod",
 ]);
 
 export const ALLOWED_MODULE_BROWSER_SETTING_KEYS = new Set([

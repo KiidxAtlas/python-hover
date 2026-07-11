@@ -150,17 +150,21 @@ export function buildImportStatement(
     titleSegments.length > 1
       ? titleSegments[titleSegments.length - 2]
       : undefined;
+  // A class-named owner is normally PascalCase (PEP8), but some well-known types
+  // deliberately break that convention to read like builtins (numpy.ndarray, and
+  // built-in str/int/list/dict themselves) — so also trust `doc.kind`, which is
+  // independently classified upstream (Sphinx/docs-engine), not guessed from casing.
+  const ownerIsClassKind = /^(?:method|property|field)$/i.test(doc.kind ?? "");
   const looksLikeClassMember =
     moduleSegments.length > 1 &&
     rawTitle.startsWith(`${doc.module}.`) &&
-    /^[A-Z]/.test(ownerName);
+    (/^[A-Z]/.test(ownerName) || ownerIsClassKind);
   const looksLikeTopLevelClassMember = Boolean(
     titleOwner &&
     titleSegments.length > 1 &&
     moduleSegments.length === 1 &&
     titleSegments[0] === titleOwner &&
-    /^[A-Z]/.test(titleOwner) &&
-    /^(?:method|property|field)$/i.test(doc.kind ?? ""),
+    ownerIsClassKind,
   );
 
   if (looksLikeClassMember && rootModule) {
@@ -216,7 +220,14 @@ export function getVisibleStructuredDescriptionSections(
     }
     seen.add(dedupeKey);
 
+    // Defer "Syntax"/BNF blocks to the end for ordinary symbols — a grammar
+    // aside is secondary to a function/class's actual prose docs. Keyword
+    // hovers are the opposite: someone hovering `def`/`for`/`match` wants the
+    // syntax first, exactly where Python's own reference docs put it — and
+    // deferring it risks it getting truncated out of the hover entirely if
+    // the surrounding prose is long.
     if (
+      doc.kind?.toLowerCase() !== "keyword" &&
       cleanedSection.kind === "code" &&
       (cleanedSection.language === "text" || !cleanedSection.language) &&
       (cleanedSection.content?.includes("::=") ||

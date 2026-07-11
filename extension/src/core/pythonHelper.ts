@@ -269,6 +269,16 @@ export class PythonHelper {
 
   private hasShownMissingPythonNotification = false;
 
+  /** Callback for genuine IPC failures (crash/timeout/malformed response) — distinct
+   *  from a clean "nothing found" result, which every caller otherwise sees as an
+   *  identical `null`. Set by HoverProvider so these surface in the status bar instead
+   *  of silently degrading hovers with no indication anything went wrong. */
+  private onIpcError: ((message: string) => void) | null = null;
+
+  public setOnIpcErrorCallback(callback: (message: string) => void): void {
+    this.onIpcError = callback;
+  }
+
   constructor(
     pythonPath: string = "python",
     diskCache: DiskCache,
@@ -276,7 +286,19 @@ export class PythonHelper {
   ) {
     this.pythonPath = pythonPath;
     this.diskCache = diskCache;
-    this.enablePersistentRuntime = options.enablePersistentRuntime ?? false;
+    // Never spawn a Python subprocess for an untrusted workspace — pythonPath itself
+    // comes from workspace-configurable settings (python.defaultInterpreterPath), so an
+    // untrusted repo's .vscode/settings.json could otherwise point it at an arbitrary
+    // local script/binary that would be executed without prompting. This single gate
+    // covers every spawn in this class, since they all check enablePersistentRuntime.
+    const isWorkspaceTrusted = vscode.workspace.isTrusted;
+    if ((options.enablePersistentRuntime ?? false) && !isWorkspaceTrusted) {
+      Logger.log(
+        "PythonHelper: workspace is untrusted — disabling the Python runtime helper (AST fallback, local docstring extraction, and runtime introspection). Trust the workspace to re-enable.",
+      );
+    }
+    this.enablePersistentRuntime =
+      (options.enablePersistentRuntime ?? false) && isWorkspaceTrusted;
     this.interpreterCacheId = options.interpreterCacheId ?? "default";
     // Running from out/extension/src/pythonHelper.js
     // python-helper is at extension/python-helper/ → 4 levels up + into python-helper
@@ -464,6 +486,8 @@ export class PythonHelper {
       return await proc.send(cmd, timeoutMs);
     } catch (e) {
       Logger.error(`PythonHelper IPC error (${cmd.cmd})`, e);
+      const message = e instanceof Error ? e.message : String(e);
+      this.onIpcError?.(`Python helper (${cmd.cmd}): ${message}`);
 
       // If the process died mid-request, clear it so next call restarts
       if (this.process && !this.process.isAlive()) {
@@ -722,8 +746,14 @@ export class PythonHelper {
 
   /**
    * One-shot interpreter probe — no persistent process (used when runtimeHelper is off).
+   * Also gated on workspace trust directly: this is the one spawn path that's
+   * deliberately reached *because* enablePersistentRuntime is false, so it can't rely
+   * on that flag alone to stay off in an untrusted workspace.
    */
   async probePythonVersionMinor(): Promise<string> {
+    if (!vscode.workspace.isTrusted) {
+      return "3";
+    }
     const exe = await this.ensurePythonPathResolved();
     if (!exe) {
       return "3";

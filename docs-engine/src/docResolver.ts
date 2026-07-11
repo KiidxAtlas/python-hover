@@ -1287,7 +1287,10 @@ export class DocResolver {
       }
 
       // 3. Fallback Search (DevDocs, etc.)
-      const fallbackDoc = await this.fallback.search(key);
+      const fallbackDoc = await this.fallback.search(
+        key,
+        this.inventoryFetcher.getKnownBaseUrl(key.package),
+      );
       if (fallbackDoc) {
         return {
           ...fallbackDoc,

@@ -161,24 +161,42 @@ export function cleanContentAnnotations(text: string): string {
   text = stripAnnotatedWrappers(text);
   // Decode HTML entities in a single comprehensive pass to avoid incomplete
   // multi-character sanitization where some entities could slip through.
+  //
+  // The named alternatives below each require their own trailing ";" — an
+  // earlier version omitted it, so "&amp" matched inside "&amp;" without the
+  // semicolon and `match === "&amp;"` could never be true, leaving every
+  // named entity undecoded. The numeric forms use real capture groups
+  // (`dec`/`hex`) instead of re-matching against `match`, since `match`
+  // always includes the leading "&" — a second bug that made
+  // `/^#(\d+);$/`/`/^#x([0-9a-fA-F]+);$/` never match their own input.
   text = text.replace(
-    /&(?:amp|quot|apos|nbsp|rarr|larr|hellip|#\d+;|#x[0-9a-fA-F]+;)/g,
-    (match) => {
-      if (match === "&amp;") return "&";
-      if (match === "&quot;") return '"';
-      if (match === "&apos;") return "'";
-      if (match === "&nbsp;") return " ";
-      if (match === "&rarr;") return "→";
-      if (match === "&larr;") return "←";
-      if (match === "&hellip;") return "…";
-      // Numeric character reference: decimal
-      const numMatch = match.match(/^#(\d+);$/);
-      if (numMatch) return String.fromCharCode(Number(numMatch[1]));
-      // Numeric character reference: hex
-      const hexMatch = match.match(/^#x([0-9a-fA-F]+);$/);
-      if (hexMatch) return String.fromCharCode(parseInt(hexMatch[1], 16));
-      // Fallback: return as-is to avoid leaking unsanitized entities
-      return match;
+    /&(?:amp|quot|apos|nbsp|rarr|larr|hellip|gt|lt);|&#(\d+);|&#x([0-9a-fA-F]+);/g,
+    (match, dec, hex) => {
+      if (dec !== undefined) return String.fromCharCode(Number(dec));
+      if (hex !== undefined) return String.fromCharCode(parseInt(hex, 16));
+      switch (match) {
+        case "&amp;":
+          return "&";
+        case "&quot;":
+          return '"';
+        case "&apos;":
+          return "'";
+        case "&nbsp;":
+          return " ";
+        case "&rarr;":
+          return "→";
+        case "&larr;":
+          return "←";
+        case "&hellip;":
+          return "…";
+        case "&gt;":
+          return ">";
+        case "&lt;":
+          return "<";
+        // Fallback: return as-is to avoid leaking unsanitized entities
+        default:
+          return match;
+      }
     },
   );
   // Python object reprs like "<list object at 0x7f...>" are removed by the

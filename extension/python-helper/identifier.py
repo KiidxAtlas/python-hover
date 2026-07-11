@@ -16,6 +16,28 @@ class InferenceContext:
 
 
 COPY_METHODS = {"copy", "__copy__", "__deepcopy__"}
+
+# Well-known lowercase *factory functions* whose return type isn't the
+# function's own qualified name — e.g. `numpy.array(...)` returns a
+# `numpy.ndarray`, not something named "numpy.array". Keyed by (module root,
+# attribute name) so `np.array(...)`/`numpy.array(...)` both match regardless
+# of import alias (owner is already alias-resolved to the real module by the
+# time this is consulted).
+KNOWN_FACTORY_RETURN_TYPES: dict[tuple[str, str], str] = {
+    ("numpy", "array"): "numpy.ndarray",
+    ("numpy", "zeros"): "numpy.ndarray",
+    ("numpy", "ones"): "numpy.ndarray",
+    ("numpy", "empty"): "numpy.ndarray",
+    ("numpy", "arange"): "numpy.ndarray",
+    ("numpy", "asarray"): "numpy.ndarray",
+    ("numpy", "full"): "numpy.ndarray",
+    ("re", "compile"): "re.Pattern",
+}
+
+
+def _infer_factory_return_type(owner: str, attr: str) -> str | None:
+    owner_root = owner.split(".")[0]
+    return KNOWN_FACTORY_RETURN_TYPES.get((owner_root, attr))
 SOFT_KEYWORDS = {"match", "case"}
 BUILTIN_NAMES = set(dir(py_builtins))
 GLOBAL_NAME_TYPES: dict[str, str] = {
@@ -531,8 +553,18 @@ def _infer_call(
             inferred_groupby = _infer_pandas_groupby_return(owner, node.func.attr)
             if inferred_groupby:
                 return inferred_groupby
+            inferred_factory = _infer_factory_return_type(owner, node.func.attr)
+            if inferred_factory:
+                return inferred_factory
             if node.func.attr and node.func.attr[:1].isupper():
                 return f"{owner}.{node.func.attr}"
+            # `owner.attr(...)` with a lowercase `attr` is a plain function/factory
+            # call (numpy.array(...), re.compile(...), json.loads(...)), not a class
+            # instantiation — its return type isn't "owner.attr" itself. Falling
+            # through to the generic path below would re-derive that exact same
+            # wrong qualified name via _infer_attribute and confidently (but
+            # incorrectly) report it as the call's type, so stop here instead.
+            return None
 
     callee = _infer_expr(
         node.func, context, current_class=current_class, local_types=local_types

@@ -684,13 +684,18 @@ export class HoverDocBuilder {
       }
     }
 
-    if (symbolInfo.qualname) {
-      const parts = symbolInfo.qualname.split(".");
+    // Prefer qualname (more precise when present), but fall back to the plain
+    // resolved name — qualname is often empty for lower-confidence fallback
+    // resolutions (e.g. an unindexed third-party symbol) where name is still set,
+    // and the same case-convention heuristic works just as well on it.
+    const nameForCasingCheck = symbolInfo.qualname || symbolInfo.name;
+    if (nameForCasingCheck) {
+      const parts = nameForCasingCheck.split(".");
       const name = parts[parts.length - 1];
-      if (name && name[0] === name[0].toUpperCase()) {
+      if (name && name[0] === name[0].toUpperCase() && name[0] !== name[0].toLowerCase()) {
         return "class";
       }
-      if (name && name[0] === name[0].toLowerCase()) {
+      if (name && name[0] === name[0].toLowerCase() && name[0] !== name[0].toUpperCase()) {
         return "function";
       }
     }

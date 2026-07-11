@@ -64,7 +64,18 @@ import {
 } from "#src/utils/doc-navigation";
 import * as vscode from "vscode";
 
-export function activate(context: vscode.ExtensionContext) {
+/**
+ * Minimal public API surface, reachable via
+ * `vscode.extensions.getExtension<PythonHoverApi>("kiidxatlas.python-hover")?.exports`.
+ * Exists for diagnostic/test tooling (see extension/src/test-integration/hoverSuite.ts)
+ * that needs the structured HoverDoc PyHover actually resolved — not just the rendered
+ * markdown a generic `vscode.executeHoverProvider` call returns.
+ */
+export interface PythonHoverApi {
+  getLastResolvedDoc: () => HoverDoc | null;
+}
+
+export function activate(context: vscode.ExtensionContext): PythonHoverApi | undefined {
   Logger.initialize("PyHover");
   setEngineLogger({
     log: Logger.log.bind(Logger),
@@ -74,7 +85,7 @@ export function activate(context: vscode.ExtensionContext) {
   Logger.log("PyHover is now active!");
 
   try {
-    const config = new Config();
+    const config = new Config(vscode.workspace.getConfiguration("python-hover"));
     Logger.setDebugEnabled(config.enableDebugLogging);
     Logger.setRevealOnError(config.revealOutputOnError);
     if (config.revealOutputOnStartup) {
@@ -176,6 +187,15 @@ export function activate(context: vscode.ExtensionContext) {
       hoverProvider?.dispose();
       hoverProvider = new HoverProvider(lspClient, config, diskCache);
       hoverProvider.setDiagnosticCollection(diagnosticCollection);
+      // Wire error reporting to status bar — surfaces resolution failures to users.
+      hoverProvider.setOnErrorCallback((message) => {
+        statusBarManager.setLastError(message);
+      });
+      // Wire loading-state reporting to status bar — surfaces genuinely slow
+      // network/IPC hovers with a "Resolving…" indicator.
+      hoverProvider.setOnLoadingStateCallback((state) => {
+        statusBarManager.setLoadingState(state);
+      });
       hoverRegistration = vscode.languages.registerHoverProvider(
         { language: "python" },
         hoverProvider,
@@ -223,6 +243,14 @@ export function activate(context: vscode.ExtensionContext) {
     // Register hover provider for all Python files
     registerHoverProvider();
     updateContextMenuContexts();
+    // If the user grants workspace trust later in the same session, rebuild so the
+    // Python runtime helper (gated on isTrusted in PythonHelper's constructor) turns
+    // on without requiring a window reload.
+    context.subscriptions.push(
+      vscode.workspace.onDidGrantWorkspaceTrust(() => {
+        rebuildHoverRuntime("Workspace trust granted — re-enabling Python runtime helper.", false);
+      }),
+    );
     context.subscriptions.push({ dispose: () => hoverRegistration?.dispose() });
     context.subscriptions.push({ dispose: () => hoverProvider?.dispose() });
     context.subscriptions.push({
@@ -382,9 +410,15 @@ export function activate(context: vscode.ExtensionContext) {
             "Configuration changed. Cleared hover presentation cache.",
           );
         } else if (affectsUnclassifiedHoverSetting) {
-          hoverProvider.clearSessionCache();
-          Logger.log(
-            "Configuration changed. Refreshed hover state for updated settings.",
+          // This is the fallback bucket for any python-hover.* setting that isn't
+          // (yet) listed in one of the specific groups above — most likely a newly
+          // added setting the classification cascade hasn't been updated for. A full
+          // rebuild is the safe default here: a session-cache clear alone would
+          // under-react if the new setting actually needed provider-level changes,
+          // and a full rebuild is a superset of what a plain cache clear achieves.
+          rebuildHoverRuntime(
+            "Configuration changed (unclassified python-hover setting). Recreating hover provider as a safe default.",
+            false,
           );
         }
 
@@ -494,7 +528,11 @@ export function activate(context: vscode.ExtensionContext) {
                 );
                 break;
               }
-              await vscode.commands.executeCommand(message.command);
+              if (message.arg !== undefined) {
+                await vscode.commands.executeCommand(message.command, message.arg);
+              } else {
+                await vscode.commands.executeCommand(message.command);
+              }
               break;
             case "open-settings":
               await vscode.commands.executeCommand(
@@ -524,7 +562,7 @@ export function activate(context: vscode.ExtensionContext) {
           if (message.type === "update-setting") {
             reportSettingUpdateError(message.key, error);
           } else {
-            Logger.error("Module browser action failed", error);
+            reportPanelActionError(message.type, error);
           }
         } finally {
           moduleBrowserPanel.refreshSettings(buildModuleBrowserSettings());
@@ -648,6 +686,15 @@ export function activate(context: vscode.ExtensionContext) {
         `PyHover could not update ${key}. Check the PyHover output channel for details.`,
       );
     };
+    // Generic fallback for panel message-handler failures that aren't a setting update
+    // (open-doc, pin-symbol, run-command, etc.) — these used to only Logger.error, so a
+    // user clicking e.g. "Pin symbol" and hitting a failure got no visible feedback at all.
+    const reportPanelActionError = (actionType: string, error: unknown) => {
+      Logger.error(`Panel action "${actionType}" failed`, error);
+      void vscode.window.showErrorMessage(
+        `PyHover: the "${actionType}" action failed. Check the PyHover output channel for details.`,
+      );
+    };
     const updateSetting = async (
       key: string,
       value: boolean | string | number,
@@ -745,7 +792,7 @@ export function activate(context: vscode.ExtensionContext) {
               "PyHover could not apply that Studio preset. Check the PyHover output channel for details.",
             );
           } else {
-            Logger.error("Studio action failed", error);
+            reportPanelActionError(message.type, error);
           }
         } finally {
           updateStudio();
@@ -824,6 +871,11 @@ export function activate(context: vscode.ExtensionContext) {
     setTimeout(() => {
       void maybeShowCorpusPrompt();
     }, 1200);
+
+    // `hoverProvider` is captured by reference here, not by value — it keeps pointing
+    // at whatever the current instance is even after registerHoverProvider() replaces
+    // it on a config change, since this arrow function closes over the outer `let`.
+    return { getLastResolvedDoc: () => hoverProvider.getLastDoc() };
   } catch (e) {
     Logger.error("Failed to activate PyHover", e);
     vscode.window

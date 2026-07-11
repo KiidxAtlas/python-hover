@@ -36,8 +36,8 @@ type SearchItem = vscode.QuickPickItem & {
 
 export function registerSearchDocsCommand(
   deps: SearchDocsCommandDeps,
-): () => void {
-  return () => {
+): (initialQuery?: string) => void {
+  return (initialQuery?: string) => {
     void deps.hoverProvider.hydrateCachedInventories();
     const qp = vscode.window.createQuickPick<SearchItem>();
     const count = deps.hoverProvider.getIndexedSymbolCount();
@@ -172,7 +172,12 @@ export function registerSearchDocsCommand(
       ];
     };
 
-    qp.items = buildStarterSearchItems();
+    if (initialQuery) {
+      qp.value = initialQuery;
+      updateSearchItems(initialQuery);
+    } else {
+      qp.items = buildStarterSearchItems();
+    }
 
     qp.onDidChangeValue((query) => {
       updateSearchItems(query);

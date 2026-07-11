@@ -36,6 +36,7 @@ import {
   isLibraryPath,
   isStdlibPath,
   isStdlibTopLevelModule,
+  SymbolClassification,
 } from "#src/symbols/symbolClassifier";
 import { HoverRenderer } from "#src/ui/rendering/hoverRenderer";
 import {
@@ -108,8 +109,16 @@ const PYTHON_STRUCTURAL_KEYWORDS = new Set([
 ]);
 
 export class HoverProvider implements vscode.HoverProvider {
-  private static readonly HOVER_LOG_COOLDOWN_MS = 2000;
-  private static readonly NEGATIVE_HOVER_CACHE_MS = 2000;
+  /** Minimum time between logging identical hover resolutions (2s). */
+  private static readonly HOVER_LOG_COOLDOWN_MS = 2_000;
+  /** Duration to cache failed resolutions — prevents hammering unresolved symbols (2s). */
+  private static readonly NEGATIVE_HOVER_CACHE_MS = 2_000;
+  /** Maximum entries per in-memory cache before oldest entries are evicted (500). */
+  private static readonly MAX_CACHE_SIZE = 500;
+  /** Debounce delay for rapid cursor movement — hovers within this window are coalesced (150ms). */
+  private static readonly HOVER_DEBOUNCE_MS = 150;
+  /** Maximum concurrent in-flight hover resolutions (20). */
+  private static readonly MAX_CONCURRENT_HOVERS = 20;
 
   private renderer: HoverRenderer;
   private docResolver: DocResolver;
@@ -126,8 +135,71 @@ export class HoverProvider implements vscode.HoverProvider {
   private deprecatedRanges = new Map<string, vscode.Diagnostic[]>();
   readonly onDidChangeSidebarState: vscode.Event<void>;
 
-  /** Maximum entries per in-memory cache before oldest entries are evicted. */
-  private static readonly MAX_CACHE_SIZE = 500;
+  /** Callback to report errors to the status bar — set during activation. */
+  private onErrorCallback: ((message: string | undefined) => void) | null = null;
+
+  /** Set the error callback for reporting resolution failures to UI. */
+  public setOnErrorCallback(
+    callback: (message: string | undefined) => void,
+  ): void {
+    this.onErrorCallback = callback;
+  }
+
+  /** Report a resolution error to the UI (status bar). */
+  private reportError(message: string): void {
+    if (this.onErrorCallback) {
+      this.onErrorCallback(message);
+    }
+  }
+
+  /** Clear the current error from UI. */
+  private clearError(): void {
+    if (this.onErrorCallback) {
+      this.onErrorCallback(undefined);
+    }
+  }
+
+  /** Callback to report an in-flight/expensive resolution to the status bar — set during activation. */
+  private onLoadingStateCallback: ((state: string | undefined) => void) | null = null;
+
+  /** Set the loading-state callback for surfacing "resolving…" in the status bar. */
+  public setOnLoadingStateCallback(
+    callback: (state: string | undefined) => void,
+  ): void {
+    this.onLoadingStateCallback = callback;
+  }
+
+  /** Milliseconds a resolution must run before the status bar shows "Resolving…" —
+   *  short enough to catch genuinely slow network/IPC hovers, long enough that
+   *  ordinary cache hits never flicker the status bar. */
+  private static readonly LOADING_INDICATOR_DELAY_MS = 150;
+
+  /** Runs `work`, surfacing a delayed "Resolving <label>…" status bar indicator if it
+   *  takes longer than LOADING_INDICATOR_DELAY_MS — the practical stand-in for a
+   *  "skeleton hover" given the VS Code Hover API has no way to show interim/loading
+   *  content once a hover has started resolving. */
+  private async withLoadingIndicator<T>(
+    label: string,
+    work: Promise<T>,
+  ): Promise<T> {
+    if (!this.onLoadingStateCallback) {
+      return work;
+    }
+    const callback = this.onLoadingStateCallback;
+    let shown = false;
+    const timer = setTimeout(() => {
+      shown = true;
+      callback(`Resolving ${label}…`);
+    }, HoverProvider.LOADING_INDICATOR_DELAY_MS);
+    try {
+      return await work;
+    } finally {
+      clearTimeout(timer);
+      if (shown) {
+        callback(undefined);
+      }
+    }
+  }
 
   /** Per-session hover cache: qualified symbol name → rendered Hover.
    *  Prevents re-running the full pipeline when the same symbol is hovered again. */
@@ -176,6 +248,8 @@ export class HoverProvider implements vscode.HoverProvider {
 
   /** Active hover-delay timer — cleared on cancellation to avoid stale resolutions. */
   private hoverDelayTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Debounce timer for rapid cursor movement — coalesces hovers within a short window. */
+  private hoverDebounceTimer: ReturnType<typeof setTimeout> | undefined;
 
   /** Cached minimatch function — loaded once on first use and reused. */
   private minimatchFn:
@@ -208,6 +282,12 @@ export class HoverProvider implements vscode.HoverProvider {
     this.pythonHelper = new PythonHelper(config.pythonPath, diskCache, {
       enablePersistentRuntime: config.runtimeHelperEnabled,
       interpreterCacheId: config.interpreterCacheFingerprint,
+    });
+    // Surface genuine Python-helper IPC failures (crash/timeout) in the status bar —
+    // otherwise they're indistinguishable from a clean "nothing found" result.
+    this.pythonHelper.setOnIpcErrorCallback((message) => {
+      this.reportError(message);
+      setTimeout(() => this.clearError(), 8000);
     });
     this.docBuilder = new HoverDocBuilder();
     this.aliasResolver = new AliasResolver();
@@ -506,6 +586,15 @@ export class HoverProvider implements vscode.HoverProvider {
     this.sessionState.fireSidebarDidChange();
   }
 
+  /** Discard just this one symbol's session-level cache entries — used by the
+   *  hover's "Retry" action so a failed resolution can be re-attempted without
+   *  clearing every other symbol's cache. `commandToken` is the same string as
+   *  the resolution's cacheKey (see `rememberCommandDoc`). */
+  retryHover(commandToken: string): void {
+    this.hoverCache.delete(commandToken);
+    this.negativeHoverCache.delete(commandToken);
+  }
+
   /** Clear caches related to a single document (keeps global caches intact). */
   clearDocumentSessionCache(document?: vscode.TextDocument): void {
     if (!document) {
@@ -555,6 +644,12 @@ export class HoverProvider implements vscode.HoverProvider {
     this.documentTextCache.set(cacheKey, text);
     this.evictIfNeeded(this.documentTextCache);
     return text;
+  }
+
+  /** Truncate a string to max length, adding ellipsis if truncated. */
+  private truncateString(str: string, maxLength: number): string {
+    if (str.length <= maxLength) return str;
+    return str.substring(0, maxLength - 1) + "…";
   }
 
   private importedRootsForDocument(
@@ -651,9 +746,74 @@ export class HoverProvider implements vscode.HoverProvider {
     position: vscode.Position,
     token: vscode.CancellationToken,
   ): Promise<vscode.Hover | null> {
+    // ── Hover debouncing: coalesce rapid cursor movements into a single resolution.
+    // When the user moves the cursor quickly across multiple symbols, only the final
+    // position is resolved — intermediate hovers are discarded to reduce unnecessary work.
+    if (this.hoverDebounceTimer) {
+      clearTimeout(this.hoverDebounceTimer);
+      this.hoverDebounceTimer = undefined;
+    }
+
+    // If another hover is already in-flight for this exact position, share its result.
+    const posKey = this.stableHoverPositionKey(document, position);
+    const existingInflightByPosition = this.inflightPositionHovers.get(posKey);
+    if (existingInflightByPosition) {
+      Logger.debug(`provideHover: sharing in-flight resolution for ${posKey}`);
+      return existingInflightByPosition;
+    }
+
+    // Schedule a debounced resolution — if another hover arrives within HOVER_DEBOUNCE_MS,
+    // this one is cancelled and the new hover restarts the debounce window.
+    return new Promise<vscode.Hover | null>((resolve) => {
+      const params = { document, position, token };
+      this.hoverDebounceTimer = setTimeout(() => {
+        this.hoverDebounceTimer = undefined;
+
+        if (params.token.isCancellationRequested) {
+          Logger.debug(`provideHover: cancelled at debounce fire for ${posKey}`);
+          resolve(null);
+          return;
+        }
+
+        Logger.debug(`provideHover: debounce fired, resolving ${posKey}`);
+        // Create a shared promise so rapid concurrent hovers for the same position
+        // all wait on the same resolution instead of racing.
+        const debouncedPromise = this.doProvideHover(
+          params.document,
+          params.position,
+          params.token,
+        ).finally(() => {
+          this.inflightPositionHovers.delete(posKey);
+        });
+        this.inflightPositionHovers.set(posKey, debouncedPromise);
+        resolve(debouncedPromise);
+      }, HoverProvider.HOVER_DEBOUNCE_MS);
+
+      // If the token is cancelled before debounce fires, discard the pending hover.
+      token.onCancellationRequested(() => {
+        if (this.hoverDebounceTimer) {
+          clearTimeout(this.hoverDebounceTimer);
+          this.hoverDebounceTimer = undefined;
+        }
+        Logger.debug(`provideHover: cancelled before debounce fired for ${posKey}`);
+        resolve(null);
+      });
+    });
+  }
+
+  /** Actual hover resolution logic — called after debounce delay. */
+  private async doProvideHover(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+    token: vscode.CancellationToken,
+  ): Promise<vscode.Hover | null> {
     try {
       const hoverStartedAt = Date.now();
+      Logger.debug(
+        `doProvideHover: entered for ${document.uri.fsPath}:${position.line + 1}:${position.character}`,
+      );
       if (LspClient.isInternalHoverRequest(document.uri, position)) {
+        Logger.debug("doProvideHover: skipped — internal hover request");
         return null;
       }
 
@@ -664,6 +824,7 @@ export class HoverProvider implements vscode.HoverProvider {
       this.evictIfNeeded(this.identifyCache);
       this.evictIfNeeded(this.positionToKey);
       if (!this.config.isEnabled) {
+        Logger.debug("doProvideHover: skipped — python-hover.enable is false");
         return null;
       }
 
@@ -681,6 +842,7 @@ export class HoverProvider implements vscode.HoverProvider {
             minimatch &&
             patterns.some((p) => minimatch(rel, p, { dot: true }))
           ) {
+            Logger.debug(`doProvideHover: skipped — ${rel} matches an excludePatterns entry`);
             return null;
           }
         }
@@ -695,8 +857,7 @@ export class HoverProvider implements vscode.HoverProvider {
             reject(new Error("cancelled"));
             return;
           }
-          this.hoverDelayTimer = setTimeout(() => {
-            this.hoverDelayTimer = undefined;
+          const delayTimer = setTimeout(() => {
             if (token.isCancellationRequested) {
               reject(new Error("cancelled"));
               return;
@@ -704,12 +865,12 @@ export class HoverProvider implements vscode.HoverProvider {
             resolve();
           }, delay);
           token.onCancellationRequested(() => {
-            clearTimeout(this.hoverDelayTimer);
-            this.hoverDelayTimer = undefined;
+            clearTimeout(delayTimer);
             reject(new Error("cancelled"));
           });
         }).catch(() => null);
         if (token.isCancellationRequested) {
+          Logger.debug("doProvideHover: cancelled during activation delay");
           return null;
         }
       }
@@ -735,6 +896,7 @@ export class HoverProvider implements vscode.HoverProvider {
           this.isNegativeHoverCached(knownKey) ||
           this.isNegativeHoverCached(posKey)
         ) {
+          Logger.debug(`doProvideHover: negative-cache hit for ${knownKey}`);
           return this.parameterLensService.decorateHoverWithParameterLens(
             null,
             undefined,
@@ -747,6 +909,7 @@ export class HoverProvider implements vscode.HoverProvider {
         }
         const cached = this.hoverCache.get(knownKey);
         if (cached) {
+          Logger.debug(`doProvideHover: hoverCache hit for ${knownKey}`);
           return this.parameterLensService.decorateHoverWithParameterLens(
             cached,
             knownKey,
@@ -759,6 +922,7 @@ export class HoverProvider implements vscode.HoverProvider {
         }
         const inflight = this.inflightHovers.get(knownKey);
         if (inflight) {
+          Logger.debug(`doProvideHover: sharing in-flight resolution for symbol ${knownKey}`);
           return inflight.then((result) =>
             this.parameterLensService.decorateHoverWithParameterLens(
               result,
@@ -773,21 +937,7 @@ export class HoverProvider implements vscode.HoverProvider {
         }
       }
 
-      const inflightByPosition = this.inflightPositionHovers.get(posKey);
-      if (inflightByPosition) {
-        return inflightByPosition.then((result) =>
-          this.parameterLensService.decorateHoverWithParameterLens(
-            result,
-            knownKey,
-            parameterLens,
-            segmentRange,
-            document,
-            documentText,
-            position,
-          ),
-        );
-      }
-
+      Logger.debug(`doProvideHover: no cache hit for ${posKey}, starting fresh resolution`);
       const hoverPromise = (async () => {
         // ── Structural keyword fast-path ──────────────────────────────────────
         // When the cursor is directly on a structural keyword (class, def, for, …)
@@ -974,19 +1124,22 @@ export class HoverProvider implements vscode.HoverProvider {
           if (this.identifyCache.has(identifyCacheKey)) {
             identifiedType = this.identifyCache.get(identifyCacheKey) ?? null;
           } else {
-            const identifyKey = wordForId
-              ? `${document.uri.toString()}:${wordForId.start.line + 1}:${wordForId.start.character}:${wordForId.end.character}`
-              : `${document.uri.toString()}:${position.line + 1}:${position.character}`;
-            let identifyPromise = this.inflightIdentify.get(identifyKey);
+            // The in-flight dedup key must include document.version too (same as
+            // identifyCacheKey) — otherwise a hover that starts an identify() call on
+            // version N, followed by an edit (version N+1) and a hover at the same
+            // position before the first call resolves, would reuse the in-flight
+            // promise closed over the *old* documentText and write its stale result
+            // into the new version's cache entry.
+            let identifyPromise = this.inflightIdentify.get(identifyCacheKey);
             if (!identifyPromise) {
               identifyPromise = this.pythonHelper.identify(
                 documentText,
                 position.line + 1,
                 position.character,
               );
-              this.inflightIdentify.set(identifyKey, identifyPromise);
+              this.inflightIdentify.set(identifyCacheKey, identifyPromise);
               identifyPromise.finally(() =>
-                this.inflightIdentify.delete(identifyKey),
+                this.inflightIdentify.delete(identifyCacheKey),
               );
             }
             identifiedType = await identifyPromise;
@@ -1126,7 +1279,8 @@ export class HoverProvider implements vscode.HoverProvider {
           documentText,
           lspSymbol.name,
         );
-        if (resolvedName !== originalName) {
+        const wasAliasResolved = resolvedName !== originalName;
+        if (wasAliasResolved) {
           lspSymbol.name = resolvedName;
         }
 
@@ -1149,9 +1303,22 @@ export class HoverProvider implements vscode.HoverProvider {
 
         // ── Session cache + in-flight deduplication ───────────────────────────
         // Build a canonical DocKey and serialize it for stable caching across
-        // the different resolver layers (LSP / AST / runtime).
+        // the different resolver layers (LSP / AST / runtime). The cache-scoping
+        // decision (isLibrary) must come from the same classification resolveAndRender
+        // uses to pick its render branch — otherwise a path-less local symbol can be
+        // scoped globally here while being rendered as local there, colliding with an
+        // unrelated same-named local symbol from a different file.
+        const classification = classifyHoverSymbol(
+          lspSymbol,
+          importedRoots,
+          wasAliasResolved,
+        );
         const { cacheKey, docKey, isLibrary } =
-          this.resolutionService.buildCacheKey(lspSymbol, document);
+          this.resolutionService.buildCacheKey(
+            lspSymbol,
+            classification.isLibrary,
+            document,
+          );
 
         // Record position → cacheKey so future calls skip the pipeline entirely.
         this.positionToKey.set(posKey, cacheKey);
@@ -1201,7 +1368,6 @@ export class HoverProvider implements vscode.HoverProvider {
         }
 
         // ── Register in-flight promise to deduplicate concurrent same-symbol hovers ─
-        const wasAliasResolved = resolvedName !== originalName;
         const resolutionPromise = this.resolveAndRender(
           lspSymbol,
           document,
@@ -1212,6 +1378,7 @@ export class HoverProvider implements vscode.HoverProvider {
           importedRoots,
           segmentRange,
           token,
+          classification,
         );
         this.inflightHovers.set(cacheKey, resolutionPromise);
         resolutionPromise.finally(() => this.inflightHovers.delete(cacheKey));
@@ -1247,7 +1414,11 @@ export class HoverProvider implements vscode.HoverProvider {
       hoverPromise.finally(() => this.inflightPositionHovers.delete(posKey));
       return hoverPromise;
     } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
       Logger.error("HoverProvider failed", e);
+      this.reportError(`Resolution failed: ${this.truncateString(message, 60)}`);
+      // Clear error after a delay so users see the failure briefly.
+      setTimeout(() => this.clearError(), 8000);
       return null;
     }
   }
@@ -1262,6 +1433,7 @@ export class HoverProvider implements vscode.HoverProvider {
     importedRoots: ReadonlySet<string>,
     hoverRange: vscode.Range | undefined,
     token: vscode.CancellationToken,
+    classification: SymbolClassification,
   ): Promise<vscode.Hover | null> {
     try {
       const resolveStartedAt = Date.now();
@@ -1279,12 +1451,18 @@ export class HoverProvider implements vscode.HoverProvider {
       //  5. Directly imported root     → library (import fastapi → fastapi.FastAPI)
       //  6. Capital class.method       → library attempt (DataFrame.agg from Pylance hover)
       //  7. No other signal            → local (return whatever Pylance gave us)
-
-      const { isBuiltinMethod, isDotted, isLocal } = classifyHoverSymbol(
-        lspSymbol,
-        importedRoots,
-        wasAliasResolved,
-      );
+      //
+      // `classification` is computed once by the caller (doProvideHover) and reused
+      // here — it's also what decided buildCacheKey's local/library cache scoping, so
+      // the two can never disagree the way they used to when each recomputed it
+      // independently.
+      const { isBuiltinMethod, isDotted, isLocal } = classification;
+      Logger.debug(`resolveAndRender: classified '${lspSymbol.name}'`, {
+        isLocal,
+        isDotted,
+        isBuiltinMethod,
+        lspPath: lspSymbol.path,
+      });
 
       // ── Local path: show user docstring + Pylance signature ───────────────
       // Guardrail: never show an empty "local" card for builtins like `bool`.
@@ -1761,12 +1939,21 @@ export class HoverProvider implements vscode.HoverProvider {
         symbolInfo.module !== "builtins";
       const topModule = symbolInfo.module?.split(".")[0] ?? "";
 
-      const docs = await this.resolutionManager.resolveDoc(
-        docKey,
-        this.config.runtimeHelperEnabled && isThirdParty && topModule
-          ? topModule
-          : undefined,
+      const resolveDocStartedAt = Date.now();
+      Logger.debug(`resolveAndRender: calling resolutionManager.resolveDoc`, { docKey });
+      const docs = await this.withLoadingIndicator(
+        symbolInfo.name,
+        this.resolutionManager.resolveDoc(
+          docKey,
+          this.config.runtimeHelperEnabled && isThirdParty && topModule
+            ? topModule
+            : undefined,
+        ),
       );
+      Logger.debugDuration("resolveAndRender: resolutionManager.resolveDoc returned", resolveDocStartedAt, {
+        docKey,
+        found: !!docs,
+      });
 
       const hoverDoc = this.docBuilder.build(symbolInfo, docs);
       if (isTypeshedSymbol) {
@@ -1842,7 +2029,11 @@ export class HoverProvider implements vscode.HoverProvider {
 
       return hover;
     } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
       Logger.error("HoverProvider failed", e);
+      this.reportError(`Resolution failed: ${this.truncateString(message, 60)}`);
+      // Clear status bar error after a delay so the failure hover is visible.
+      setTimeout(() => this.clearError(), 12000);
       return this.renderFailureHover(
         cacheKey,
         lspSymbol,
@@ -1875,12 +2066,17 @@ export class HoverProvider implements vscode.HoverProvider {
     reason: string,
     hoverRange?: vscode.Range,
   ): vscode.Hover {
+    // Even this terminal "nothing resolved" case should give the user somewhere to
+    // go — an unscoped DevDocs search on the bare symbol name costs nothing to build
+    // and beats a hover with no actionable link at all.
+    const leafName = symbolInfo.name.split(".").pop() || symbolInfo.name;
     const fallbackDoc: HoverDoc = {
       title: symbolInfo.name,
       kind: symbolInfo.kind || "symbol",
       module: symbolInfo.module,
       summary: `Could not fully resolve docs for ${symbolInfo.name}.`,
       content: `${reason}\n\nFallback options:\n- Use local/runtime docstring resolution\n- Open cached docs links from hover history\n- Search indexed symbols for alternate references`,
+      devdocsUrl: `https://devdocs.io/#q=${encodeURIComponent(leafName)}`,
       source: ResolutionSource.Fallback,
       confidence: 0.25,
     };

@@ -10,6 +10,7 @@ import { httpGetBuffer, httpHeadExists } from "../discover/httpClient";
 import { PyPiClient } from "../discover/pypiClient";
 import { getEngineLogger } from "../engineLogger";
 import { InventoryParser } from "./inventoryParser";
+import { DOCS_REQUEST_HEADERS } from "../sharedConstants";
 
 /**
  * Pre-verified Sphinx documentation base URLs for popular packages.
@@ -80,6 +81,8 @@ const KNOWN_DOCS_URLS: Record<string, string> = {
   /** PyPI name `python-multipart` — avoid stale github.io probes + 404 spam */
   python_multipart: "https://multipart.fastapiexpert.com/en/latest",
   multipart: "https://multipart.fastapiexpert.com/en/latest",
+  // GUI
+  pyside6: "https://doc.qt.io/qtforpython-6",
 };
 
 /** Packages to eagerly load on warmup (most commonly used). */
@@ -102,12 +105,6 @@ const WARMUP_PACKAGES = [
   "asyncio",
   "builtins",
 ];
-
-const DOCS_REQUEST_HEADERS = {
-  "User-Agent":
-    "Mozilla/5.0 (compatible; PyHover/0.6; +https://github.com/KiidxAtlas/python-hover)",
-  Accept: "*/*",
-};
 
 const PYTHON_DOTTED_NAME_RE = /^[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)*$/;
 
@@ -403,6 +400,40 @@ export class InventoryFetcher {
     return this.resolveDocsProvider(baseUrl).catch(() => "sphinx");
   }
 
+  /**
+   * Checks the bundled KNOWN_DOCS_URLS map for `packageName`, falling back to its
+   * root package (first dot-segment) when there's no exact match — e.g. a dotted
+   * submodule name like "PySide6.QtCore" still resolves via the "pyside6" entry,
+   * since submodules of a package always share the same documentation site.
+   */
+  private lookupKnownDocsUrl(packageName: string): string | undefined {
+    const lower = packageName.toLowerCase();
+    if (KNOWN_DOCS_URLS[lower]) {
+      return KNOWN_DOCS_URLS[lower];
+    }
+    const root = lower.split(".")[0];
+    return KNOWN_DOCS_URLS[root];
+  }
+
+  /**
+   * Best-effort "what documentation site does this package use", for callers
+   * (like SearchFallback) that want a real docs link even when they have no
+   * inventory match for the specific symbol. Checks whatever's already been
+   * discovered this session (from a prior successful inventory resolution — the
+   * most accurate, since it's a URL that's actually been verified to work) before
+   * falling back to the static bundled map. Never triggers network I/O itself.
+   */
+  getKnownBaseUrl(packageName: string | undefined): string | undefined {
+    if (!packageName) {
+      return undefined;
+    }
+    return (
+      this.packageBaseUrls.get(packageName) ??
+      this.packageBaseUrls.get(packageName.split(".")[0]) ??
+      this.lookupKnownDocsUrl(packageName)
+    );
+  }
+
   private async resolveBaseUrl(
     packageName: string,
     version?: string,
@@ -424,7 +455,7 @@ export class InventoryFetcher {
 
     // 3. Optional bundled URL map (fast path; off by default)
     if (this.useKnownDocsUrls) {
-      const knownUrl = KNOWN_DOCS_URLS[packageName.toLowerCase()];
+      const knownUrl = this.lookupKnownDocsUrl(packageName);
       if (knownUrl) {
         this.packageBaseUrls.set(packageName, knownUrl);
         return knownUrl;
@@ -432,7 +463,18 @@ export class InventoryFetcher {
     }
 
     // 4. Dynamic PyPI Lookup + Probing
-    const pypiUrl = await this.pypiClient.getPackageUrl(packageName);
+    // Try the full dotted name first (correct for the common case where the import
+    // root *is* the PyPI package name), then fall back to just the root package —
+    // dotted submodule names like "PySide6.QtCore" are never themselves a real PyPI
+    // package, so looking up "PySide6.QtCore" always 404s even though "PySide6" is
+    // exactly right. Without this fallback, any package organized this way (Qt
+    // bindings are not the only example) permanently misses live discovery too.
+    const rootPackageName = packageName.split(".")[0];
+    const pypiUrl =
+      (await this.pypiClient.getPackageUrl(packageName)) ||
+      (rootPackageName !== packageName
+        ? await this.pypiClient.getPackageUrl(rootPackageName)
+        : null);
     if (pypiUrl) {
       // Remove trailing slash and normalize to HTTPS
       const cleanUrl = this.normalizeToHttps(pypiUrl.replace(/\/$/, ""));
@@ -452,18 +494,22 @@ export class InventoryFetcher {
       try {
         const baseUrl = await Promise.any(
           candidates.map((url) =>
-            this.checkUrlExists(url).then((exists) => {
-              if (!exists) {
+            this.checkUrlExists(url).then((resolvedUrl) => {
+              if (!resolvedUrl) {
                 throw new Error("not found");
               }
-              return url.replace("/objects.inv", "");
+              // Use the RESOLVED final URL (post-redirect), not the original candidate
+              // string — a candidate that 301s to a different path would otherwise
+              // produce a base URL that was never actually verified to work.
+              return resolvedUrl.replace(/\/objects\.inv$/, "");
             }),
           ),
         );
         this.packageBaseUrls.set(packageName, baseUrl);
         return baseUrl;
       } catch {
-        // All probes failed — fall through to ReadTheDocs fallback
+        // All probes failed — fall through to the bundled map (if not already
+        // tried above) and then ReadTheDocs.
       }
 
       // If probing failed but we have a URL, maybe it's just the base?
@@ -471,12 +517,29 @@ export class InventoryFetcher {
       // Fallthrough to RTD.
     }
 
+    // 4b. Bundled URL map as a *fallback*, not just an opt-in fast path.
+    // useKnownDocsUrls=false (the default) means live discovery runs first for
+    // freshness — but when live discovery genuinely finds nothing (as happens for
+    // sites like Qt's docs, whose PyPI-listed homepage doesn't match any of the
+    // probe patterns above), the curated map is strictly better than guessing
+    // ReadTheDocs blindly, which is almost always wrong for non-RTD-hosted projects.
+    // Root-package lookup also covers dotted submodule names (e.g. "PySide6.QtCore")
+    // that wouldn't match an exact-key entry keyed on just the top-level package.
+    if (!this.useKnownDocsUrls) {
+      const knownUrl = this.lookupKnownDocsUrl(packageName);
+      if (knownUrl) {
+        this.packageBaseUrls.set(packageName, knownUrl);
+        return knownUrl;
+      }
+    }
+
     // 5. ReadTheDocs Fallback
     const versionSegment = version ? version : "latest";
     return `https://${packageName}.readthedocs.io/en/${versionSegment}`;
   }
 
-  private checkUrlExists(url: string): Promise<boolean> {
+  /** Returns the resolved final URL (after following redirects) if it exists, else null. */
+  private checkUrlExists(url: string): Promise<string | null> {
     return httpHeadExists(this.normalizeToHttps(url), {
       timeoutMs: 5000,
       headers: DOCS_REQUEST_HEADERS,
@@ -676,9 +739,7 @@ export class InventoryFetcher {
           !this.packageBaseUrls.has(packageName) &&
           !this.packageBaseUrls.has(inventoryCacheName)
         ) {
-          const knownUrl = this.useKnownDocsUrls
-            ? KNOWN_DOCS_URLS[packageName.toLowerCase()]
-            : undefined;
+          const knownUrl = this.lookupKnownDocsUrl(packageName);
           if (knownUrl) {
             this.packageBaseUrls.set(inventoryCacheName, knownUrl);
             this.packageBaseUrls.set(packageName, knownUrl);
@@ -704,19 +765,19 @@ export class InventoryFetcher {
       }
     }
 
+    // DiskCache.get() already returns null once an `inv-fail:` entry is older than
+    // the configured inventoryDays TTL, so a truthy result here is always still fresh —
+    // no need to separately parse/compare a stored timestamp against a second, hardcoded
+    // TTL that used to be disconnected from the user-configured inventoryDays setting.
     const negKey = `inv-fail:${inventoryCacheName}`;
     const negCached = this.diskCache.get(negKey);
     if (negCached) {
-      const storedAt = parseInt(negCached, 10);
-      const NEGATIVE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
-      if (!Number.isNaN(storedAt) && Date.now() - storedAt < NEGATIVE_TTL_MS) {
-        const empty = new Map<string, HoverDoc>();
-        this.cache.set(inventoryCacheName, empty);
-        if (packageName !== inventoryCacheName) {
-          this.cache.set(packageName, empty);
-        }
-        return;
+      const empty = new Map<string, HoverDoc>();
+      this.cache.set(inventoryCacheName, empty);
+      if (packageName !== inventoryCacheName) {
+        this.cache.set(packageName, empty);
       }
+      return;
     }
 
     // 2. Fetch from Network
@@ -844,12 +905,10 @@ export class InventoryFetcher {
       return cached;
     }
 
-    if (this.useKnownDocsUrls) {
-      const knownUrl = KNOWN_DOCS_URLS[packageName.toLowerCase()];
-      if (knownUrl) {
-        this.packageBaseUrls.set(packageName, knownUrl);
-        return knownUrl;
-      }
+    const knownUrl = this.lookupKnownDocsUrl(packageName);
+    if (knownUrl) {
+      this.packageBaseUrls.set(packageName, knownUrl);
+      return knownUrl;
     }
 
     return undefined;

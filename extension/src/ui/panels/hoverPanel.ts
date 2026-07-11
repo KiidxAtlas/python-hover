@@ -177,7 +177,7 @@ export class HoverPanel {
   private markdownish(s: string): string {
     s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, label, href) => {
       const link = this.buildDocsHref(href);
-      return `<a href="${this.escape(link)}">${label}</a>`;
+      return link ? `<a href="${this.escape(link)}">${label}</a>` : label;
     });
     s = s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
     s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
@@ -214,11 +214,22 @@ export class HoverPanel {
     if (trimmed.startsWith("file://") || trimmed.startsWith("/")) {
       return trimmed;
     }
-    return trimmed;
+    // Anything else (javascript:, data:, or any other scheme) is dropped rather than
+    // passed through — this function's whole job is to produce a *safe* href, and
+    // markdownish() runs it over [label](url) patterns pulled from scraped third-party
+    // documentation content, which is not something to trust with a raw pass-through.
+    return "";
   }
 
   private renderStructuredSection(section: StructuredHoverSection): string {
-    const roleClass = section.role ? ` role-${section.role}` : "";
+    // Defense-in-depth: every current producer of `section.role` only ever assigns a
+    // fixed literal ("summary"/"description"/"example"/"note"), never raw scraped text,
+    // so this isn't reachable today — but that's an invariant enforced only by
+    // convention, not by any check at this render boundary. Whitelisting to
+    // identifier-safe characters here means a future change that lets `role` flow from
+    // less-trusted data can't break out of the `class="..."` attribute.
+    const safeRole = section.role?.replace(/[^a-zA-Z0-9-]/g, "");
+    const roleClass = safeRole ? ` role-${safeRole}` : "";
     const title = section.title ? `<h3>${this.escape(section.title)}</h3>` : "";
     const isNoteSection = section.kind === "note" || section.role === "note";
 
@@ -390,9 +401,10 @@ export class HoverPanel {
     const moduleBrowseTarget = this.getModuleBrowseTarget(doc);
     const savedDocEntry = buildSavedDocEntry(doc);
 
-    if (doc.url) {
+    const docsHref = doc.url ? this.buildDocsHref(doc.url, "docs") : "";
+    if (docsHref) {
       primary.push(
-        `<a class="chip chip-link" href="${this.escape(this.buildDocsHref(doc.url, "docs"))}">Docs</a>`,
+        `<a class="chip chip-link" href="${this.escape(docsHref)}">Docs</a>`,
       );
     }
     const sourceHref = this.buildSourceHref(doc);
@@ -406,9 +418,12 @@ export class HoverPanel {
         `<a class="chip chip-link" href="${this.escape(this.buildCommandHref("python-hover.browseModule", moduleBrowseTarget))}">Browse</a>`,
       );
     }
-    if (doc.devdocsUrl) {
+    const devdocsHref = doc.devdocsUrl
+      ? this.buildDocsHref(doc.devdocsUrl, "devdocs")
+      : "";
+    if (devdocsHref) {
       secondary.push(
-        `<a class="chip chip-link" href="${this.escape(this.buildDocsHref(doc.devdocsUrl, "devdocs"))}">DevDocs</a>`,
+        `<a class="chip chip-link" href="${this.escape(devdocsHref)}">DevDocs</a>`,
       );
     }
     if (importStatement) {
@@ -524,6 +539,7 @@ export class HoverPanel {
       <div class="nav-row">
         ${backHref ? `<a class="nav-chip" href="${this.escape(backHref)}">&larr; Back</a>` : '<span class="nav-chip disabled">&larr; Back</span>'}
         ${forwardHref ? `<a class="nav-chip" href="${this.escape(forwardHref)}">Forward &rarr;</a>` : '<span class="nav-chip disabled">Forward &rarr;</span>'}
+        <span class="nav-position">${this.navigationIndex + 1} of ${this.navigationStack.length}</span>
       </div>
       <div class="breadcrumb-row">${crumbs}</div>
     `;
@@ -963,6 +979,11 @@ export class HoverPanel {
   }
   .nav-chip.disabled {
     cursor: default;
+  }
+  .nav-position {
+    font-size: 11px;
+    color: var(--vscode-descriptionForeground);
+    margin-left: 2px;
   }
   .crumb-sep {
     color: var(--vscode-descriptionForeground);

@@ -9,12 +9,7 @@ import {
 import { DiskCache } from "../cache/diskCache";
 import { httpGetText } from "../discover/httpClient";
 import { getEngineLogger } from "../engineLogger";
-
-const DOCS_REQUEST_HEADERS = {
-  "User-Agent":
-    "Mozilla/5.0 (compatible; PyHover/0.6; +https://github.com/KiidxAtlas/python-hover)",
-  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-};
+import { DOCS_HTML_HEADERS } from "../sharedConstants";
 
 const NON_CONTENT_PAGE_PATTERNS = [
   /\/py-modindex(?:\.html)?\/?$/i,
@@ -27,9 +22,13 @@ export class SphinxScraper {
   private diskCache: DiskCache;
   private timeout: number;
   /** In-memory HTML cache: avoids re-fetching the same page for content + seeAlso in one session.
-   *  Capped at 30 pages (raw HTML is large) — oldest entry evicted when full. */
+   *  Uses a Map with manual LRU tracking — most recently accessed entries stay, least recent evicted.
+   *  Capped at 50 pages (raw HTML is large). */
   private htmlCache = new Map<string, string>();
-  private static readonly HTML_CACHE_MAX = 30;
+  private static readonly HTML_CACHE_MAX = 50;
+
+  /** Access order for LRU eviction — tracks insertion/access order of cache keys. */
+  private htmlCacheAccessOrder: string[] = [];
   private readonly loggedFetchSkips = new Set<string>();
 
   constructor(diskCache: DiskCache, timeout: number = 5000) {
@@ -141,7 +140,7 @@ export class SphinxScraper {
       }
 
       const [baseUrl, anchor] = normalizedUrl.split("#");
-      const cachedHtml = this.htmlCache.get(baseUrl);
+      const cachedHtml = this.getHtmlCache(baseUrl);
       const html =
         cachedHtml ??
         (await this.fetchHtml(baseUrl).then((h) => {
@@ -232,7 +231,7 @@ export class SphinxScraper {
 
       const [baseUrl, anchor] = normalizedUrl.split("#");
 
-      let html = this.htmlCache.get(baseUrl);
+      let html = this.getHtmlCache(baseUrl);
       if (!html) {
         html = await this.fetchHtml(baseUrl);
         this.setHtmlCache(baseUrl, html);
@@ -319,13 +318,20 @@ export class SphinxScraper {
           continue;
         }
 
-        if (!signature) {
-          const candidate = this.extractSignatureFromCodeBlock(code);
-          if (candidate && role !== "example") {
+        const candidate = this.extractSignatureFromCodeBlock(code);
+        if (candidate && role !== "example") {
+          if (!signature) {
             signature = candidate;
-            pendingTitle = undefined;
-            continue;
           }
+          // A page can legitimately document more than one calling-convention
+          // signature for the same symbol (numpy does this for ndarray methods,
+          // e.g. the paren-owner form and the bound-method form) — the first one
+          // becomes `signature`; later ones are redundant with it and, since
+          // they often carry a hyperlinked return-type annotation, render
+          // broken (a markdown link can't work inside a code fence). Discard
+          // rather than duplicate.
+          pendingTitle = undefined;
+          continue;
         }
 
         const sectionRole = role === "example" ? "example" : "description";
@@ -363,8 +369,12 @@ export class SphinxScraper {
         continue;
       }
 
-      if (!signature && this.isSignatureLikeParagraph(normalized)) {
-        signature = normalized;
+      if (this.isSignatureLikeParagraph(normalized)) {
+        if (!signature) {
+          signature = normalized;
+        }
+        // See the matching comment in the fenced-code-block branch above —
+        // a second signature-like paragraph is a duplicate, not new content.
         pendingTitle = undefined;
         continue;
       }
@@ -790,15 +800,56 @@ export class SphinxScraper {
     );
   }
 
-  /** Insert into htmlCache, evicting the oldest entry when the cap is reached. */
+  /** Get a cached HTML entry, updating LRU order. Returns null if not found. */
+  private getHtmlCache(url: string): string | undefined {
+    const html = this.htmlCache.get(url);
+    if (html !== undefined) {
+      // Update LRU order: remove from access order, then re-add at end.
+      const idx = this.htmlCacheAccessOrder.indexOf(url);
+      if (idx !== -1) {
+        this.htmlCacheAccessOrder.splice(idx, 1);
+      }
+      this.htmlCacheAccessOrder.push(url);
+    }
+    return html;
+  }
+
+  /** Insert into htmlCache, evicting the least-recently-used entry when full. */
   private setHtmlCache(url: string, html: string): void {
-    if (this.htmlCache.size >= SphinxScraper.HTML_CACHE_MAX) {
-      const oldest = this.htmlCache.keys().next().value;
-      if (oldest !== undefined) {
-        this.htmlCache.delete(oldest);
+    // If already cached, update value and LRU order.
+    if (this.htmlCache.has(url)) {
+      this.htmlCache.set(url, html);
+      const idx = this.htmlCacheAccessOrder.indexOf(url);
+      if (idx !== -1) {
+        this.htmlCacheAccessOrder.splice(idx, 1);
+      }
+      this.htmlCacheAccessOrder.push(url);
+      return;
+    }
+
+    // Evict least-recently-used entry if at capacity.
+    while (this.htmlCache.size >= SphinxScraper.HTML_CACHE_MAX) {
+      const lruKey = this.htmlCacheAccessOrder.shift();
+      if (lruKey !== undefined) {
+        this.htmlCache.delete(lruKey);
+      } else {
+        break;
       }
     }
+
     this.htmlCache.set(url, html);
+    this.htmlCacheAccessOrder.push(url);
+  }
+
+  /** Clear the HTML cache (useful when switching packages). */
+  public clearHtmlCache(): void {
+    this.htmlCache.clear();
+    this.htmlCacheAccessOrder = [];
+  }
+
+  /** Get the current number of cached HTML pages. */
+  public getHtmlCacheSize(): number {
+    return this.htmlCache.size;
   }
 
   private fetchHtml(
@@ -810,7 +861,7 @@ export class SphinxScraper {
     void attempt;
     return httpGetText(this.normalizeToHttps(url), {
       timeoutMs: this.timeout,
-      headers: DOCS_REQUEST_HEADERS,
+      headers: DOCS_HTML_HEADERS,
       maxRedirects: 5,
       maxAttempts: 2,
     });
@@ -1056,7 +1107,7 @@ export class SphinxScraper {
   }
 
   private isGrammarLikeParagraph(text: string): boolean {
-    const normalized = text.replace(/[*`]/g, "").trim();
+    const normalized = this.stripGrammarRuleNameMarkup(text).trim();
     if (!normalized) {
       return false;
     }
@@ -1068,7 +1119,21 @@ export class SphinxScraper {
   }
 
   private normalizeGrammarParagraph(text: string): string {
-    return text.replace(/[*`]/g, "").trim();
+    return this.stripGrammarRuleNameMarkup(text).trim();
+  }
+
+  /**
+   * Strip the "**"/backtick markup that wraps a grammar RULE NAME (e.g.
+   * "**funcdef**: ..." → "funcdef: ...", "`parameter_list`:" → "parameter_list:")
+   * — but only that wrapper, not every "*"/"`" character in the text. A blind
+   * `/[*\`]/g` strip (the previous approach) also destroys legitimate literal
+   * grammar tokens like `"*"`/`"**"` (Python's *args/**kwargs markers), turning
+   * e.g. `parameter_star_kwargs: "**" parameter` into `parameter_star_kwargs: parameter`.
+   */
+  private stripGrammarRuleNameMarkup(text: string): string {
+    return text
+      .replace(/\*\*([A-Za-z_][\w]*)\*\*(?=\s*:)/g, "$1")
+      .replace(/`([A-Za-z_][\w]*)`(?=\s*:)/g, "$1");
   }
 
   /**
@@ -1232,6 +1297,21 @@ export class SphinxScraper {
       if (!text || text === ":") {
         return "";
       }
+      // numpydoc-style parameter dt's are typically
+      // <dt><strong>name</strong><span class="classifier">type</span></dt> — the
+      // <strong> was already converted to "**name**" above, so wrapping the whole
+      // dt in bold again produces "****name**type**". Insert a separator between
+      // the already-bolded name and the trailing classifier text instead of
+      // re-bolding, and only bold-wrap when nothing was bolded inside already.
+      if (text.startsWith("**")) {
+        const closingIndex = text.indexOf("**", 2);
+        if (closingIndex !== -1) {
+          const name = text.slice(0, closingIndex + 2);
+          const rest = text.slice(closingIndex + 2).trim();
+          return rest ? `\n${name} : ${rest}\n` : `\n${name}\n`;
+        }
+        return `\n${text}\n`;
+      }
       return `\n**${text}**\n`;
     });
     md = md.replace(/<dd[^>]*>/gim, "");
@@ -1254,24 +1334,42 @@ export class SphinxScraper {
 
     // Decode HTML entities in a single comprehensive pass to avoid incomplete
     // multi-character sanitization where some entities could slip through.
+    //
+    // The named alternatives below each require their own trailing ";" (unlike
+    // an earlier version of this regex, which omitted it) — without it, "&amp"
+    // matches inside "&amp;" without the semicolon, so `match === "&amp;"` can
+    // never be true and every named entity fell through unresolved. The numeric
+    // forms use real capture groups (`dec`/`hex`) instead of re-matching against
+    // `match`, since `match` always includes the leading "&" — a second bug that
+    // made `/^#(\d+);$/`/`/^#x([0-9a-fA-F]+);$/` never match their own input.
     md = md.replace(
-      /&(?:amp|quot|apos|nbsp|rarr|larr|hellip|#\d+;|#x[0-9a-fA-F]+;)/g,
-      (match) => {
-        if (match === "&amp;") return "&";
-        if (match === "&quot;") return '"';
-        if (match === "&apos;") return "'";
-        if (match === "&nbsp;") return " ";
-        if (match === "&rarr;") return "→";
-        if (match === "&larr;") return "←";
-        if (match === "&hellip;") return "…";
-        // Numeric character reference: decimal
-        const numMatch = match.match(/^#(\d+);$/);
-        if (numMatch) return String.fromCharCode(Number(numMatch[1]));
-        // Numeric character reference: hex
-        const hexMatch = match.match(/^#x([0-9a-fA-F]+);$/);
-        if (hexMatch) return String.fromCharCode(parseInt(hexMatch[1], 16));
-        // Fallback: return as-is to avoid leaking unsanitized entities
-        return match;
+      /&(?:amp|quot|apos|nbsp|rarr|larr|hellip|gt|lt);|&#(\d+);|&#x([0-9a-fA-F]+);/g,
+      (match, dec, hex) => {
+        if (dec !== undefined) return String.fromCharCode(Number(dec));
+        if (hex !== undefined) return String.fromCharCode(parseInt(hex, 16));
+        switch (match) {
+          case "&amp;":
+            return "&";
+          case "&quot;":
+            return '"';
+          case "&apos;":
+            return "'";
+          case "&nbsp;":
+            return " ";
+          case "&rarr;":
+            return "→";
+          case "&larr;":
+            return "←";
+          case "&hellip;":
+            return "…";
+          case "&gt;":
+            return ">";
+          case "&lt;":
+            return "<";
+          // Fallback: return as-is to avoid leaking unsanitized entities
+          default:
+            return match;
+        }
       },
     );
 

@@ -104,6 +104,20 @@ export class AliasResolver {
         continue
       }
 
+      // Only treat `var = something.Callable(...)` as "var is an instance of
+      // Callable" when Callable's own name looks like a class (PEP8 CapWords).
+      // Without this guard, a plain factory *function* call like
+      // `arr = np.array(...)` or `pattern = re.compile(...)` gets misread the
+      // same way as `w = Widget(...)` — recording `arr` as an "instance of"
+      // the function itself (`numpy.array`), so a later `arr.reshape` resolves
+      // to the nonexistent `numpy.array.reshape` instead of leaving `arr`'s
+      // type inference to the LSP/AST fallback that actually knows it's an
+      // ndarray.
+      const calleeLeaf = assignmentMatch[2].split('.').pop() ?? ''
+      if (!/^[A-Z]/.test(calleeLeaf)) {
+        continue
+      }
+
       const variableName = assignmentMatch[1]
       const constructorPath = this.resolveAliasPath(importAliases, assignmentMatch[2])
       variableAliases.set(variableName, constructorPath)

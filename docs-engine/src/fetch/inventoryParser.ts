@@ -1,6 +1,6 @@
 import * as zlib from 'zlib'
-import { Logger } from '../../../extension/src/logger'
 import { HoverDoc, ResolutionSource } from '../../../shared/types'
+import { getEngineLogger } from '../engineLogger'
 
 const PYTHON_SYMBOL_NAME_RE = /^[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)*$/
 const INCLUDED_PYTHON_ROLES = new Set([
@@ -31,7 +31,7 @@ export class InventoryParser {
     const headerEndIndex = buffer.indexOf(headerEndMarker)
 
     if (headerEndIndex === -1) {
-      Logger.log('Invalid objects.inv format: Header marker not found')
+      getEngineLogger().log('Invalid objects.inv format: Header marker not found')
       return inventory
     }
 
@@ -103,7 +103,7 @@ export class InventoryParser {
         })
       }
     } catch (e) {
-      Logger.error('Failed to decompress objects.inv:', e)
+      getEngineLogger().error('Failed to decompress objects.inv:', e)
     }
 
     return inventory

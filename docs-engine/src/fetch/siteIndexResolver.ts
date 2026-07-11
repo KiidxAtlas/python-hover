@@ -1,8 +1,8 @@
 import { createHash } from "crypto";
-import { Logger } from "../../../extension/src/logger";
 import { DocKey, HoverDoc, ResolutionSource } from "../../../shared/types";
 import { DiskCache } from "../cache/diskCache";
 import { httpGetText } from "../discover/httpClient";
+import { getEngineLogger } from "../engineLogger";
 
 type SiteIndexEntry = {
   title: string;
@@ -98,7 +98,7 @@ export class SiteIndexResolver {
       try {
         return JSON.parse(cached) as SiteIndexEntry[];
       } catch {
-        Logger.log(
+        getEngineLogger().log(
           `SiteIndexResolver: failed to parse cached index for ${baseUrl}`,
         );
       }

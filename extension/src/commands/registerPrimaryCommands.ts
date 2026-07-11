@@ -11,6 +11,7 @@ type HoverProviderCommands = {
   getLastDoc: () => HoverDoc | null;
   getDocByCommandToken: (token?: string) => HoverDoc | null;
   getRenderedHoverMarkdown: (token?: string) => string | null;
+  retryHover: (token: string) => void;
 };
 
 type StatusBarCommands = {
@@ -140,6 +141,35 @@ export function registerPrimaryCommands(
           return;
         }
         HoverPanel.show(doc);
+      },
+    ),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "python-hover.retryHover",
+      async (token?: string) => {
+        if (token) {
+          deps.hoverProvider.retryHover(token);
+        }
+        // Re-request the hover at the current cursor position now that this
+        // symbol's cache entry is cleared — the built-in command re-invokes
+        // every registered hover provider (ours included) for the active editor.
+        await vscode.commands.executeCommand("editor.action.showHover");
+      },
+    ),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "python-hover.copyExample",
+      async (example?: string) => {
+        if (example) {
+          await vscode.env.clipboard.writeText(example);
+          vscode.window.showInformationMessage(
+            formatStandardInfoMessage("Copied example"),
+          );
+        }
       },
     ),
   );
