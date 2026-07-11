@@ -1,9 +1,0 @@
-{
-  "esversion": 11,
-  "browser": true,
-  "asi": true,
-  "forin": false,
-  "globals": {
-    "acquireVsCodeApi": false
-  }
-}
