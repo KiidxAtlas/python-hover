@@ -2,7 +2,7 @@
   "name": "python-hover",
   "displayName": "Python Hover",
   "description": "Professional Python hover documentation for VS Code with fast symbol resolution, curated docs links, and integrated browsing.",
-  "version": "0.7.8",
+  "version": "0.7.9",
   "imports": {
     "#src/*": "./out/extension/src/*.js",
     "#shared/*": "./out/shared/*.js",
