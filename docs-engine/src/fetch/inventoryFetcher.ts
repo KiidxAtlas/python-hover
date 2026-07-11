@@ -254,14 +254,14 @@ export class InventoryFetcher {
    * Single entry for kicking off loads — shares the same promise as findInInventory so
    * warmup + hovers never download the same objects.inv twice in parallel.
    */
-  private ensureInventoryLoaded(
+  private async ensureInventoryLoaded(
     packageName: string,
     version?: string,
     isStdlib?: boolean,
   ): Promise<void> {
     if (!this.isLikelyPythonPackageName(packageName)) {
       this.invalidPackageNames.add(packageName);
-      return Promise.resolve();
+      return;
     }
 
     const inventoryCacheName = this.getInventoryCacheName(
@@ -272,7 +272,7 @@ export class InventoryFetcher {
       if (!this.cache.has(packageName) && this.cache.has(inventoryCacheName)) {
         this.cache.set(packageName, this.cache.get(inventoryCacheName)!);
       }
-      return Promise.resolve();
+      return;
     }
     let p = this.loadingPromises.get(inventoryCacheName);
     if (!p) {
@@ -280,7 +280,18 @@ export class InventoryFetcher {
       this.loadingPromises.set(inventoryCacheName, p);
       p.finally(() => this.loadingPromises.delete(inventoryCacheName));
     }
-    return p;
+    await p;
+    // Every stdlib package shares one inventory fetch keyed by
+    // `inventoryCacheName` (STDLIB_INVENTORY_CACHE) — e.g. seeding
+    // "builtins"/"typing"/"asyncio" concurrently all ride the same load.
+    // Only the *first* caller's own `packageName` gets set by loadInventory
+    // itself; without this, every later rider's package never appears in
+    // `getIndexedPackages()` even though its content genuinely loaded,
+    // making Module Browser silently under-report (or entirely miss) the
+    // seeded starter packages.
+    if (!this.cache.has(packageName) && this.cache.has(inventoryCacheName)) {
+      this.cache.set(packageName, this.cache.get(inventoryCacheName)!);
+    }
   }
 
   private getInventoryCacheName(

@@ -9,7 +9,15 @@ import * as vscode from "vscode";
 // ─────────────────────────────────────────────────────────────────────────
 
 export class CoreConfig {
-  constructor(private readonly config: vscode.WorkspaceConfiguration) {}
+  constructor(private config: vscode.WorkspaceConfiguration) {}
+
+  /** Swap in a freshly-obtained WorkspaceConfiguration snapshot. `vscode.WorkspaceConfiguration`
+   *  is a point-in-time snapshot — a held handle never sees later writes, even from the
+   *  extension's own `.update()` calls — so a live-reading Config needs this on every
+   *  `onDidChangeConfiguration` firing. */
+  refresh(section: vscode.WorkspaceConfiguration): void {
+    this.config = section;
+  }
 
   get isEnabled(): boolean {
     return this.config.get("enable", true);
@@ -127,7 +135,11 @@ export class CoreConfig {
 // ─────────────────────────────────────────────────────────────────────────
 
 export class UiConfig {
-  constructor(private readonly config: vscode.WorkspaceConfiguration) {}
+  constructor(private config: vscode.WorkspaceConfiguration) {}
+
+  refresh(section: vscode.WorkspaceConfiguration): void {
+    this.config = section;
+  }
 
   get showPracticalExamples(): boolean {
     const legacy = this.config.get<boolean | undefined>("showPracticalExamples", undefined);
@@ -335,7 +347,11 @@ export class UiConfig {
 // ─────────────────────────────────────────────────────────────────────────
 
 export class DiagnosticsConfig {
-  constructor(private readonly config: vscode.WorkspaceConfiguration) {}
+  constructor(private config: vscode.WorkspaceConfiguration) {}
+
+  refresh(section: vscode.WorkspaceConfiguration): void {
+    this.config = section;
+  }
 
   get diagnosticsEnabled(): boolean {
     return this.config.get("diagnostics.enabled", true);

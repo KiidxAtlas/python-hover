@@ -216,6 +216,7 @@ export class StudioPanel {
   }
 
   private renderHtml(webview: vscode.Webview, state: StudioState): string {
+    this.sectionRenderIndex = 0;
     const safeHover = state.lastHoverTitle
       ? this.escapeHtml(state.lastHoverTitle)
       : "none";
@@ -793,234 +794,286 @@ export class StudioPanel {
         --button-secondary-fg: var(--vscode-button-secondaryForeground);
         --success: var(--vscode-testing-iconPassed, #2ea043);
         --danger: var(--vscode-testing-iconFailed, #d73a49);
+        --sidebar-w: 208px;
+        --topbar-h: 52px;
     }
     * { box-sizing: border-box; }
     html, body {
         margin: 0;
         padding: 0;
-        background:
-            radial-gradient(circle at top left, color-mix(in srgb, var(--accent) 9%, transparent), transparent 38%),
-            var(--bg);
+        background: var(--bg);
         color: var(--fg);
         font: 13px/1.5 var(--vscode-font-family);
     }
     button, input { font: inherit; }
-    .shell {
-        width: min(1080px, 100%);
-        margin: 0 auto;
-        padding: 16px;
-        display: grid;
-        gap: 14px;
-    }
-    .header,
-    .section,
-    .summary {
-        border: 1px solid var(--border);
-        border-radius: 12px;
-        background: var(--panel);
-    }
-    .header {
-        display: grid;
-        gap: 14px;
-        padding: 16px;
-        background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 10%, var(--panel-alt)), var(--panel));
-    }
-    .header-top {
-        display: grid;
-        grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.95fr);
+    h1, h2, h3, p { margin: 0; }
+
+    /* ── Top bar ──────────────────────────────────────────── */
+    .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 30;
+        display: flex;
+        align-items: center;
         gap: 12px;
+        height: var(--topbar-h);
+        padding: 0 14px;
+        border-bottom: 1px solid var(--border);
+        background: color-mix(in srgb, var(--bg) 90%, transparent);
+        backdrop-filter: blur(8px);
     }
-    .header-actions {
+    .topbar-title {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-shrink: 0;
+        font-weight: 700;
+        font-size: 13px;
+        white-space: nowrap;
+    }
+    .search-wrap {
+        position: relative;
+        flex: 1;
+        max-width: 380px;
+    }
+    .search-icon {
+        position: absolute;
+        left: 9px;
+        top: 50%;
+        transform: translateY(-50%);
+        opacity: 0.55;
+        pointer-events: none;
+        font-size: 12px;
+    }
+    .search {
+        width: 100%;
+        padding: 6px 28px 6px 28px;
+        border-radius: 7px;
         border: 1px solid var(--border);
-        border-radius: 12px;
-        padding: 12px;
-        background: color-mix(in srgb, var(--bg) 97%, var(--fg) 3%);
+        background: var(--panel);
+        color: var(--fg);
+    }
+    .search:focus {
+        outline: 2px solid var(--accent);
+        outline-offset: -1px;
+        border-color: transparent;
+    }
+    .search-clear {
+        position: absolute;
+        right: 4px;
+        top: 50%;
+        transform: translateY(-50%);
+        border: none;
+        background: none;
+        color: var(--muted);
+        cursor: pointer;
+        padding: 4px 6px;
+        border-radius: 4px;
+        display: none;
+        font-size: 13px;
+        line-height: 1;
+    }
+    .search-clear:hover { background: color-mix(in srgb, var(--fg) 10%, transparent); }
+    .topbar-actions {
+        display: flex;
+        gap: 6px;
+        margin-left: auto;
+        flex-shrink: 0;
+    }
+
+    /* ── Layout: sidebar + content ────────────────────────── */
+    .layout {
         display: grid;
-        gap: 10px;
+        grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+        align-items: start;
+    }
+    .sidebar {
+        position: sticky;
+        top: var(--topbar-h);
+        height: calc(100vh - var(--topbar-h));
+        overflow-y: auto;
+        padding: 10px 8px;
+        border-right: 1px solid var(--border);
+        display: grid;
+        gap: 1px;
         align-content: start;
     }
-    .header-status-grid {
+    .nav-link {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 9px;
+        border-radius: 6px;
+        color: var(--muted);
+        font-size: 12px;
+        cursor: pointer;
+        border: none;
+        background: none;
+        width: 100%;
+        text-align: left;
+    }
+    .nav-link:hover {
+        background: color-mix(in srgb, var(--accent) 8%, transparent);
+        color: var(--fg);
+    }
+    .nav-link.active {
+        background: color-mix(in srgb, var(--accent) 14%, transparent);
+        color: var(--fg);
+        font-weight: 600;
+    }
+    .nav-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        flex-shrink: 0;
+        background: var(--nav-accent, var(--accent));
+    }
+    .content {
+        padding: 14px;
         display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+        min-width: 0;
+    }
+
+    /* ── Snapshot strip ───────────────────────────────────── */
+    .snapshot {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
         gap: 8px;
     }
-    .header-status-card {
+    .snapshot-card {
         display: grid;
-        gap: 4px;
-        padding: 10px;
+        gap: 2px;
+        padding: 9px 11px;
         border-radius: 10px;
         border: 1px solid var(--border);
-        background: color-mix(in srgb, var(--bg) 96%, var(--fg) 4%);
+        background: var(--panel);
     }
-    .header-status-card strong {
-        font-size: 13px;
-        line-height: 1.25;
-    }
-    .header h1,
-    .section h2,
-    .row h3,
-    .summary strong,
-    .eyebrow,
-    p {
-        margin: 0;
-    }
-    .eyebrow {
-        display: inline-flex;
-        width: fit-content;
-        padding: 2px 8px;
-        border-radius: 999px;
-        background: color-mix(in srgb, var(--accent) 12%, transparent);
-        color: var(--accent);
-        font-size: 11px;
-        font-weight: 600;
-        letter-spacing: 0.04em;
-        text-transform: uppercase;
-    }
-    .header h1,
-    .section h2 {
-        font-size: 18px;
-        line-height: 1.2;
-        font-weight: 650;
-    }
-    .muted,
-    .header-copy,
-    .row-copy,
-    .summary small {
-        color: var(--muted);
-    }
-    .summary-grid {
-        display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 10px;
-    }
-    .summary {
-        display: grid;
-        gap: 4px;
-        padding: 10px 12px;
-    }
-    .summary strong {
-        font-size: 16px;
-        font-weight: 650;
-    }
-    .chips,
-    .actions,
-    .segments {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-    }
+    .snapshot-card small { color: var(--muted); font-size: 10.5px; }
+    .snapshot-card strong { font-size: 13px; font-weight: 650; }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; }
     .chip {
         display: inline-flex;
         align-items: center;
         gap: 6px;
-        padding: 4px 9px;
+        padding: 3px 8px;
         border-radius: 999px;
         border: 1px solid var(--border);
-        background: color-mix(in srgb, var(--bg) 96%, var(--fg) 4%);
+        background: var(--panel);
         color: var(--muted);
-        font-size: 12px;
-    }
-    .section {
-        display: grid;
-        gap: 0;
-        overflow: hidden;
-    }
-    .section-head {
-        display: grid;
-        gap: 5px;
-        padding: 14px 16px;
-        border-bottom: 1px solid var(--border);
-        background: var(--panel-alt);
-    }
-    .section-kicker {
         font-size: 11px;
-        letter-spacing: 0.04em;
-        text-transform: uppercase;
-        color: var(--muted);
+    }
+
+    /* ── Sections (native collapsible <details>) ─────────── */
+    .section {
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: var(--panel);
+        overflow: hidden;
+        scroll-margin-top: calc(var(--topbar-h) + 10px);
+    }
+    .section[data-hidden] { display: none; }
+    .section-head {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        padding: 11px 14px;
+        cursor: pointer;
+        list-style: none;
+    }
+    .section-head::-webkit-details-marker { display: none; }
+    .section-head:hover { background: var(--panel-alt); }
+    .section-accent-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--section-accent, var(--accent));
+        margin-top: 6px;
+        flex-shrink: 0;
+    }
+    .section-head-text { display: grid; gap: 2px; flex: 1; min-width: 0; }
+    .section-head-text h2 { font-size: 13.5px; font-weight: 650; }
+    .section-head-text p { font-size: 11.5px; color: var(--muted); }
+    .section-chevron {
+        flex-shrink: 0;
+        margin-top: 5px;
+        width: 7px;
+        height: 7px;
+        border-right: 1.5px solid var(--muted);
+        border-bottom: 1.5px solid var(--muted);
+        transform: rotate(45deg);
+        transition: transform 120ms ease;
+    }
+    details[open] > .section-head .section-chevron {
+        transform: rotate(-135deg);
+        margin-top: 8px;
     }
     .section-body {
+        padding: 8px 12px 12px;
         display: grid;
-        gap: 10px;
-        padding: 12px;
+        grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+        gap: 7px;
+        border-top: 1px solid var(--border);
     }
+    .row-wide { grid-column: 1 / -1; }
+
+    /* ── Rows ─────────────────────────────────────────────── */
     .row {
-        padding: 12px;
-        border-radius: 12px;
+        padding: 8px 9px;
+        border-radius: 8px;
         border: 1px solid var(--border);
         background: color-mix(in srgb, var(--bg) 97%, var(--fg) 3%);
+        display: grid;
+        gap: 6px;
+        align-content: start;
+    }
+    .row[data-hidden] { display: none; }
+    .row.search-match { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); }
+    .row:hover {
+        border-color: var(--border-strong);
+        background: color-mix(in srgb, var(--accent) 6%, var(--bg));
     }
     .row-head {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        gap: 12px;
+        gap: 10px;
     }
-    .row-title {
-        display: grid;
-        gap: 3px;
-        min-width: 0;
-    }
-    .row h3 {
-        font-size: 14px;
-        line-height: 1.25;
-        font-weight: 650;
-    }
-    .row:hover {
-        border-color: var(--border-strong);
-        background: color-mix(in srgb, var(--accent) 6%, var(--bg));
-    }
-    .button,
-    .segment,
-    .stepper-button,
-    .toggle {
-        font: inherit;
-    }
-    .button:focus-visible,
-    .segment:focus-visible,
-    .stepper-button:focus-visible,
-    .toggle:focus-visible {
+    .row-title { display: grid; gap: 2px; min-width: 0; }
+    .row h3 { font-size: 12px; font-weight: 600; line-height: 1.3; }
+    .row-copy { color: var(--muted); font-size: 11px; line-height: 1.35; }
+    .button, .segment, .stepper-button, .toggle { font: inherit; }
+    .button:focus-visible, .segment:focus-visible, .stepper-button:focus-visible, .toggle:focus-visible {
         outline: 2px solid var(--accent);
         outline-offset: 2px;
     }
-    .button,
-    .segment,
-    .stepper-button {
+    .button, .segment, .stepper-button {
         border: 1px solid var(--border);
-        border-radius: 8px;
+        border-radius: 7px;
         cursor: pointer;
         background: transparent;
         color: var(--fg);
-        padding: 7px 10px;
+        padding: 5px 9px;
+        font-size: 11.5px;
     }
-    .button:hover,
-    .segment:hover,
-    .stepper-button:hover {
+    .button:hover, .segment:hover, .stepper-button:hover {
         border-color: var(--border-strong);
         background: color-mix(in srgb, var(--accent) 8%, var(--bg));
     }
-    .button.primary {
-        background: var(--button);
-        color: var(--button-fg);
-        border-color: transparent;
-    }
-    .button.secondary {
-        background: var(--button-secondary);
-        color: var(--button-secondary-fg);
-        border-color: transparent;
-    }
-    .button.danger {
-        border-color: color-mix(in srgb, var(--danger) 45%, transparent);
-        color: var(--danger);
-    }
+    .button.primary { background: var(--button); color: var(--button-fg); border-color: transparent; }
+    .button.secondary { background: var(--button-secondary); color: var(--button-secondary-fg); border-color: transparent; }
+    .button.danger { border-color: color-mix(in srgb, var(--danger) 45%, transparent); color: var(--danger); }
+    .segments { display: flex; flex-wrap: wrap; gap: 6px; }
     .segment.active {
         color: var(--accent);
         border-color: color-mix(in srgb, var(--accent) 34%, transparent);
         background: color-mix(in srgb, var(--accent) 12%, var(--bg));
     }
+    .actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
     .toggle {
         appearance: none;
-        width: 40px;
-        height: 22px;
+        width: 36px;
+        height: 20px;
         border-radius: 999px;
         background: color-mix(in srgb, var(--fg) 14%, transparent);
         position: relative;
@@ -1033,110 +1086,75 @@ export class StudioPanel {
         position: absolute;
         top: 2px;
         left: 2px;
-        width: 16px;
-        height: 16px;
+        width: 14px;
+        height: 14px;
         border-radius: 50%;
         background: white;
         transition: transform 100ms ease;
     }
-    .toggle:checked {
-        background: color-mix(in srgb, var(--success) 80%, transparent);
-    }
-    .toggle:checked::after {
-        transform: translateX(18px);
-    }
+    .toggle:checked { background: color-mix(in srgb, var(--success) 80%, transparent); }
+    .toggle:checked::after { transform: translateX(16px); }
     .stepper {
         display: inline-flex;
         align-items: center;
-        gap: 8px;
+        gap: 6px;
         border: 1px solid var(--border);
         border-radius: 999px;
-        padding: 4px;
+        padding: 3px;
         background: color-mix(in srgb, var(--bg) 95%, var(--fg) 5%);
     }
-    .stepper-button {
-        width: 28px;
-        height: 28px;
-        border-radius: 999px;
-        padding: 0;
-    }
-    .stepper-value {
-        min-width: 90px;
+    .stepper-button { width: 24px; height: 24px; border-radius: 999px; padding: 0; }
+    .stepper-value { min-width: 78px; text-align: center; font-weight: 600; font-size: 11.5px; }
+
+    .no-results {
+        display: none;
+        padding: 24px 12px;
         text-align: center;
-        font-weight: 600;
-    }
-    .action-copy {
         color: var(--muted);
-        font-size: 12px;
+        font-size: 12.5px;
     }
-    @media (max-width: 900px) {
-        .summary-grid {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-        }
-        .header-top {
-            grid-template-columns: 1fr;
-        }
-        .header-status-grid {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-        }
-    }
-    @media (max-width: 640px) {
-        .shell {
-            padding: 10px;
-        }
-        .summary-grid {
-            grid-template-columns: 1fr;
-        }
-        .header-status-grid {
-            grid-template-columns: 1fr;
-        }
-        .row-head {
-            flex-direction: column;
-            align-items: stretch;
-        }
+
+    @media (max-width: 760px) {
+        .layout { grid-template-columns: 1fr; }
+        .sidebar { display: none; }
+        .search-wrap { max-width: none; }
     }
 </style>
 </head>
 <body>
-<div class="shell">
-    <header class="header">
-        <div class="header-top">
-            <div>
-                <div class="eyebrow">PyHover Studio</div>
-                <h1>A focused control room for hover quality, routing, and cache health.</h1>
-                <p class="header-copy">Every control here writes to real extension settings or commands. Use Studio for fast, intentional tuning without hunting through settings JSON.</p>
-            </div>
-            <div class="header-actions">
-                <div class="section-kicker">Quick launch</div>
-                <div class="actions">
-                    <button class="button secondary" data-run-command="python-hover.searchDocs" data-focus-id="header:searchDocs">Search docs</button>
-                    <button class="button secondary" data-run-command="python-hover.browseModule" data-focus-id="header:browseModule">Browse modules</button>
-                    <button class="button" data-open-settings="python-hover" data-focus-id="header:settings">Open settings</button>
-                </div>
-                <div class="header-status-grid">
-                    <article class="header-status-card"><small>Docs routing</small><strong>${this.escapeHtml(this.formatDocsRoutingLabel(state.docsBrowser, state.devdocsBrowser, state.redirectIntegratedHoverToDocsPage, state.autoOpenCurrentHoverInIntegratedDocs))}</strong><small>Official and DevDocs links keep the same opening behavior unless hover docs redirection or auto-open is enabled.</small></article>
-                    <article class="header-status-card"><small>Hover profile</small><strong>${this.escapeHtml(this.formatHoverProfileLabel(state.compactMode, state.activePreset))}</strong><small>Quick read density and content depth are aligned here first.</small></article>
-                    <article class="header-status-card"><small>Discovery</small><strong>${this.escapeHtml(this.formatDiscoveryLabel(state.onlineDiscovery, state.docScraping, state.runtimeHelper))}</strong><small>Web fetches, scraping, and local Python help are summarized at a glance.</small></article>
-                    <article class="header-status-card"><small>Module browser</small><strong>${this.escapeHtml(this.formatBrowserLabel(state.moduleBrowserDefaultView, state.moduleBrowserDefaultDensity))}</strong><small>Open the browser with the default shape you actually want to scan.</small></article>
-                </div>
-                <p class="action-copy">Start with docs routing and hover profile, then tune depth and performance only as needed.</p>
-            </div>
+<div class="topbar">
+    <div class="topbar-title">
+        <span>PyHover Studio</span>
+        <span class="chip">v${this.escapeHtml(state.version)}</span>
+    </div>
+    <div class="search-wrap">
+        <span class="search-icon">⌕</span>
+        <input class="search" type="search" id="studio-search" placeholder="Search settings and actions…" data-focus-id="search" autocomplete="off">
+        <button class="search-clear" id="studio-search-clear" type="button" aria-label="Clear search">✕</button>
+    </div>
+    <div class="topbar-actions">
+        <button class="button secondary" data-run-command="python-hover.searchDocs" data-focus-id="header:searchDocs">Search docs</button>
+        <button class="button secondary" data-run-command="python-hover.browseModule" data-focus-id="header:browseModule">Browse modules</button>
+        <button class="button" data-open-settings="python-hover" data-focus-id="header:settings">Settings JSON</button>
+    </div>
+</div>
+<div class="layout">
+    <nav class="sidebar" id="studio-nav"></nav>
+    <main class="content">
+        <div class="snapshot">
+            <article class="snapshot-card"><small>Hover profile</small><strong>${this.escapeHtml(this.formatHoverProfileLabel(state.compactMode, state.activePreset))}</strong></article>
+            <article class="snapshot-card"><small>Discovery</small><strong>${this.escapeHtml(this.formatDiscoveryLabel(state.onlineDiscovery, state.docScraping, state.runtimeHelper))}</strong></article>
+            <article class="snapshot-card"><small>Docs routing</small><strong>${this.escapeHtml(this.formatDocsRoutingLabel(state.docsBrowser, state.devdocsBrowser, state.redirectIntegratedHoverToDocsPage, state.autoOpenCurrentHoverInIntegratedDocs))}</strong></article>
+            <article class="snapshot-card"><small>Module browser</small><strong>${this.escapeHtml(this.formatBrowserLabel(state.moduleBrowserDefaultView, state.moduleBrowserDefaultDensity))}</strong></article>
+            <article class="snapshot-card"><small>General cache</small><strong>${this.escapeHtml(state.cacheSizeLabel)}</strong></article>
+            <article class="snapshot-card"><small>Stdlib corpus</small><strong>${this.escapeHtml(state.corpusSizeLabel)}${state.isBuildingPythonStdlibCorpus ? " (building…)" : ""}</strong></article>
+            <article class="snapshot-card"><small>Indexed symbols</small><strong>${state.indexedSymbols.toLocaleString()}</strong></article>
+            <article class="snapshot-card"><small>Last hover</small><strong>${safeHover}</strong></article>
         </div>
-        <div class="chips">
-          <span class="chip">v${this.escapeHtml(state.version)}</span>
-          <span class="chip">Preset ${this.escapeHtml(this.formatPresetLabel(state.activePreset))}</span>
-          <span class="chip">${state.indexedSymbols.toLocaleString()} indexed symbols</span>
-          <span class="chip">${state.isBuildingPythonStdlibCorpus ? "Corpus build running" : "Corpus build idle"}</span>
-        </div>
-        <div class="summary-grid">
-            <article class="summary"><small>General cache</small><strong>${this.escapeHtml(state.cacheSizeLabel)}</strong><small>Docs pages, inventories, and runtime cache.</small></article>
-            <article class="summary"><small>Stdlib corpus</small><strong>${this.escapeHtml(state.corpusSizeLabel)}</strong><small>${state.hasPythonStdlibCorpus ? `${state.pythonStdlibCorpusEntries.toLocaleString()} entries across ${state.pythonStdlibCorpusPackages.toLocaleString()} buckets.` : "Not built yet."}</small></article>
-            <article class="summary"><small>Hover target</small><strong>${safeHover}</strong><small>${state.lastHoverTitle ? "Current hover target captured." : "Hover a Python symbol to populate this."}</small></article>
-            <article class="summary"><small>Index</small><strong>${state.indexedSymbols.toLocaleString()}</strong><small>Searchable symbols from cached inventories and corpora.</small></article>
-        </div>
-    </header>
 
-    ${sections}
+        ${sections}
+        <div class="no-results" id="studio-no-results">No settings match your search.</div>
+    </main>
 </div>
 
 <script src="${scriptUri}"></script>
@@ -1144,8 +1162,31 @@ export class StudioPanel {
 </html>`;
   }
 
+  private readonly sectionAccents = [
+    "var(--vscode-charts-blue, #4a9eda)",
+    "var(--vscode-charts-purple, #b180d7)",
+    "var(--vscode-charts-green, #89d185)",
+    "var(--vscode-charts-orange, #d18616)",
+    "var(--vscode-charts-red, #e05561)",
+    "var(--vscode-charts-yellow, #d7ba7d)",
+    "var(--vscode-charts-blue, #4a9eda)",
+    "var(--vscode-charts-purple, #b180d7)",
+  ];
+  private sectionRenderIndex = 0;
+
+  private slugify(title: string): string {
+    return title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  }
+
   private renderSection(title: string, copy: string, rows: string[]): string {
-    return `<section class="section"><div class="section-head"><div class="section-kicker">Settings group</div><h2>${this.escapeHtml(title)}</h2><p class="muted">${this.escapeHtml(copy)}</p></div><div class="section-body">${rows.join("")}</div></section>`;
+    const index = this.sectionRenderIndex++;
+    const id = `section-${this.slugify(title)}`;
+    const accent = this.sectionAccents[index % this.sectionAccents.length];
+    // First two sections (the ones used most often) start expanded; the rest
+    // start collapsed so the panel doesn't open as one long wall of controls.
+    // The search box below auto-expands any section containing a match.
+    const openAttr = index < 2 ? " open" : "";
+    return `<details class="section" id="${id}" data-section-title="${this.escapeHtml(title.toLowerCase())}" style="--section-accent:${accent}"${openAttr}><summary class="section-head"><span class="section-accent-dot"></span><span class="section-head-text"><h2>${this.escapeHtml(title)}</h2><p class="muted">${this.escapeHtml(copy)}</p></span><span class="section-chevron" aria-hidden="true"></span></summary><div class="section-body">${rows.join("")}</div></details>`;
   }
 
   private renderActionRow(
@@ -1187,7 +1228,7 @@ export class StudioPanel {
     const index = order.indexOf(section);
     const isFirst = index <= 0;
     const isLast = index === -1 || index >= order.length - 1;
-    return `<article class="row"><div class="row-head"><div class="row-title"><h3>${this.escapeHtml(title)}</h3><p class="row-copy">${this.escapeHtml(copy)}</p></div><div class="actions"><button class="button" type="button" data-hover-section-move="up" data-hover-section-id="${this.escapeHtml(section)}" data-focus-id="layout:${this.escapeHtml(section)}:up" ${isFirst ? "disabled" : ""}>↑</button><button class="button" type="button" data-hover-section-move="down" data-hover-section-id="${this.escapeHtml(section)}" data-focus-id="layout:${this.escapeHtml(section)}:down" ${isLast ? "disabled" : ""}>↓</button><input class="toggle" type="checkbox" data-toggle-key="${this.escapeHtml(key)}" data-focus-id="toggle:${this.escapeHtml(key)}" ${value ? "checked" : ""}></div></div></article>`;
+    return `<article class="row row-wide"><div class="row-head"><div class="row-title"><h3>${this.escapeHtml(title)}</h3><p class="row-copy">${this.escapeHtml(copy)}</p></div><div class="actions"><button class="button" type="button" data-hover-section-move="up" data-hover-section-id="${this.escapeHtml(section)}" data-focus-id="layout:${this.escapeHtml(section)}:up" ${isFirst ? "disabled" : ""}>↑</button><button class="button" type="button" data-hover-section-move="down" data-hover-section-id="${this.escapeHtml(section)}" data-focus-id="layout:${this.escapeHtml(section)}:down" ${isLast ? "disabled" : ""}>↓</button><input class="toggle" type="checkbox" data-toggle-key="${this.escapeHtml(key)}" data-focus-id="toggle:${this.escapeHtml(key)}" ${value ? "checked" : ""}></div></div></article>`;
   }
 
   private renderChoiceRow(
@@ -1204,7 +1245,7 @@ export class StudioPanel {
       })
       .join("");
 
-    return `<article class="row"><div class="row-title"><h3>${this.escapeHtml(title)}</h3><p class="row-copy">${this.escapeHtml(copy)}</p></div><div class="segments">${segments}</div></article>`;
+    return `<article class="row row-wide"><div class="row-title"><h3>${this.escapeHtml(title)}</h3><p class="row-copy">${this.escapeHtml(copy)}</p></div><div class="segments">${segments}</div></article>`;
   }
 
   private renderNumberRow(
@@ -1237,7 +1278,7 @@ export class StudioPanel {
       })
       .join("");
     const nextCopy = `${copy} Current profile: ${this.formatPresetLabel(activePreset)}.`;
-    return `<article class="row"><div class="row-title"><h3>${this.escapeHtml(title)}</h3><p class="row-copy">${this.escapeHtml(nextCopy)}</p></div><div class="segments">${buttons}</div></article>`;
+    return `<article class="row row-wide"><div class="row-title"><h3>${this.escapeHtml(title)}</h3><p class="row-copy">${this.escapeHtml(nextCopy)}</p></div><div class="segments">${buttons}</div></article>`;
   }
 
   private formatNumberValue(value: number, unit: string): string {

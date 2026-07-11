@@ -23,6 +23,23 @@ export class Config {
     this.diagnostics = new DiagnosticsConfig(config);
   }
 
+  /** Re-point every sub-config at a freshly-obtained WorkspaceConfiguration snapshot.
+   *  `vscode.workspace.getConfiguration(...)` returns a point-in-time snapshot — a
+   *  previously-obtained handle never observes later writes, including the extension's
+   *  own settings updates (verified directly: reading the same handle after `.update()`
+   *  still returns the old value; only a fresh `getConfiguration()` call sees the new
+   *  one). Since `Config`/`HoverRenderer`/`HoverProvider` are constructed once and held
+   *  by reference for the extension's lifetime, without this every setting change made
+   *  from PyHover Studio (or Settings UI) would be silently ignored until a full window
+   *  reload. Call this from the `onDidChangeConfiguration` handler before any other
+   *  reaction to a `python-hover.*` change. */
+  refresh(): void {
+    const fresh = vscode.workspace.getConfiguration("python-hover");
+    this.core.refresh(fresh);
+    this.ui.refresh(fresh);
+    this.diagnostics.refresh(fresh);
+  }
+
   // ── Core Config delegation (extension, discovery, caching) ───────────
   get isEnabled(): boolean { return this.core.isEnabled; }
   get onlineDiscovery(): boolean { return this.core.onlineDiscovery; }

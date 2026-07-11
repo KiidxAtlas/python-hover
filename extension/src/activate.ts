@@ -385,6 +385,15 @@ export function activate(context: vscode.ExtensionContext): PythonHoverApi | und
           !affectsDocsRouting &&
           !affectsHoverPresentation;
 
+        if (affectsPythonHover) {
+          // `config` is held by reference for the extension's lifetime (passed into
+          // HoverProvider/HoverRenderer/StatusBarManager once at construction) — its
+          // underlying WorkspaceConfiguration snapshot must be refreshed here or every
+          // setting change below reads stale pre-change values, silently no-op-ing
+          // Studio's toggles/reordering until a full window reload.
+          config.refresh();
+        }
+
         Logger.setDebugEnabled(config.enableDebugLogging);
         Logger.setRevealOnError(config.revealOutputOnError);
 
