@@ -38,13 +38,18 @@ export function registerSearchDocsCommand(
   deps: SearchDocsCommandDeps,
 ): (initialQuery?: string) => void {
   return (initialQuery?: string) => {
-    void deps.hoverProvider.hydrateCachedInventories();
     const qp = vscode.window.createQuickPick<SearchItem>();
-    const count = deps.hoverProvider.getIndexedSymbolCount();
     qp.title = "PyHover Search";
-    qp.placeholder = `Search ${count.toLocaleString()} indexed Python symbols (e.g. "DataFrame.merge", "asyncio.gather")...`;
     qp.matchOnDescription = true;
     qp.matchOnDetail = true;
+
+    const updatePlaceholder = () => {
+      const count = deps.hoverProvider.getIndexedSymbolCount();
+      qp.placeholder = count > 0
+        ? `Search ${count.toLocaleString()} indexed Python symbols (e.g. "DataFrame.merge", "asyncio.gather")...`
+        : "Search indexed Python symbols or enter a package name to load it...";
+    };
+    updatePlaceholder();
 
     const buildStarterSearchItems = (): SearchItem[] => {
       const savedDocItems = deps
@@ -134,16 +139,28 @@ export function registerSearchDocsCommand(
 
       const results = deps.hoverProvider.searchDocs(trimmed).slice(0, 40);
       if (results.length === 0) {
+        const rootPackage = trimmed.split(".")[0];
+        const canLoadPackage = /^[a-z_][a-z0-9_-]*$/i.test(rootPackage) &&
+          rootPackage === rootPackage.toLowerCase();
         qp.items = [
           {
-            label: `$(symbol-namespace) Browse module "${trimmed}"`,
-            description: "No indexed symbol matches yet",
-            detail:
-              "Open the module browser and inspect the package or module directly.",
-            moduleName: trimmed,
-            packageName: trimmed,
+            label: "$(info) No indexed symbols match this search",
+            description: qp.busy ? "Cached indexes are still loading" : undefined,
+            detail: qp.busy
+              ? "Results will refresh automatically when loading finishes."
+              : "Try a shorter symbol name or load the package index below.",
             alwaysShow: true,
           },
+          ...(canLoadPackage
+            ? [{
+                label: `$(cloud-download) Load and browse package "${rootPackage}"`,
+                description: "Fetch its documentation index if needed",
+                detail: "Requires online discovery unless the package is already cached.",
+                moduleName: rootPackage,
+                packageName: rootPackage,
+                alwaysShow: true,
+              } satisfies SearchItem]
+            : []),
         ];
         return;
       }
@@ -207,7 +224,31 @@ export function registerSearchDocsCommand(
       qp.hide();
     });
 
-    qp.onDidHide(() => qp.dispose());
+    let disposed = false;
+    qp.onDidHide(() => {
+      disposed = true;
+      qp.dispose();
+    });
     qp.show();
+
+    // Disk inventories hydrate asynchronously. Refresh the open picker when they
+    // arrive so an early search cannot get stuck showing a false zero-results state.
+    qp.busy = true;
+    void deps.hoverProvider.hydrateCachedInventories().then(
+      () => {
+        if (disposed) {
+          return;
+        }
+        qp.busy = false;
+        updatePlaceholder();
+        updateSearchItems(qp.value);
+      },
+      () => {
+        if (!disposed) {
+          qp.busy = false;
+          updateSearchItems(qp.value);
+        }
+      },
+    );
   };
 }

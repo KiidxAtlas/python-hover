@@ -1,8 +1,8 @@
 {
   "name": "python-hover",
-  "displayName": "Python Hover",
-  "description": "Professional Python hover documentation for VS Code with fast symbol resolution, curated docs links, and integrated browsing.",
-  "version": "0.7.9",
+  "displayName": "Python Hover: Docs & IntelliSense",
+  "description": "Instant Python docs in VS Code: signatures, docstrings, parameter help, examples, library summaries, and searchable documentation for Pylance, NumPy, pandas, and more.",
+  "version": "0.7.10",
   "imports": {
     "#src/*": "./out/extension/src/*.js",
     "#shared/*": "./out/shared/*.js",
@@ -33,19 +33,17 @@
   "categories": [
     "Programming Languages",
     "Education",
-    "Data Science",
-    "Snippets",
-    "Other"
+    "Data Science"
   ],
   "keywords": [
     "python",
     "hover",
     "documentation",
     "intellisense",
-    "autocomplete",
+    "parameter help",
     "examples",
     "learning",
-    "reference",
+    "library documentation",
     "methods",
     "built-ins",
     "type-hints",
@@ -63,7 +61,10 @@
     "sqlalchemy",
     "requests",
     "devdocs",
-    "sphinx"
+    "sphinx",
+    "pylance",
+    "docstrings",
+    "python docs"
   ],
   "activationEvents": [
     "onLanguage:python"
@@ -74,8 +75,9 @@
     "compile": "rm -rf out && tsc -p ./",
     "watch": "tsc -watch -p ./",
     "lint": "eslint src --ext ts",
+    "test": "node --import tsx --test test/*.spec.ts",
     "package": "npx @vscode/vsce package",
-    "verify": "npm run compile && npm run lint && npm run package",
+    "verify": "npm run compile && npm run lint && npm test && npm run package",
     "test:hovers": "tsx scripts/testHovers.ts"
   },
   "devDependencies": {
@@ -430,6 +432,11 @@
           "default": 48,
           "minimum": 1,
           "description": "Retention hint for scraped documentation pages. Cached corpus entries persist until you clear the PyHover cache."
+        },
+        "python-hover.cacheTTL.keepIndefinitely": {
+          "type": "boolean",
+          "default": false,
+          "description": "Never expire cached documentation (inventories, scraped pages) or evict in-memory hover results — keep everything until you manually clear the PyHover cache. Overrides the inventoryDays/snippetHours retention hints above."
         },
         "python-hover.docsBrowser": {
           "type": "string",
@@ -787,10 +794,10 @@
         },
         "python-hover.hoverActivationDelay": {
           "type": "number",
-          "default": 75,
+          "default": 0,
           "minimum": 0,
           "maximum": 2000,
-          "description": "Extra delay in ms before PyHover triggers resolution. Useful on slow machines or large projects to reduce unnecessary hover calls. 0 = no delay."
+          "description": "Optional extra delay before PyHover resolves a hover. Increase it on slower machines or large projects to reduce work while moving the pointer."
         },
         "python-hover.preloadPackages": {
           "type": "array",

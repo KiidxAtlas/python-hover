@@ -7,6 +7,7 @@ export type PlaceholderTreeNode = {
   description: string
   contextValue?: string
   iconId?: string
+  command?: vscode.Command
 }
 
 export abstract class BaseTreeView<TNode> implements vscode.TreeDataProvider<
@@ -52,6 +53,7 @@ export abstract class BaseTreeView<TNode> implements vscode.TreeDataProvider<
     item.tooltip = this.buildMarkdownTooltip(element.label, element.description)
     item.iconPath = new vscode.ThemeIcon(element.iconId ?? defaultIconId)
     item.contextValue = element.contextValue ?? defaultContextValue
+    item.command = element.command
     return item
   }
 

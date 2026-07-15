@@ -134,6 +134,34 @@ export class HoverResolutionManager {
         isStdlib,
       );
       if (!doc) return null;
+      // Inventory entries are excellent for navigation but often contain no prose,
+      // and the first background page scrape may not have completed yet. The
+      // installed module's own docstring is the fastest authoritative explanation
+      // of what the library does, so use its opening paragraph when remote/indexed
+      // sources have not supplied a summary.
+      const existingSummaryIsUseful = this.hasUsefulModuleSummary(doc);
+      const shouldEnrichSummary =
+        moduleName.includes('.') ||
+        !existingSummaryIsUseful ||
+        (doc.summary?.trim().length ?? 0) < 120;
+      if (shouldEnrichSummary && this.pythonHelper) {
+        const runtime = await this.tryRuntimeFallback({
+          name: moduleName,
+          qualname: moduleName,
+          package: moduleName.split('.')[0] || moduleName,
+          module: moduleName,
+          isStdlib,
+        });
+        if (runtime) {
+          doc.summary = this.buildModuleSummary(
+            existingSummaryIsUseful ? doc.summary : undefined,
+            runtime.summary || runtime.content,
+            moduleName.includes('.'),
+          );
+          doc.content = doc.content || runtime.content;
+        }
+      }
+      doc.summary = this.normalizeModuleSummary(doc.summary);
       if (!isStdlib && this.pythonHelper) {
         const topModule = moduleName.split(".")[0];
         const cacheKey = `${topModule}`;
@@ -156,6 +184,83 @@ export class HoverResolutionManager {
     }
   }
 
+  private hasUsefulModuleSummary(doc: HoverDoc): boolean {
+    const text =
+      doc.summary ||
+      doc.structuredContent?.summary ||
+      doc.structuredContent?.description ||
+      doc.content;
+    if (!text || text.trim().length < 12) return false;
+    return !/^(?:\*\*)?source code:|^(?:documentation (?:for|from)|no documentation found|documentation lookup failed)/i.test(
+      text.trim(),
+    );
+  }
+
+  private buildModuleSummary(
+    indexedSummary: string | undefined,
+    runtimeSummary: string | undefined,
+    preferRuntime: boolean,
+  ): string | undefined {
+    const indexed = this.normalizeModuleSummary(indexedSummary);
+    const runtime = this.normalizeModuleSummary(runtimeSummary);
+    if (preferRuntime && runtime) return runtime;
+    if (!indexed) return runtime;
+    if (!runtime) return indexed;
+
+    if (
+      /^(?:this (?:section|chapter)|the .+ module defines the following)/i.test(indexed) &&
+      runtime.length >= 60
+    ) {
+      return runtime;
+    }
+    if (runtime.length < 60) return indexed;
+
+    const comparableIndexed = indexed.toLowerCase();
+    const comparableRuntime = runtime.toLowerCase();
+    if (
+      comparableIndexed.includes(comparableRuntime) ||
+      comparableRuntime.includes(comparableIndexed)
+    ) {
+      return indexed.length >= runtime.length ? indexed : runtime;
+    }
+
+    const punctuatedIndexed = /[.!?]$/.test(indexed) ? indexed : `${indexed}.`;
+    const sentenceRuntime = runtime.replace(/^Provides\s+/, 'It provides ');
+    return this.normalizeModuleSummary(`${punctuatedIndexed} ${sentenceRuntime}`);
+  }
+
+  private normalizeModuleSummary(summary: string | undefined): string | undefined {
+    if (!summary?.trim()) return undefined;
+
+    const cleaned = summary
+      .replace(/\[([^\]]+)]\(https?:\/\/[^)]+\)/g, '$1')
+      .replace(/<https?:\/\/[^>]+>/g, '')
+      .replace(/\bhttps?:\/\/\S+/g, '')
+      .replace(/^This section outlines\s+/i, 'Provides ')
+      .replace(/^#{1,6}\s+/gm, '')
+      .replace(/^\s*[=~`^#*_-]{3,}\s*$/gm, '')
+      .replace(/^\s*\d+[.)]\s+/gm, '')
+      .replace(/\s+/g, ' ')
+      .replace(/\s+([,.;:!?])/g, '$1')
+      .trim();
+    if (!cleaned) return undefined;
+
+    const sentences = cleaned.split(/(?<=[.!?])\s+/).filter(Boolean);
+    let result = '';
+    for (const sentence of sentences.slice(0, 3)) {
+      const candidate = result ? `${result} ${sentence}` : sentence;
+      if (candidate.length > 420 && result) break;
+      result = candidate;
+      if (result.length >= 180) break;
+    }
+
+    if (result.length > 420) {
+      const clipped = result.slice(0, 417);
+      result = `${clipped.slice(0, Math.max(clipped.lastIndexOf(' '), 1)).trimEnd()}…`;
+    }
+    return result || undefined;
+  }
+
   private async tryRuntimeFallback(key: DocKey): Promise<HoverDoc | null> {
     if (!this.pythonHelper) return null;
     const symbol = (key.qualname || key.name || "").replace(/^builtins\./, "");
@@ -173,9 +278,7 @@ export class HoverResolutionManager {
         return null;
       }
 
-      const summary = info.docstring
-        ? info.docstring.split("\n\n")[0].trim()
-        : undefined;
+      const summary = this.extractRuntimeSummary(info.docstring, symbol);
       const runtimeDoc: HoverDoc = {
         title: info.qualname || symbol,
         kind: (info.kind as any) || undefined,
@@ -196,6 +299,68 @@ export class HoverResolutionManager {
       this.runtimeDocCache.set(cacheKey, null);
       return null;
     }
+  }
+
+  private extractRuntimeSummary(
+    docstring: string | null | undefined,
+    symbol: string,
+  ): string | undefined {
+    if (!docstring?.trim()) return undefined;
+
+    const normalizedSymbol = symbol.replace(/`/g, '').toLowerCase();
+    const paragraphs = docstring
+      .replace(/\r\n?/g, '\n')
+      .split(/\n\s*\n/)
+      .map(paragraph => paragraph.trim())
+      .filter(Boolean);
+
+    const candidates: string[] = [];
+    for (const paragraph of paragraphs) {
+      const meaningfulLines = paragraph
+        .split('\n')
+        .map(line => line.trim())
+        .filter(line => line && !/^[=~`^#*_-]{3,}$/.test(line));
+      if (meaningfulLines.length === 0) continue;
+
+      let candidate: string;
+      if (/^provides:?$/i.test(meaningfulLines[0]) && meaningfulLines.length > 1) {
+        const capabilities = meaningfulLines
+          .slice(1)
+          .map(line => line.replace(/^\d+[.)]\s*/, '').replace(/[.;]$/, ''))
+          .filter(Boolean);
+        const [firstCapability, ...remainingCapabilities] = capabilities;
+        const normalizedFirst = firstCapability
+          ? firstCapability.charAt(0).toLowerCase() + firstCapability.slice(1)
+          : '';
+        candidate = `It provides ${[normalizedFirst, ...remainingCapabilities].filter(Boolean).join(', ')}.`;
+      } else {
+        candidate = meaningfulLines.join(' ').replace(/\s+/g, ' ').trim();
+      }
+      const normalizedCandidate = candidate.replace(/`/g, '').toLowerCase();
+      if (
+        normalizedCandidate === normalizedSymbol ||
+        normalizedCandidate === normalizedSymbol.split('.').pop()
+      ) {
+        continue;
+      }
+      if (/^(?:module|package)\s+[`'"]?[^ ]+[`'"]?\.?$/i.test(candidate)) {
+        continue;
+      }
+      const looksLikeHeading =
+        candidate.length <= 70 &&
+        !/[.!?]$/.test(candidate) &&
+        !/\b(?:is|are|provides?|supports?|parses?|creates?|implements?|works?|uses?)\b/i.test(
+          candidate,
+        );
+      if (looksLikeHeading) continue;
+      candidates.push(candidate);
+    }
+
+    if (candidates.length === 0) return undefined;
+    if (candidates[0].length < 55 && candidates[1]) {
+      return `${candidates[0]} ${candidates[1]}`;
+    }
+    return candidates[0];
   }
 }
 

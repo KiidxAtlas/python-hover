@@ -67,7 +67,7 @@ export class HoverRenderer {
         this.renderCallouts(md, doc);
       }
       this.renderModuleOverview(md, doc);
-      this.renderDescription(md, doc);
+      this.renderModuleDescription(md, doc);
       if (!compact) {
         if (
           doc.moduleExports &&
@@ -95,7 +95,7 @@ export class HoverRenderer {
       // bug source (see git history), not just a style choice.
       const renderedAnySection = this.renderRegularHoverSections(md, doc, compact);
       if (!renderedAnySection && this.isLowConfidenceEmptyResult(doc)) {
-        this.renderNoDocsFoundHint(md);
+        this.renderNoDocsFoundHint(md, doc);
       }
     }
 
@@ -190,10 +190,16 @@ export class HoverRenderer {
     );
   }
 
-  private renderNoDocsFoundHint(md: vscode.MarkdownString): void {
+  private renderNoDocsFoundHint(md: vscode.MarkdownString, doc: HoverDoc): void {
+    const searchLink = this.buildCommandLink(
+      "Search Docs",
+      "python-hover.searchDocs",
+      doc.title,
+      "Search indexed Python symbols for this name",
+    );
     md.appendMarkdown(
       "$(info) No cached documentation was found for this symbol — try " +
-        "[Search Docs](command:python-hover.searchDocs \"Search indexed Python symbols\") " +
+        `${searchLink} ` +
         "or the DevDocs link below.\n\n",
     );
   }
@@ -353,7 +359,13 @@ export class HoverRenderer {
       }
     }
 
-    md.appendMarkdown(`### $(${icon}) \`${displayTitle}\`\n\n`);
+    // Keep the symbol name out of inline-code markup here. VS Code gives inline
+    // code a fixed editor-font size, which flattened the heading hierarchy and
+    // made the title look identical to metadata in many themes. Signatures stay
+    // in Python code fences below, where semantic token coloring belongs.
+    md.appendMarkdown(
+      `### $(${icon}) ${this.escapeMarkdown(displayTitle)}\n\n`,
+    );
 
     const breadcrumb = this.buildBreadcrumb(doc);
     if (breadcrumb) {
@@ -485,7 +497,7 @@ export class HoverRenderer {
   private renderCallouts(md: vscode.MarkdownString, doc: HoverDoc): void {
     if (doc.badges?.some((b) => /^deprecated$/i.test(b.label))) {
       md.appendMarkdown(
-        `$(error) **Deprecated** — check the documentation for the recommended alternative\n\n`,
+        `> $(error) **Deprecated** — check the documentation for the recommended alternative\n\n`,
       );
     }
     if (
@@ -495,10 +507,10 @@ export class HoverRenderer {
       isMeaningfullyOutdated(doc.installedVersion, doc.latestVersion)
     ) {
       md.appendMarkdown(
-        `$(arrow-up) **Update available:** v${doc.installedVersion} → v${doc.latestVersion}\n\n`,
+        `> $(arrow-up) **Update available:** v${doc.installedVersion} → v${doc.latestVersion}\n\n`,
       );
       md.appendMarkdown(
-        `*$(diff) Behavior or parameter semantics may differ across these versions; check release notes before copying examples unchanged.*\n\n`,
+        `> $(diff) Behavior or parameter semantics may differ across these versions; check release notes before copying examples unchanged.\n\n`,
       );
     }
     const requiredVersion = getRequiredPythonVersion(doc);
@@ -508,12 +520,12 @@ export class HoverRenderer {
       this.isVersionBelow(this.detectedVersion, requiredVersion)
     ) {
       md.appendMarkdown(
-        `$(warning) **Requires Python ${requiredVersion}+** — your runtime is Python ${this.detectedVersion}\n\n`,
+        `> $(warning) **Requires Python ${requiredVersion}+** — your runtime is Python ${this.detectedVersion}\n\n`,
       );
     }
     if (doc.protocolHints && doc.protocolHints.length > 0) {
       doc.protocolHints.forEach((h) =>
-        md.appendMarkdown(`$(lightbulb) *${h}*\n\n`),
+        md.appendMarkdown(`> $(lightbulb) ${h}\n\n`),
       );
     }
   }
@@ -577,6 +589,23 @@ export class HoverRenderer {
         `[$(book) Continue reading in documentation…](<${moreUrl}> "Open full documentation")\n\n`,
       );
     }
+  }
+
+  private renderModuleDescription(md: vscode.MarkdownString, doc: HoverDoc): void {
+    const summary = doc.summary?.trim();
+    if (!summary) {
+      this.renderDescription(md, doc);
+      return;
+    }
+
+    const cleaned = this.cleanContent(summary);
+    if (!cleaned) {
+      this.renderDescription(md, doc);
+      return;
+    }
+
+    md.appendMarkdown(`**$(book) What this library does**\n\n`);
+    md.appendMarkdown(`${this.rewriteMarkdownLinks(cleaned)}\n\n`);
   }
 
   private renderStructuredDescription(
@@ -1611,7 +1640,7 @@ export class HoverRenderer {
             `Current argument${baseDescription !== "—" ? `. ${baseDescription}` : ""}`,
           )
         : baseDescription;
-      return `| ${active ? `**${this.escapeTableCell(p.name)}**` : this.escapeTableCell(p.name)} | ${type} | ${description} |`;
+      return `| ${active ? `**${name}**` : name} | ${type} | ${description} |`;
     });
 
     md.appendMarkdown(rows.join("\n") + "\n\n");
@@ -1644,7 +1673,7 @@ export class HoverRenderer {
     }
 
     md.appendMarkdown(
-      `**$(target) Active parameter** \`${this.escapeInlineCode(lens.parameter.name || lens.parameterLabel)}\``,
+      `> $(target) **Active parameter** \`${this.escapeInlineCode(lens.parameter.name || lens.parameterLabel)}\``,
     );
     if (details.length > 0) {
       md.appendMarkdown(` — ${details.join(" \u00a0·\u00a0 ")}`);
@@ -1795,9 +1824,8 @@ export class HoverRenderer {
           ),
         )
       : undefined;
-    md.appendMarkdown(
-      `**$(arrow-right) Returns** \`${ret.type || "unspecified"}\``,
-    );
+    md.appendMarkdown(`**$(arrow-right) Returns**\n\n`);
+    md.appendMarkdown(`\`${ret.type || "unspecified"}\``);
     if (cleanedDescription) {
       md.appendMarkdown(` — ${cleanedDescription}`);
     }
@@ -2139,6 +2167,14 @@ export class HoverRenderer {
           "python-hover.retryHover",
           commandToken,
           "Clear this symbol's cache and try resolving again",
+        ),
+      );
+      primaryActions.push(
+        this.buildCommandLink(
+          "$(search) Search",
+          "python-hover.searchDocs",
+          doc.title,
+          "Search indexed documentation for this symbol",
         ),
       );
       primaryActions.push(
@@ -2634,13 +2670,13 @@ export class HoverRenderer {
       [/\bDeprecated:\s/g, "$(error) **Deprecated:** "],
       [/\bTip:\s/g, "$(lightbulb) **Tip:** "],
       [/\bImportant:\s/g, "$(megaphone) **Important:** "],
-      [/Changed in version (\d+\.\d+)/g, "$(history) **Changed in $1:**"],
-      [/New in version (\d+\.\d+)/g, "$(sparkle) **New in $1:**"],
+      [/Changed in version (\d+\.\d+)[.:]?/g, "$(history) **Changed in $1.**"],
+      [/New in version (\d+\.\d+)[.:]?/g, "$(sparkle) **New in $1.**"],
       [
-        /Deprecated since version (\d+\.\d+)/g,
-        "$(error) **Deprecated since $1:**",
+        /Deprecated since version (\d+\.\d+)[.:]?/g,
+        "$(error) **Deprecated since $1.**",
       ],
-      [/Added in version (\d+\.\d+)/g, "$(sparkle) **Added in $1:**"],
+      [/Added in version (\d+\.\d+)[.:]?/g, "$(sparkle) **Added in $1.**"],
     ];
     for (const [p, r] of replacements) {
       content = content.replace(p, r);

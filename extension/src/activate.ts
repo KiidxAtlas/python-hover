@@ -105,8 +105,8 @@ export function activate(context: vscode.ExtensionContext): PythonHoverApi | und
         {
           inventoryDays: config.inventoryCacheDays,
           snippetHours: config.snippetCacheHours,
+          keepIndefinitely: config.keepCacheIndefinitely,
         },
-        config.interpreterCacheFingerprint,
       );
     let diskCache = createDiskCache();
     let activeCorpusBuild: vscode.CancellationTokenSource | undefined;
@@ -352,9 +352,13 @@ export function activate(context: vscode.ExtensionContext): PythonHoverApi | und
         const affectsInterpreter =
           event.affectsConfiguration("python.defaultInterpreterPath") ||
           event.affectsConfiguration("python.pythonPath");
-        const affectsDiskCache =
-          affectsInterpreter ||
-          event.affectsConfiguration("python-hover.cacheTTL");
+        // The on-disk doc cache (Sphinx inventories, PyPI summaries, scraped pages) is
+        // no longer namespaced per interpreter — it holds package documentation, not
+        // environment-specific data — so only cacheTTL changes need it recreated.
+        // Interpreter changes still rebuild the hover provider itself (below), just
+        // without recreating the DiskCache object.
+        const affectsCacheTtl = event.affectsConfiguration("python-hover.cacheTTL");
+        const affectsDiskCache = affectsInterpreter || affectsCacheTtl;
         const affectsProviderCore =
           event.affectsConfiguration("python-hover.runtimeHelper") ||
           event.affectsConfiguration("python-hover.enable") ||
@@ -406,7 +410,7 @@ export function activate(context: vscode.ExtensionContext): PythonHoverApi | und
         if (affectsDiskCache || affectsProviderCore) {
           rebuildHoverRuntime(
             "Configuration changed. Recreating hover provider.",
-            affectsDiskCache,
+            affectsCacheTtl,
           );
         } else if (affectsDocsRouting) {
           rebuildHoverRuntime(
@@ -847,39 +851,6 @@ export function activate(context: vscode.ExtensionContext): PythonHoverApi | und
       getRecentPackages,
       rememberRecentPackage,
     });
-
-    const corpusPromptStateKey = "python-hover.corpusPromptShown.v1";
-    const maybeShowCorpusPrompt = async () => {
-      if (context.globalState.get<boolean>(corpusPromptStateKey)) {
-        return;
-      }
-
-      const overview = diskCache.getOverview();
-      if (overview.hasPythonStdlibCorpus) {
-        await context.globalState.update(corpusPromptStateKey, true);
-        return;
-      }
-
-      await context.globalState.update(corpusPromptStateKey, true);
-      const action = await vscode.window.showInformationMessage(
-        "PyHover can build a Python stdlib corpus once for richer built-in and keyword hovers. Clear Cache now keeps that corpus intact.",
-        "Build Corpus",
-        "Open PyHover",
-      );
-
-      if (action === "Build Corpus") {
-        await vscode.commands.executeCommand("python-hover.buildPythonCorpus");
-        return;
-      }
-
-      if (action === "Open PyHover") {
-        await vscode.commands.executeCommand("python-hover.openStudio");
-      }
-    };
-
-    setTimeout(() => {
-      void maybeShowCorpusPrompt();
-    }, 1200);
 
     // `hoverProvider` is captured by reference here, not by value — it keeps pointing
     // at whatever the current instance is even after registerHoverProvider() replaces

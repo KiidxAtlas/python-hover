@@ -172,8 +172,12 @@ export function cleanContentAnnotations(text: string): string {
   text = text.replace(
     /&(?:amp|quot|apos|nbsp|rarr|larr|hellip|gt|lt);|&#(\d+);|&#x([0-9a-fA-F]+);/g,
     (match, dec, hex) => {
-      if (dec !== undefined) return String.fromCharCode(Number(dec));
-      if (hex !== undefined) return String.fromCharCode(parseInt(hex, 16));
+      if (dec !== undefined || hex !== undefined) {
+        const codePoint = dec !== undefined ? Number(dec) : parseInt(hex, 16);
+        return Number.isInteger(codePoint) && codePoint >= 0 && codePoint <= 0x10ffff
+          ? String.fromCodePoint(codePoint)
+          : match;
+      }
       switch (match) {
         case "&amp;":
           return "&";

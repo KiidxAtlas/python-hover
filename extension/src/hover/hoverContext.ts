@@ -1,5 +1,5 @@
 import { HoverContextHints } from "#shared/types";
-import * as vscode from "vscode";
+import type * as vscode from "vscode";
 
 type ContextRule = {
   tag: string;
@@ -51,8 +51,12 @@ export function detectHoverContext(
   document: vscode.TextDocument,
   position: vscode.Position,
 ): HoverContextHints {
-  const start = Math.max(0, position.line - 25);
-  const end = Math.min(document.lineCount - 1, position.line + 6);
+  // Context should describe the statement the user is looking at, not unrelated
+  // constructs elsewhere in the file. Four lines in either direction still covers
+  // common chained/multiline calls without allowing a distant comprehension or async
+  // function to reorder examples for the current symbol.
+  const start = Math.max(0, position.line - 4);
+  const end = Math.min(document.lineCount - 1, position.line + 4);
   const slice: string[] = [];
 
   for (let line = start; line <= end; line++) {

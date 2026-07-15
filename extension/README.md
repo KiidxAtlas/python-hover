@@ -64,13 +64,14 @@ Most hover extensions show you a one-liner from PyPI. **Python Hover fetches fro
 
 ---
 
-## 🆕 New in 0.7.8
+## 🆕 New in 0.7.10
 
-- **Rewrote keyword hover rendering** — `def`, `for`, `class`, `match`, and every other language keyword now render through the same robust pipeline as regular symbols, fixing grammar-block corruption and mangled sentences.
-- **Flattened hover layout** for consistent, easy-to-scan formatting across every section.
-- **Fixed a batch of hover accuracy bugs**: duplicated titles, corrupted parameter tables, literal backslashes in code, leaked HTML entities, and wrong symbol resolution for variables assigned from factory functions like `numpy.array(...)`.
-- **Added Retry and Settings actions** to low-confidence hovers, a **Copy button** on code examples, and a status bar **"Resolving…"** indicator for genuinely slow hovers.
-- **Module Browser** rows now show color-coded kind badges for faster scanning.
+- **Library hovers now explain what packages do** using official indexed docs, PyPI summaries, and installed module docstrings, including reliable handling for dotted imports such as `numpy.linalg`.
+- **Faster, more current hovers** reduce unnecessary delay, avoid stale local results after edits, reuse parameter-lens work, and stop empty module results from becoming stuck in cache.
+- **More accurate documentation extraction** handles NumPy, Google, and reStructuredText conventions, multiline fields, variadic parameters, exceptions, defaults, and structured content more reliably.
+- **Clearer hover presentation** improves hierarchy, callouts, active parameters, signatures, tables, examples, and recovery actions while respecting the active VS Code theme.
+- **Responsive extension UI** improves Studio, pinned hovers, module browsing, docs, debug views, keyboard focus, narrow layouts, long content, and reduced-motion behavior.
+- **More useful discovery flows** make empty sidebar views actionable and add visible search hydration plus module-browser progress and recovery states.
 
 ---
 
@@ -194,7 +195,8 @@ Works with zero config. Everything below is optional:
 | `python-hover.ui.showSeeAlso`         | `true`   | Show related links and see-also references                                                   |
 | `python-hover.requestTimeout`         | `10000`  | Network timeout in milliseconds                                                              |
 | `python-hover.cacheTTL.inventoryDays` | `7`      | Retention hint for inventory downloads; cached inventories persist until you clear the cache |
-| `python-hover.hoverActivationDelay`   | `75`     | Extra delay before resolution starts on slower machines                                      |
+| `python-hover.cacheTTL.keepIndefinitely` | `false` | Keep cached documentation and in-memory hover results until you manually clear the cache      |
+| `python-hover.hoverActivationDelay`   | `0`      | Optional extra delay before resolution starts on slower machines                             |
 | `python-hover.ui.maxContentLength`    | `800`    | Max characters before "Read more…" truncation                                                |
 
 <details>

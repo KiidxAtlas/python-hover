@@ -90,11 +90,13 @@ export class HoverDebugPanel {
 <title>${this.escape(displayTitle)} Debug</title>
 <style>
   :root {
+    color-scheme: light dark;
     --panel-border: color-mix(in srgb, var(--vscode-panel-border) 72%, transparent);
     --panel-accent: var(--vscode-textLink-foreground);
     --panel-surface: color-mix(in srgb, var(--vscode-editor-background) 95%, var(--vscode-foreground) 5%);
     --panel-surface-strong: color-mix(in srgb, var(--vscode-editor-background) 92%, var(--vscode-foreground) 8%);
   }
+  * { box-sizing: border-box; }
   body {
     font-family: var(--vscode-font-family);
     font-size: 12px;
@@ -109,6 +111,9 @@ export class HoverDebugPanel {
     padding: 14px 16px;
     display: grid;
     gap: 12px;
+  }
+  .shell, .card, .hero, p, pre, strong {
+    overflow-wrap: anywhere;
   }
   .hero, .card {
     border: 1px solid var(--panel-border);
@@ -235,6 +240,11 @@ export class HoverDebugPanel {
   @media (max-width: 640px) {
     .shell {
       padding: 10px;
+    }
+    .hero, .card { border-radius: 9px; }
+    .actions a {
+      flex: 1 1 auto;
+      text-align: center;
     }
   }
 </style>

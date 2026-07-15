@@ -1,5 +1,17 @@
 import { ExceptionInfo, ParameterInfo, ReturnInfo } from '../../../shared/types'
 
+const NUMPY_SECTIONS = new Set([
+  'Parameters',
+  'Other Parameters',
+  'Returns',
+  'Yields',
+  'Raises',
+  'Warns',
+  'Examples',
+  'Notes',
+  'See Also',
+])
+
 export interface ParsedDocstring {
   summary?: string
   description?: string
@@ -16,6 +28,10 @@ export class DocstringParser {
       return {}
     }
 
+    // Runtime, LSP, and scraped docstrings can use different newline conventions.
+    // Normalize once so section detection behaves identically on every platform.
+    docstring = docstring.replace(/\r\n?/g, '\n')
+
     // Heuristic detection
     if (this.isNumpyStyle(docstring)) {
       return this.parseNumpy(docstring)
@@ -28,7 +44,7 @@ export class DocstringParser {
 
   parseHelpText(docstring: string): ParsedDocstring {
     const result: ParsedDocstring = {}
-    let lines = docstring.split('\n')
+    let lines = docstring.replace(/\r\n?/g, '\n').split('\n')
 
     // 1. Remove "Related help topics" footer
     const footerIndex = lines.findIndex(l => l.startsWith('Related help topics:'))
@@ -252,42 +268,50 @@ export class DocstringParser {
 
     // Simple section parsing
     let currentSection = ''
+    let activeParameterIndexes: number[] = []
 
     for (; i < lines.length; i++) {
       const line = lines[i]
       const trimmed = line.trim()
 
+      // Any underlined heading ends the previous section. Recognized headings are
+      // extracted; unknown ones (References, Attributes, Methods, etc.) are skipped
+      // instead of leaking their contents into the preceding section.
       if (
-        trimmed === 'Parameters' ||
-        trimmed === 'Returns' ||
-        trimmed === 'Raises' ||
-        trimmed === 'Examples' ||
-        trimmed === 'Notes'
+        trimmed &&
+        i + 1 < lines.length &&
+        /^-{3,}$/.test(lines[i + 1].trim())
       ) {
-        if (i + 1 < lines.length && lines[i + 1].trim().startsWith('---')) {
-          currentSection = trimmed
-          i++ // Skip underline
-          continue
-        }
+        currentSection = NUMPY_SECTIONS.has(trimmed) ? trimmed : ''
+        activeParameterIndexes = []
+        i++ // Skip underline
+        continue
       }
 
-      if (currentSection === 'Parameters') {
+      if (currentSection === 'Parameters' || currentSection === 'Other Parameters') {
         // Parse parameters: name : type
         // description
-        const match = /^\s*(\w+)\s*:\s*(.*)$/.exec(line)
+        const match = /^\s*((?:\*{0,2}[A-Za-z_]\w*)(?:\s*,\s*\*{0,2}[A-Za-z_]\w*)*)\s*:\s*(.*)$/.exec(line)
         if (match) {
           if (!result.parameters) {
             result.parameters = []
           }
-          result.parameters.push({
-            name: match[1],
-            type: match[2],
-            description: '',
-          })
+          activeParameterIndexes = []
+          for (const name of match[1].split(',').map(value => value.trim())) {
+            activeParameterIndexes.push(result.parameters.length)
+            result.parameters.push({
+              name,
+              type: match[2],
+              description: '',
+            })
+          }
         } else if (result.parameters && result.parameters.length > 0 && trimmed !== '') {
-          result.parameters[result.parameters.length - 1].description += ' ' + trimmed
+          for (const parameterIndex of activeParameterIndexes) {
+            const parameter = result.parameters[parameterIndex]
+            parameter.description = `${parameter.description ?? ''} ${trimmed}`.trim()
+          }
         }
-      } else if (currentSection === 'Returns') {
+      } else if (currentSection === 'Returns' || currentSection === 'Yields') {
         // Parse returns: type
         // description
         if (!result.returns) {
@@ -295,12 +319,13 @@ export class DocstringParser {
         }
         if (trimmed !== '') {
           if (!result.returns.type) {
-            result.returns.type = trimmed
+            const namedReturn = /^([A-Za-z_]\w*)\s*:\s*(.+)$/.exec(trimmed)
+            result.returns.type = namedReturn?.[2]?.trim() ?? trimmed
           } else {
-            result.returns.description = (result.returns.description || '') + ' ' + trimmed
+            result.returns.description = `${result.returns.description ?? ''} ${trimmed}`.trim()
           }
         }
-      } else if (currentSection === 'Raises') {
+      } else if (currentSection === 'Raises' || currentSection === 'Warns') {
         if (!result.raises) {
           result.raises = []
         }
@@ -308,6 +333,10 @@ export class DocstringParser {
         const raiseMatch = /^\s*(\w+[\w.]*)\s*:\s*(.*)$/.exec(line)
         if (raiseMatch) {
           result.raises.push({ type: raiseMatch[1], description: raiseMatch[2] })
+        } else if (/^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$/.test(line)) {
+          // NumPy style normally puts the exception on an unindented line and
+          // its explanation on the following indented lines, without a colon.
+          result.raises.push({ type: trimmed, description: '' })
         } else if (result.raises.length > 0 && trimmed !== '') {
           result.raises[result.raises.length - 1].description = (
             (result.raises[result.raises.length - 1].description || '') +
@@ -364,7 +393,7 @@ export class DocstringParser {
       const line = lines[i]
       const trimmed = line.trim()
 
-      if (trimmed === 'Args:') {
+      if (trimmed === 'Args:' || trimmed === 'Arguments:' || trimmed === 'Keyword Args:') {
         currentSection = 'Args'
         continue
       } else if (trimmed === 'Returns:') {
@@ -376,19 +405,24 @@ export class DocstringParser {
       } else if (trimmed === 'Example:' || trimmed === 'Examples:') {
         currentSection = 'Examples'
         continue
+      } else if (/^[A-Z][A-Za-z ]+:$/.test(line)) {
+        // Stop collecting the previous recognized section at an unsupported
+        // top-level Google-style heading such as Attributes: or Note:.
+        currentSection = ''
+        continue
       }
 
       if (currentSection === 'Args') {
         // name (type): description
-        const match = /^\s*(\w+)\s*(\((.*)\))?\s*:\s*(.*)$/.exec(line)
+        const match = /^\s*(\*{0,2}[A-Za-z_]\w*)\s*(?:\((.*)\))?\s*:\s*(.*)$/.exec(line)
         if (match) {
           if (!result.parameters) {
             result.parameters = []
           }
           result.parameters.push({
             name: match[1],
-            type: match[3],
-            description: match[4],
+            type: match[2],
+            description: match[3],
           })
         } else if (result.parameters && result.parameters.length > 0 && trimmed !== '') {
           result.parameters[result.parameters.length - 1].description = (
@@ -467,23 +501,32 @@ export class DocstringParser {
     }
     result.summary = this.processLinks(summaryLines.join(' '))
 
+    let activeField:
+      | { kind: 'parameter'; name: string }
+      | { kind: 'returns' }
+      | { kind: 'raises'; index: number }
+      | undefined
+
     for (; i < lines.length; i++) {
       const line = lines[i]
 
       // :param name: description
       // :type name: type
-      const paramMatch = /^\s*:param\s+(\w+):\s*(.*)$/.exec(line)
+      const paramMatch = /^\s*:param(?:\s+([^: ]+))?\s+(\*{0,2}[A-Za-z_]\w*):\s*(.*)$/.exec(line)
       if (paramMatch) {
         if (!result.parameters) {
           result.parameters = []
         }
         result.parameters.push({
-          name: paramMatch[1],
-          description: paramMatch[2],
+          name: paramMatch[2],
+          type: paramMatch[1],
+          description: paramMatch[3],
         })
+        activeField = { kind: 'parameter', name: paramMatch[2] }
+        continue
       }
 
-      const typeMatch = /^\s*:type\s+(\w+):\s*(.*)$/.exec(line)
+      const typeMatch = /^\s*:type\s+(\*{0,2}[A-Za-z_]\w*):\s*(.*)$/.exec(line)
       if (typeMatch) {
         if (result.parameters) {
           const param = result.parameters.find(p => p.name === typeMatch[1])
@@ -491,6 +534,7 @@ export class DocstringParser {
             param.type = typeMatch[2]
           }
         }
+        continue
       }
 
       const returnsMatch = /^\s*:returns?:\s*(.*)$/.exec(line)
@@ -499,6 +543,8 @@ export class DocstringParser {
           result.returns = {}
         }
         result.returns.description = returnsMatch[1].trim() || undefined
+        activeField = { kind: 'returns' }
+        continue
       }
 
       const rtypeMatch = /^\s*:rtype:\s*(.*)$/.exec(line)
@@ -507,6 +553,7 @@ export class DocstringParser {
           result.returns = {}
         }
         result.returns.type = rtypeMatch[1].trim() || undefined
+        continue
       }
 
       const raisesMatch = /^\s*:raises?\s+([\w.]+):\s*(.*)$/.exec(line)
@@ -515,6 +562,26 @@ export class DocstringParser {
           result.raises = []
         }
         result.raises.push({ type: raisesMatch[1], description: raisesMatch[2] })
+        activeField = { kind: 'raises', index: result.raises.length - 1 }
+        continue
+      }
+
+      const continuation = /^\s+(.+)$/.exec(line)?.[1]?.trim()
+      if (continuation && activeField) {
+        if (activeField.kind === 'parameter') {
+          const activeName = activeField.name
+          const parameter = result.parameters?.find(p => p.name === activeName)
+          if (parameter) {
+            parameter.description = `${parameter.description ?? ''} ${continuation}`.trim()
+          }
+        } else if (activeField.kind === 'returns' && result.returns) {
+          result.returns.description = `${result.returns.description ?? ''} ${continuation}`.trim()
+        } else if (activeField.kind === 'raises' && result.raises?.[activeField.index]) {
+          const raised = result.raises[activeField.index]
+          raised.description = `${raised.description ?? ''} ${continuation}`.trim()
+        }
+      } else if (line.trim()) {
+        activeField = undefined
       }
     }
 

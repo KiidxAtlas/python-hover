@@ -651,7 +651,10 @@ export class HoverPanel {
         .join("\n")}</div></section>`;
     }
 
-    const structuredSections = getVisibleStructuredDescriptionSections(doc);
+    const structuredSections =
+      doc.kind === "module" && doc.summary?.trim()
+        ? []
+        : getVisibleStructuredDescriptionSections(doc);
     const descBody =
       structuredSections.length > 0
         ? structuredSections
@@ -659,14 +662,17 @@ export class HoverPanel {
             .filter(Boolean)
             .join("\n")
         : (() => {
-            const rawDesc = this.getDescriptionContent(doc);
+            const rawDesc =
+              doc.kind === "module" && doc.summary?.trim()
+                ? doc.summary
+                : this.getDescriptionContent(doc);
             const desc = cleanContent(rawDesc);
             return desc
               ? `<div class="structured-block kind-paragraph role-summary"><p>${m(desc)}</p></div>`
               : "";
           })();
     const descHtml = descBody
-      ? `<section class="card lead-card"><div class="section-kicker">Overview</div>${descBody}</section>`
+      ? `<section class="card lead-card"><div class="section-kicker">${doc.kind === "module" ? "What this library does" : "Overview"}</div>${descBody}</section>`
       : "";
     const parameterLensHtml = this.renderParameterLensCard(doc);
 
@@ -688,13 +694,13 @@ export class HoverPanel {
     }
     const availabilityHtml =
       availabilityNotes.length > 0
-        ? `<section class="card"><h2>Availability</h2>${availabilityNotes.join("")}</section>`
+        ? `<section class="card tone-warning"><h2>Availability</h2>${availabilityNotes.join("")}</section>`
         : "";
 
     const noteSections = getVisibleStructuredNoteSections(doc);
     const notesHtml =
       noteSections.length > 0
-        ? `<section class="card"><h2>Notes</h2>${noteSections
+        ? `<section class="card tone-note"><h2>Notes</h2>${noteSections
             .map((section) => this.renderStructuredSection(section))
             .filter(Boolean)
             .join("")}</section>`
@@ -739,7 +745,7 @@ export class HoverPanel {
       const rdesc = doc.returns.description
         ? `— ${m(doc.returns.description)}`
         : "";
-      returnsHtml = `<section class="card"><h2>Returns</h2><p>${rtype}${rdesc}</p></section>`;
+      returnsHtml = `<section class="card tone-success"><h2>Returns</h2><p>${rtype}${rdesc}</p></section>`;
     }
 
     let raisesHtml = "";
@@ -750,7 +756,7 @@ export class HoverPanel {
           return `<li><code>${e(exc.type)}</code>${edesc}</li>`;
         })
         .join("\n");
-      raisesHtml = `<section class="card"><h2>Raises</h2><ul>${items}</ul></section>`;
+      raisesHtml = `<section class="card tone-danger"><h2>Raises</h2><ul>${items}</ul></section>`;
     }
 
     const structuredExamples = getStructuredExampleSections(doc);
@@ -773,7 +779,7 @@ export class HoverPanel {
                   `<div class="example-card"><pre><code>${e(ex)}</code></pre></div>`,
               )
               .join("\n");
-      examplesHtml = `<section class="card"><h2>Examples</h2>${blocks}</section>`;
+      examplesHtml = `<section class="card tone-example"><h2>Examples</h2>${blocks}</section>`;
     }
 
     const seeAlsoHtml =
@@ -836,14 +842,18 @@ export class HoverPanel {
       <title>${e(displayTitle)}</title>
 <style>
   :root {
+    color-scheme: light dark;
     --panel-border: color-mix(in srgb, var(--vscode-panel-border) 70%, transparent);
     --panel-accent: var(--vscode-textLink-foreground);
     --panel-success: var(--vscode-testing-iconPassed, #2ea043);
     --panel-warn: var(--vscode-editorWarning-foreground, #d29922);
     --panel-info: var(--vscode-symbolIcon-functionForeground, var(--vscode-textLink-foreground));
+    --panel-danger: var(--vscode-errorForeground, #f85149);
+    --panel-note: var(--vscode-editorInfo-foreground, var(--panel-accent));
     --panel-surface: color-mix(in srgb, var(--vscode-editor-background) 95%, var(--vscode-editor-foreground) 5%);
     --panel-surface-strong: color-mix(in srgb, var(--vscode-editor-background) 92%, var(--vscode-editor-foreground) 8%);
   }
+  * { box-sizing: border-box; }
   body {
     font-family: var(--vscode-font-family);
     font-size: 13px;
@@ -856,6 +866,9 @@ export class HoverPanel {
     padding: 16px;
     display: grid;
     gap: 12px;
+  }
+  .shell, .card, .hero, td, th, p, li {
+    overflow-wrap: anywhere;
   }
   .content-grid {
     display: grid;
@@ -882,15 +895,18 @@ export class HoverPanel {
     display: none;
   }
   h1 {
-    font-size: 15px;
-    font-weight: 600;
-    line-height: 1.3;
+    font-size: 18px;
+    font-weight: 650;
+    line-height: 1.25;
+    letter-spacing: -0.01em;
     margin: 0;
   }
   h2 {
-    font-size: 11px;
-    margin: 0 0 8px;
-    color: var(--vscode-descriptionForeground);
+    font-size: 12.5px;
+    font-weight: 650;
+    line-height: 1.3;
+    margin: 0 0 9px;
+    color: var(--vscode-foreground);
   }
   h3 {
     font-size: 12px;
@@ -994,6 +1010,21 @@ export class HoverPanel {
     border-radius: 12px;
     padding: 12px;
   }
+  .card > h2::before {
+    content: '';
+    display: inline-block;
+    width: 3px;
+    height: 1em;
+    margin-right: 7px;
+    border-radius: 999px;
+    vertical-align: -0.12em;
+    background: var(--section-accent, var(--panel-accent));
+  }
+  .tone-success { --section-accent: var(--panel-success); }
+  .tone-warning { --section-accent: var(--panel-warn); }
+  .tone-danger { --section-accent: var(--panel-danger); }
+  .tone-note { --section-accent: var(--panel-note); }
+  .tone-example { --section-accent: var(--panel-success); }
   .lead-card {
     border-color: color-mix(in srgb, var(--panel-accent) 30%, var(--panel-border));
   }
@@ -1020,9 +1051,9 @@ export class HoverPanel {
   }
   .section-kicker {
     font-size: 11px;
-    color: var(--vscode-descriptionForeground);
+    color: var(--panel-accent);
     margin-bottom: 6px;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.055em;
     text-transform: uppercase;
     font-weight: 600;
   }
@@ -1031,6 +1062,7 @@ export class HoverPanel {
   }
   .structured-block.role-summary p {
     line-height: 1.55;
+    font-size: 13.25px;
   }
   .structured-block.role-note:not(.kind-note) {
     border-left: 2px solid color-mix(in srgb, var(--panel-accent) 52%, transparent);
@@ -1070,11 +1102,19 @@ export class HoverPanel {
     font-family: var(--vscode-editor-font-family, monospace);
     font-size: 0.95em;
   }
+  :not(pre) > code {
+    padding: 1px 4px;
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--vscode-textCodeBlock-background) 88%, transparent);
+  }
   p { margin: 0; }
   p + p { margin-top: 8px; }
   ul { margin: 0; padding-left: 18px; }
   li + li { margin-top: 4px; }
   table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
     border-collapse: collapse;
     width: 100%;
     border: 1px solid var(--panel-border);
@@ -1146,6 +1186,16 @@ export class HoverPanel {
     .content-grid {
       grid-template-columns: 1fr;
     }
+    .hero, .card {
+      border-radius: 9px;
+    }
+    .hero-actions > a {
+      flex: 1 1 auto;
+      justify-content: center;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { scroll-behavior: auto !important; }
   }
 </style>
 </head>

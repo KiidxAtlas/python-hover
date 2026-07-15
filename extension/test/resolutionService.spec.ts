@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
 import ResolutionService from "../src/hover/resolutionService";
 
 describe("ResolutionService", () => {
@@ -14,10 +15,10 @@ describe("ResolutionService", () => {
     };
     const res = svc.buildCacheKey(lspSymbol, true, undefined as any);
     // Ensure canonicalization doesn't accidentally prefix qualname with package
-    expect(res.cacheKey).toContain(
+    assert.ok(res.cacheKey.includes(
       "env1::pandas::pandas.core.frame::DataFrame",
-    );
-    expect(res.isLibrary).toBeTruthy();
+    ));
+    assert.equal(res.isLibrary, true);
   });
 
   it("scopes local symbols to document path when not library", () => {
@@ -30,16 +31,17 @@ describe("ResolutionService", () => {
       kind: "method",
     };
     const fakeDoc: any = {
+      version: 4,
       uri: {
         fsPath: "/workspace/project/src/my_module.py",
         toString: () => "file:///workspace/project/src/my_module.py",
       },
     };
     const res = svc.buildCacheKey(lspSymbol, false, fakeDoc);
-    expect(res.cacheKey).toContain(
-      "envX::/workspace/project/src/my_module.py::",
-    );
-    expect(res.isLibrary).toBeFalsy();
+    assert.ok(res.cacheKey.includes(
+      "envX::/workspace/project/src/my_module.py::v4::",
+    ));
+    assert.equal(res.isLibrary, false);
   });
 
   it("scopes a path-less local symbol to the document instead of colliding globally", () => {
@@ -50,13 +52,29 @@ describe("ResolutionService", () => {
     const svc = new ResolutionService("envY");
     const lspSymbol: any = { name: "helper", module: undefined, path: undefined };
     const fakeDocA: any = {
+      version: 1,
       uri: { fsPath: "/workspace/a.py", toString: () => "file:///workspace/a.py" },
     };
     const fakeDocB: any = {
+      version: 1,
       uri: { fsPath: "/workspace/b.py", toString: () => "file:///workspace/b.py" },
     };
     const resA = svc.buildCacheKey(lspSymbol, false, fakeDocA);
     const resB = svc.buildCacheKey(lspSymbol, false, fakeDocB);
-    expect(resA.cacheKey).not.toEqual(resB.cacheKey);
+    assert.notEqual(resA.cacheKey, resB.cacheKey);
+  });
+
+  it("does not reuse a local hover after an unsaved document edit", () => {
+    const svc = new ResolutionService("envZ");
+    const symbol: any = { name: "helper", module: "local", kind: "function" };
+    const document: any = {
+      version: 1,
+      uri: { fsPath: "/workspace/local.py" },
+    };
+    const beforeEdit = svc.buildCacheKey(symbol, false, document).cacheKey;
+    document.version = 2;
+    const afterEdit = svc.buildCacheKey(symbol, false, document).cacheKey;
+
+    assert.notEqual(beforeEdit, afterEdit);
   });
 });

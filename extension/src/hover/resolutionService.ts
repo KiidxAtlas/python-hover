@@ -1,5 +1,5 @@
 import { LspSymbol } from "#shared/types";
-import * as vscode from "vscode";
+import type * as vscode from "vscode";
 import { DocKeyBuilder } from "../../../shared/docKey";
 
 export class ResolutionService {
@@ -30,7 +30,7 @@ export class ResolutionService {
     const canonical = DocKeyBuilder.toCacheKey(docKey);
     const cacheKey = isLibrary
       ? `${this.envCacheId}::${canonical}`
-      : `${this.envCacheId}::${document?.uri.fsPath || "<unknown>"}::${canonical}`;
+      : `${this.envCacheId}::${document?.uri.fsPath || "<unknown>"}::v${document?.version ?? "unknown"}::${canonical}`;
     return { cacheKey, docKey, isLibrary };
   }
 }

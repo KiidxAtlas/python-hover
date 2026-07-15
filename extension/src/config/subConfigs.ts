@@ -55,6 +55,10 @@ export class CoreConfig {
     return this.config.get("cacheTTL.snippetHours", 48);
   }
 
+  get keepCacheIndefinitely(): boolean {
+    return this.config.get("cacheTTL.keepIndefinitely", false);
+  }
+
   get requestTimeout(): number {
     const raw = this.config.get("requestTimeout", 10000);
     return Math.min(Math.max(raw, 1000), 60000);
@@ -126,7 +130,7 @@ export class CoreConfig {
   }
 
   get hoverActivationDelay(): number {
-    return Math.min(Math.max(this.config.get("hoverActivationDelay", 75), 0), 2000);
+    return Math.min(Math.max(this.config.get("hoverActivationDelay", 0), 0), 2000);
   }
 }
 

@@ -403,9 +403,12 @@ export class LspClient {
   private lspQuery<T>(command: string, ...args: unknown[]): Promise<T | undefined> {
     const startedAt = Date.now()
     const TIMEOUT_SENTINEL = Symbol('lspQueryTimeout')
+    let timeout: ReturnType<typeof setTimeout> | undefined
     return Promise.race([
       vscode.commands.executeCommand<T>(command, ...args),
-      new Promise<typeof TIMEOUT_SENTINEL>(r => setTimeout(() => r(TIMEOUT_SENTINEL), LSP_TIMEOUT_MS)),
+      new Promise<typeof TIMEOUT_SENTINEL>(r => {
+        timeout = setTimeout(() => r(TIMEOUT_SENTINEL), LSP_TIMEOUT_MS)
+      }),
     ])
       .then(result => {
         if (result === TIMEOUT_SENTINEL) {
@@ -417,6 +420,11 @@ export class LspClient {
       .catch(e => {
         Logger.debug(`lspQuery: '${command}' failed after ${Date.now() - startedAt}ms: ${e instanceof Error ? e.message : String(e)}`)
         return undefined
+      })
+      .finally(() => {
+        if (timeout !== undefined) {
+          clearTimeout(timeout)
+        }
       })
   }
 

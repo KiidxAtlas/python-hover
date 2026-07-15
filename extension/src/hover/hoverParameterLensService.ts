@@ -137,6 +137,13 @@ export class HoverParameterLensService {
     document: vscode.TextDocument,
     position: vscode.Position,
   ): string {
+    const word = document.getWordRangeAtPosition(
+      position,
+      /[A-Za-z_][A-Za-z0-9_]*/,
+    );
+    if (word) {
+      return `${document.uri.toString()}:${document.version}:${word.start.line}:${word.start.character}:${word.end.character}`;
+    }
     return `${document.uri.toString()}:${document.version}:${position.line}:${position.character}`;
   }
 

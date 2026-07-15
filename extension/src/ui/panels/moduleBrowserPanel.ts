@@ -990,14 +990,14 @@ export class ModuleBrowserPanel {
       <div class="toolbar-meta">${initialSidebarMeta}</div>
     </div>
     <div class="toolbar-row">
-      <input id="query" class="search" type="search" data-focus-id="query" placeholder="Search dotted names like DataFrame.groupby or os.path.join">
-      <select id="package-filter" class="select" data-focus-id="package-filter">${initialPackageOptions}</select>
-      <select id="sort-filter" class="select" data-focus-id="sort-filter">
+      <input id="query" class="search" type="search" data-focus-id="query" aria-label="Search module symbols" placeholder="Search dotted names like DataFrame.groupby or os.path.join">
+      <select id="package-filter" class="select" data-focus-id="package-filter" aria-label="Filter by package">${initialPackageOptions}</select>
+      <select id="sort-filter" class="select" data-focus-id="sort-filter" aria-label="Sort symbols">
         <option value="name">Sort: name</option>
         <option value="kind">Sort: kind</option>
         <option value="package">Sort: package</option>
       </select>
-      <select id="view-filter" class="select" data-focus-id="view-filter">
+      <select id="view-filter" class="select" data-focus-id="view-filter" aria-label="Choose symbol view">
         <option value="hierarchy">View: hierarchy</option>
         <option value="flat">View: flat</option>
       </select>
@@ -1008,9 +1008,9 @@ export class ModuleBrowserPanel {
       <label class="check"><input id="toggle-documented" data-focus-id="toggle-documented" type="checkbox">Documented only</label>
       <label class="check"><input id="toggle-auto" data-focus-id="toggle-auto" type="checkbox">Auto previews</label>
       <label class="check"><input id="toggle-hints" data-focus-id="toggle-hints" type="checkbox">Hierarchy hints</label>
-      <button class="ghost" data-manual-preview="true" data-focus-id="manual-preview">Load previews</button>
-      <button class="ghost" data-run-command="python-hover.searchDocs" data-focus-id="search-docs">Search docs</button>
-      <button class="ghost" data-open-settings="python-hover.ui.moduleBrowser" data-focus-id="module-settings">Settings</button>
+      <button type="button" class="ghost" data-manual-preview="true" data-focus-id="manual-preview">Load previews</button>
+      <button type="button" class="ghost" data-run-command="python-hover.searchDocs" data-focus-id="search-docs">Search docs</button>
+      <button type="button" class="ghost" data-open-settings="python-hover.ui.moduleBrowser" data-focus-id="module-settings">Settings</button>
     </div>
   </header>
 

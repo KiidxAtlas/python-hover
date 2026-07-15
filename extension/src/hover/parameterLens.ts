@@ -189,14 +189,14 @@ export function extractActiveCallExpression(
   document: vscode.TextDocument,
   position: vscode.Position,
 ): string | null {
-  const line = document.lineAt(position.line).text;
-  const openParenIndex = findEnclosingCallOpenParen(line, position.character);
+  const { text, cursor: contextCursor } = getCallContext(document, position);
+  const openParenIndex = findEnclosingCallOpenParen(text, contextCursor);
   if (openParenIndex === -1) {
     return null;
   }
 
   let cursor = openParenIndex - 1;
-  while (cursor >= 0 && /\s/.test(line[cursor])) {
+  while (cursor >= 0 && /\s/.test(text[cursor])) {
     cursor--;
   }
   if (cursor < 0) {
@@ -204,39 +204,39 @@ export function extractActiveCallExpression(
   }
 
   const end = cursor + 1;
-  while (cursor >= 0 && /[A-Za-z0-9_]/.test(line[cursor])) {
+  while (cursor >= 0 && /[A-Za-z0-9_]/.test(text[cursor])) {
     cursor--;
   }
   const start = cursor + 1;
-  if (start >= end || !/^[A-Za-z_]/.test(line[start] ?? "")) {
+  if (start >= end || !/^[A-Za-z_]/.test(text[start] ?? "")) {
     return null;
   }
 
-  let expression = line.slice(start, end);
+  let expression = text.slice(start, end);
   let scan = start - 1;
   while (scan >= 0) {
-    while (scan >= 0 && /\s/.test(line[scan])) {
+    while (scan >= 0 && /\s/.test(text[scan])) {
       scan--;
     }
-    if (scan < 0 || line[scan] !== ".") {
+    if (scan < 0 || text[scan] !== ".") {
       break;
     }
     scan--;
-    while (scan >= 0 && /\s/.test(line[scan])) {
+    while (scan >= 0 && /\s/.test(text[scan])) {
       scan--;
     }
-    if (scan < 0 || !/[A-Za-z0-9_]/.test(line[scan])) {
+    if (scan < 0 || !/[A-Za-z0-9_]/.test(text[scan])) {
       break;
     }
     const segmentEnd = scan + 1;
-    while (scan >= 0 && /[A-Za-z0-9_]/.test(line[scan])) {
+    while (scan >= 0 && /[A-Za-z0-9_]/.test(text[scan])) {
       scan--;
     }
     const segmentStart = scan + 1;
-    if (!/^[A-Za-z_]/.test(line[segmentStart] ?? "")) {
+    if (!/^[A-Za-z_]/.test(text[segmentStart] ?? "")) {
       break;
     }
-    expression = `${line.slice(segmentStart, segmentEnd)}.${expression}`;
+    expression = `${text.slice(segmentStart, segmentEnd)}.${expression}`;
   }
 
   return expression || null;
@@ -310,7 +310,7 @@ function parseParameterInfo(
   }
 
   return {
-    name: parameterName,
+    name: `${variadicPrefix}${parameterName}`,
     type,
     default: defaultValue,
     description,
@@ -326,17 +326,34 @@ function extractActiveArgumentExpression(
   position: vscode.Position,
   parameterIndex: number,
 ): string | undefined {
-  const line = document.lineAt(position.line).text;
-  const openParenIndex = findEnclosingCallOpenParen(line, position.character);
+  const { text, cursor } = getCallContext(document, position);
+  const openParenIndex = findEnclosingCallOpenParen(text, cursor);
   if (openParenIndex === -1) {
     return undefined;
   }
 
-  const cursor = Math.max(openParenIndex + 1, position.character);
-  const slice = line.slice(openParenIndex + 1, cursor);
+  const safeCursor = Math.max(openParenIndex + 1, cursor);
+  const slice = text.slice(openParenIndex + 1, safeCursor);
   const args = splitTopLevelCommaArgs(slice);
   const value = args[Math.min(parameterIndex, args.length - 1)]?.trim();
   return value || undefined;
+}
+
+/** Return a bounded multiline window ending at the cursor. Calls are commonly
+ * formatted across several lines; line-only scanning loses the callable and active
+ * argument in precisely the code where Parameter Lens is most valuable. */
+function getCallContext(
+  document: vscode.TextDocument,
+  position: vscode.Position,
+): { text: string; cursor: number } {
+  const startLine = Math.max(0, position.line - 30);
+  const lines: string[] = [];
+  for (let line = startLine; line <= position.line; line++) {
+    const value = document.lineAt(line).text;
+    lines.push(line === position.line ? value.slice(0, position.character) : value);
+  }
+  const text = lines.join("\n").slice(-12_000);
+  return { text, cursor: text.length };
 }
 
 function splitTopLevelCommaArgs(value: string): string[] {

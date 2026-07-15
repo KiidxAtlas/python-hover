@@ -128,6 +128,8 @@ export class InventoryFetcher {
   private loadingPromises: Map<string, Promise<void>> = new Map();
   /** Log each failed package at most once per session (avoid hover-stampedes). */
   private failedInventoryLog = new Set<string>();
+  /** Packages for which an online inventory lookup actually ran and failed. */
+  private failedDiscoveries = new Set<string>();
   /** Cache resolved inventory lookups so fallback strategy scans are not repeated. */
   private inventoryLookupCache = new Map<string, HoverDoc | null>();
   /** Cache query-derived symbol lists until inventories change. */
@@ -301,6 +303,22 @@ export class InventoryFetcher {
     return isStdlib || packageName === "builtins" || packageName === "python"
       ? InventoryFetcher.STDLIB_INVENTORY_CACHE
       : packageName;
+  }
+
+  /**
+   * Whether online discovery has already been *attempted* for `packageName` and came
+   * back with nothing — as opposed to simply never having been tried yet. Package-
+   * agnostic by design (no hardcoded allowlist): any package whose docs aren't
+   * Sphinx-discoverable (Doxygen-only sites, no hosted docs, unusual hosting, …) ends
+   * up here identically, since `loadInventory` caches an empty result for all of them.
+   */
+  hasFailedDiscovery(packageName: string): boolean {
+    const inventoryCacheName = this.getInventoryCacheName(packageName, false);
+    return (
+      this.failedDiscoveries.has(packageName) ||
+      this.failedDiscoveries.has(inventoryCacheName) ||
+      this.diskCache.get(`inv-fail:${inventoryCacheName}`) !== null
+    );
   }
 
   private isLikelyPythonPackageName(packageName: string | undefined): boolean {
@@ -544,15 +562,25 @@ export class InventoryFetcher {
       }
     }
 
-    // 5. ReadTheDocs Fallback
+    // 5. ReadTheDocs Fallback — this is an unverified guess (readthedocs.io/en/<pkg>
+    // isn't a real convention any package is guaranteed to follow), so confirm it
+    // actually has an objects.inv before committing to it. Packages with no
+    // discoverable Sphinx docs anywhere (Doxygen-only sites, no hosted docs, unusual
+    // hosting, …) all end up here identically and fail this same quick check —
+    // there's no need to special-case any of them by name.
     const versionSegment = version ? version : "latest";
-    return `https://${packageName}.readthedocs.io/en/${versionSegment}`;
+    const guessedBase = `https://${packageName}.readthedocs.io/en/${versionSegment}`;
+    const verifiedUrl = await this.checkUrlExists(`${guessedBase}/objects.inv`);
+    if (!verifiedUrl) {
+      throw new Error(`No discoverable documentation for ${packageName}`);
+    }
+    return verifiedUrl.replace(/\/objects\.inv$/, "");
   }
 
   /** Returns the resolved final URL (after following redirects) if it exists, else null. */
   private checkUrlExists(url: string): Promise<string | null> {
     return httpHeadExists(this.normalizeToHttps(url), {
-      timeoutMs: 5000,
+      timeoutMs: 3000,
       headers: DOCS_REQUEST_HEADERS,
       maxRedirects: 5,
       maxAttempts: 1,
@@ -709,7 +737,13 @@ export class InventoryFetcher {
       packageName,
       isStdlib,
     );
-    const cacheKey = `inventory:${inventoryCacheName}:${version || "latest"}`;
+    // Stdlib docs genuinely differ per Python version (docs.python.org/3.10 vs 3.12),
+    // so — now that the disk cache root is shared across interpreters/workspaces
+    // rather than segmented by interpreter path — the stdlib entry must fold the
+    // Python version into its own cache key, or switching interpreters would silently
+    // keep serving whichever version's inventory was fetched first.
+    const versionSegment = version || (isStdlib ? this.pythonVersion : "latest");
+    const cacheKey = `inventory:${inventoryCacheName}:${versionSegment}`;
 
     // 1. Try Disk Cache
     const cached = this.diskCache.get(cacheKey);
@@ -783,6 +817,8 @@ export class InventoryFetcher {
     const negKey = `inv-fail:${inventoryCacheName}`;
     const negCached = this.diskCache.get(negKey);
     if (negCached) {
+      this.failedDiscoveries.add(inventoryCacheName);
+      this.failedDiscoveries.add(packageName);
       const empty = new Map<string, HoverDoc>();
       this.cache.set(inventoryCacheName, empty);
       if (packageName !== inventoryCacheName) {
@@ -804,15 +840,21 @@ export class InventoryFetcher {
       return;
     }
 
-    const baseUrl = await this.resolveBaseUrl(packageName, version, isStdlib);
-    const inventoryUrl = this.buildInventoryUrl(packageName, baseUrl);
+    // `inventoryUrl` starts empty so the catch block below can safely reference it
+    // (in its log message and canonical-URL check) even when resolveBaseUrl itself
+    // is what threw, before any URL was ever computed.
+    let inventoryUrl = "";
 
     try {
+      const baseUrl = await this.resolveBaseUrl(packageName, version, isStdlib);
+      inventoryUrl = this.buildInventoryUrl(packageName, baseUrl);
       const buffer = await this.fetchBuffer(inventoryUrl);
       const docsProvider = await this.resolveDocsProvider(baseUrl);
       const inventory = this.sanitizeInventory(
         this.parser.parse(buffer, baseUrl, docsProvider),
       );
+      this.failedDiscoveries.delete(inventoryCacheName);
+      this.failedDiscoveries.delete(packageName);
       this.cache.set(inventoryCacheName, inventory);
       if (packageName !== inventoryCacheName) {
         this.cache.set(packageName, inventory);
@@ -860,6 +902,8 @@ export class InventoryFetcher {
           const inventory = this.sanitizeInventory(
             this.parser.parse(buffer, fallbackBase, docsProvider),
           );
+          this.failedDiscoveries.delete(inventoryCacheName);
+          this.failedDiscoveries.delete(packageName);
           this.cache.set(inventoryCacheName, inventory);
           if (packageName !== inventoryCacheName) {
             this.cache.set(packageName, inventory);
@@ -886,6 +930,8 @@ export class InventoryFetcher {
         this.cache.set(packageName, empty);
       }
       this.invalidateDerivedCaches();
+      this.failedDiscoveries.add(inventoryCacheName);
+      this.failedDiscoveries.add(packageName);
       this.diskCache.set(negKey, Date.now().toString());
     }
   }
@@ -929,7 +975,11 @@ export class InventoryFetcher {
    * Returns up to `limit` notable export names from a loaded inventory.
    * Prefers short (top-level), public (no underscore) names, classes first.
    */
-  getModuleExports(packageName: string, limit = 16): string[] {
+  getModuleExports(
+    packageName: string,
+    limit = 16,
+    moduleName = packageName,
+  ): string[] {
     const inventory = this.cache.get(packageName);
     if (!inventory) {
       return [];
@@ -940,7 +990,27 @@ export class InventoryFetcher {
       [];
 
     for (const [name, doc] of inventory) {
-      const parts = name.split(".");
+      const normalizedName = name.replace(/^builtins\./, '');
+      const modulePrefix = `${moduleName}.`;
+      if (
+        normalizedName !== moduleName &&
+        !normalizedName.startsWith(modulePrefix)
+      ) {
+        continue;
+      }
+      if (normalizedName === moduleName) {
+        continue;
+      }
+      const relativeName = normalizedName.startsWith(modulePrefix)
+        ? normalizedName.slice(modulePrefix.length)
+        : normalizedName;
+      const parts = relativeName.split(".");
+      // "Key exports" means names available directly from the module. Nested
+      // methods and exception attributes remain searchable in the browser but
+      // should not fill this concise preview.
+      if (parts.length !== 1) {
+        continue;
+      }
       const label = parts[parts.length - 1];
       if (!label || label.startsWith("_")) {
         continue;
@@ -967,8 +1037,24 @@ export class InventoryFetcher {
   }
 
   /** Total number of indexed symbols for a loaded package. */
-  getPackageExportCount(packageName: string): number {
-    return this.cache.get(packageName)?.size ?? 0;
+  getPackageExportCount(
+    packageName: string,
+    moduleName = packageName,
+  ): number {
+    const inventory = this.cache.get(packageName);
+    if (!inventory) return 0;
+    const modulePrefix = `${moduleName}.`;
+    let count = 0;
+    for (const name of inventory.keys()) {
+      const normalizedName = name.replace(/^builtins\./, '');
+      if (
+        normalizedName === moduleName ||
+        normalizedName.startsWith(modulePrefix)
+      ) {
+        count += 1;
+      }
+    }
+    return count;
   }
 
   searchSymbols(query: string): IndexedSymbolSummary[] {

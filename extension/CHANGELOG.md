@@ -4,6 +4,47 @@ All notable changes to Python Hover will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.7.10] - 2026-07-15
+
+- Added useful library and module overviews that prefer indexed documentation, PyPI project summaries, and installed module docstrings so import hovers explain what a library actually does.
+- Fixed dotted modules such as `numpy.linalg` querying nonexistent PyPI projects instead of their root distribution, and stopped caching text-empty module results while richer documentation is still loading.
+- Improved hover responsiveness by resolving superseded debounce requests correctly, reducing default delays, clearing completed LSP timers, and reusing parameter-lens work within the same identifier.
+- Expanded NumPy, Google, and reStructuredText extraction for variadic parameters, typed fields, named returns, multiline exceptions, CRLF inventories, and structured documentation merging.
+- Fixed stale local hovers after edits and saves with document-versioned cache identities and more precise invalidation.
+- Improved native hover hierarchy, callouts, signatures, active-parameter presentation, table defaults, and low-confidence recovery actions.
+- Refined pinned hover typography with theme-aware semantic accents for examples, notes, availability, return values, and exceptions.
+- Improved Studio, module browser, docs, debug, and pinned-panel responsiveness for narrow editor columns, long content, keyboard focus, reduced motion, and accessible form controls.
+- Made empty History, Saved Docs, and Recent Packages views actionable instead of leaving users at passive dead ends.
+- Improved search hydration, module-browser progress and recovery states, status-bar clarity, first-run behavior, and cache controls.
+- Hardened scraped HTML and Sphinx inventory handling while preserving comparisons, generic type expressions, relative links, and absolute documentation URLs.
+- Expanded automated regression coverage for extraction, context detection, structured merging, cache identity, and hover resolution edge cases.
+- Updated Marketplace positioning and search metadata to describe Python docs, IntelliSense, parameter help, examples, and library summaries more clearly.
+
+## [0.7.9] - 2026-07-15
+
+- Verified guessed Read the Docs inventory URLs before treating them as valid documentation roots, avoiding dead module-browser links and misleading indexes.
+- Shared documentation caches across workspaces while keeping version-specific Python standard-library inventories isolated.
+- Added `python-hover.cacheTTL.keepIndefinitely` for users who prefer manually managed, non-expiring documentation and session caches.
+- Updated cached-hover recency bookkeeping so Pin, Debug, and Inspector actions follow the hover currently on screen.
+- Fixed rapid pointer movement leaving superseded hover promises unresolved or allowing an older cancellation event to cancel the newest hover.
+- Reduced the common hover coalescing delay from 150 ms to 40 ms and made the additional activation delay opt-in instead of adding 75 ms to every lookup.
+- Improved NumPy, Google, and reStructuredText docstring extraction for variadic arguments, typed fields, named returns, multiline exceptions, CRLF input, and section boundaries.
+- Preserved multiline reStructuredText field descriptions and split grouped NumPy parameters into individual, documented rows.
+- Merged runtime and structured documentation fields instead of discarding rich Sphinx parameter, return, or exception details when partial runtime data exists.
+- Restored parameter default values in rendered tables and skipped signature-help work when Parameter Lens is disabled.
+- Improved multiline-call Parameter Lens detection, retained `*args`/`**kwargs` labels, and reused results across cursor positions within the same identifier.
+- Hardened HTML cleaning so comparison expressions and generic placeholders survive, and accepted CRLF/relative/absolute Sphinx inventory links correctly.
+- Added prefilled Search actions to low-confidence hovers so failed resolution has an immediate, relevant recovery path.
+- Prevented prose and scraper ellipses from becoming fake parameter rows, and removed duplicated structured parameter blocks from the Overview section.
+- Narrowed contextual example detection to nearby statements so distant async/comprehension code no longer adds misleading hover tags or reorders examples.
+- Versioned local hover cache entries and cleared document-scoped rendered/in-flight/negative caches so unsaved edits and saves cannot reuse stale signatures or docstrings.
+- Cleared completed LSP timeout timers immediately and removed an unused duplicate version cache to reduce background timer and memory churn.
+- Made search hydrate cached indexes visibly and refresh results automatically instead of showing a stale zero-result state.
+- Added progress and actionable recovery paths to module browsing, and removed the unsolicited first-run corpus-build popup.
+- Simplified the idle status bar and clarified toggle/action labels in the PyHover Command Center.
+- Preserved useful LSP module resolution when hovering string literals such as `"__main__"`.
+- Improved Marketplace search metadata and made unit tests part of the standard verification workflow.
+
 ## [0.7.8] - 2026-07-10
 
 A major accuracy and layout pass across hover rendering and documentation extraction, plus several new hover actions.

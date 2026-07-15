@@ -50,6 +50,7 @@ export class Config {
   get maxSnippetLines(): number { return this.core.maxSnippetLines; }
   get inventoryCacheDays(): number { return this.core.inventoryCacheDays; }
   get snippetCacheHours(): number { return this.core.snippetCacheHours; }
+  get keepCacheIndefinitely(): boolean { return this.core.keepCacheIndefinitely; }
   get requestTimeout(): number { return this.core.requestTimeout; }
   get runtimeHelperEnabled(): boolean { return this.core.runtimeHelperEnabled; }
   get docScrapingEnabled(): boolean { return this.core.docScrapingEnabled; }

@@ -44,7 +44,11 @@ export class HoverHistoryView extends BaseTreeView<HoverHistoryEntry> {
       kind: 'placeholder',
       id: 'history-empty',
       label: 'No hover history yet',
-      description: 'Hover Python symbols to populate recent history.',
+      description: 'Search docs or hover a Python symbol to get started.',
+      command: {
+        command: 'python-hover.searchDocs',
+        title: 'Search Python Docs',
+      },
     }
   }
 

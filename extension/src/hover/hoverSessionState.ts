@@ -11,6 +11,9 @@ export class HoverSessionState {
   private readonly sidebarDidChangeEmitter = new vscode.EventEmitter<void>()
   readonly onDidChangeSidebarState = this.sidebarDidChangeEmitter.event
 
+  /** @param keepIndefinitely When true, skip eviction — the user opted into unbounded session caches. */
+  constructor(private readonly keepIndefinitely: () => boolean = () => false) {}
+
   getLastDoc(): HoverDoc | null {
     return this.lastDoc
   }
@@ -24,6 +27,36 @@ export class HoverSessionState {
 
   getExactDocByCommandToken(token: string): HoverDoc | null {
     return this.commandDocCache.get(token) ?? null
+  }
+
+  /**
+   * Re-affirm a previously-cached doc as "currently displayed" — call this whenever a
+   * hover is served from `HoverProvider`'s own `hoverCache` (rendered-markdown cache)
+   * rather than freshly resolved. Two things this fixes:
+   *  1. Recency: `hoverCache` and `commandDocCache` are separate maps, each evicted
+   *     independently by insertion order. Without this touch, a symbol hovered once
+   *     early in a session and then repeatedly re-hovered from cache would still see
+   *     its `commandDocCache` entry age out (since only fresh resolutions used to
+   *     touch it), silently breaking that hover's embedded Debug/Pin token.
+   *  2. Staleness: `lastDoc` previously only got set by fresh resolutions, so it could
+   *     point at whatever the last cache MISS happened to resolve — not necessarily
+   *     the hover the user is currently looking at — making the Debug button's
+   *     "?? this.lastDoc" fallback show the wrong symbol when a token lookup missed.
+   */
+  touchCommandDoc(token: string): HoverDoc | null {
+    const doc = this.commandDocCache.get(token)
+    if (!doc) {
+      return null
+    }
+    // Map re-insertion moves the key to the end — i.e. "most recently used".
+    this.commandDocCache.delete(token)
+    this.commandDocCache.set(token, doc)
+    const changed = this.lastDoc !== doc
+    this.lastDoc = doc
+    if (changed) {
+      this.sidebarDidChangeEmitter.fire()
+    }
+    return doc
   }
 
   getHoverHistory(): HoverHistoryEntry[] {
@@ -84,7 +117,7 @@ export class HoverSessionState {
   }
 
   private evictIfNeeded<K, V>(map: Map<K, V>): void {
-    if (map.size <= HoverSessionState.MAX_COMMAND_DOCS) {
+    if (this.keepIndefinitely() || map.size <= HoverSessionState.MAX_COMMAND_DOCS) {
       return
     }
 

@@ -41,10 +41,15 @@ export class HoverDocBuilder {
               this.extractSignatureFromContent(docs?.content, title),
           );
     const summary = this.buildSummary(parsedDocstring, docs, symbolInfo);
-    const parameters =
-      parsedDocstring.parameters && parsedDocstring.parameters.length > 0
-        ? parsedDocstring.parameters
-        : structuredParameters;
+    const parameters = this.mergeParameters(
+      parsedDocstring.parameters,
+      structuredParameters,
+    );
+    const returns =
+      parsedDocstring.returns || structuredReturns
+        ? { ...structuredReturns, ...parsedDocstring.returns }
+        : undefined;
+    const raises = this.mergeRaises(parsedDocstring.raises, structuredRaises);
     const badges = this.buildBadges(symbolInfo);
     const examples = this.buildExamples(parsedDocstring, docs);
     const notes = this.buildNotes(parsedDocstring, docs);
@@ -67,11 +72,8 @@ export class HoverDocBuilder {
       signature: signature,
       summary: summary,
       parameters: parameters,
-      returns: parsedDocstring.returns || structuredReturns,
-      raises:
-        parsedDocstring.raises && parsedDocstring.raises.length > 0
-          ? parsedDocstring.raises
-          : structuredRaises,
+      returns,
+      raises,
       notes: notes,
       examples: examples,
       url: docs?.url,
@@ -95,6 +97,64 @@ export class HoverDocBuilder {
       license: docs?.license,
       requiresPython: docs?.requiresPython,
     };
+  }
+
+  /** Merge runtime/docstring fields with scraped structured docs. Runtime order and
+   *  type/default information stay authoritative, while structured descriptions and
+   *  documentation-only parameters fill the gaps. */
+  private mergeParameters(
+    parsed?: HoverDoc["parameters"],
+    structured?: HoverDoc["parameters"],
+  ): HoverDoc["parameters"] {
+    if (!parsed?.length) {
+      return structured;
+    }
+    if (!structured?.length) {
+      return parsed;
+    }
+
+    const structuredByName = new Map(
+      structured.map((parameter) => [parameter.name.replace(/^\*+/, ""), parameter]),
+    );
+    const merged = parsed.map((parameter) => {
+      const key = parameter.name.replace(/^\*+/, "");
+      const documented = structuredByName.get(key);
+      structuredByName.delete(key);
+      return documented
+        ? {
+            ...documented,
+            ...parameter,
+            description: parameter.description?.trim() || documented.description,
+          }
+        : parameter;
+    });
+
+    return [...merged, ...structured.filter((parameter) =>
+      structuredByName.has(parameter.name.replace(/^\*+/, "")),
+    )];
+  }
+
+  private mergeRaises(
+    parsed?: HoverDoc["raises"],
+    structured?: HoverDoc["raises"],
+  ): HoverDoc["raises"] {
+    if (!parsed?.length) {
+      return structured;
+    }
+    if (!structured?.length) {
+      return parsed;
+    }
+
+    const merged = new Map(structured.map((item) => [item.type, item]));
+    for (const item of parsed) {
+      const documented = merged.get(item.type);
+      merged.set(item.type, {
+        ...documented,
+        ...item,
+        description: item.description?.trim() || documented?.description,
+      });
+    }
+    return [...merged.values()];
   }
 
   private buildTitle(symbolInfo: SymbolInfo, signatureHint?: string): string {
@@ -840,6 +900,16 @@ export class HoverDocBuilder {
   ): NonNullable<HoverDoc["parameters"]>[number] | undefined {
     const parsed = this.parseStructuredTypedEntry(content);
     if (!parsed) {
+      return undefined;
+    }
+
+    // Parameter declarations have identifier-like labels. Prose paragraphs and
+    // scraper truncation markers can remain inside a Parameters section, but must
+    // never become synthetic table rows.
+    if (
+      !/^[A-Za-z_][\w.-]*(?:\s*,\s*[A-Za-z_][\w.-]*)*$/.test(parsed.label) ||
+      parsed.label === "…"
+    ) {
       return undefined;
     }
 

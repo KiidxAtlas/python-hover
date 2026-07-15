@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
 
 describe("hover logic - baseline", () => {
   it("sanity check", () => {
-    expect(1 + 1).toBe(2);
+    assert.equal(1 + 1, 2);
   });
 });

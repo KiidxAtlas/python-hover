@@ -52,7 +52,11 @@ export class RecentPackagesView extends BaseTreeView<RecentPackageEntry> {
       kind: 'placeholder',
       id: 'recent-packages-empty',
       label: 'No recent packages yet',
-      description: 'Browse a package or open indexed docs to pin it here.',
+      description: 'Browse a package to populate this list.',
+      command: {
+        command: 'python-hover.browseModule',
+        title: 'Browse Python Module',
+      },
     }
   }
 }

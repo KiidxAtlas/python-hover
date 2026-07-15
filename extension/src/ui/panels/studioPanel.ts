@@ -1115,9 +1115,33 @@ export class StudioPanel {
     }
 
     @media (max-width: 760px) {
+        :root { --topbar-h: auto; }
+        .topbar {
+            height: auto;
+            min-height: 52px;
+            flex-wrap: wrap;
+            padding-top: 8px;
+            padding-bottom: 8px;
+        }
+        .topbar-title { flex: 1 1 auto; }
+        .search-wrap { flex: 1 1 100%; order: 3; }
+        .topbar-actions {
+            flex: 1 1 100%;
+            flex-wrap: wrap;
+        }
+        .topbar-actions .button { flex: 1 1 130px; }
         .layout { grid-template-columns: 1fr; }
         .sidebar { display: none; }
         .search-wrap { max-width: none; }
+        .content { padding: 10px; }
+        .section-body { grid-template-columns: 1fr; }
+        .row-head { align-items: flex-start; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after {
+            scroll-behavior: auto !important;
+            transition-duration: 0.01ms !important;
+        }
     }
 </style>
 </head>

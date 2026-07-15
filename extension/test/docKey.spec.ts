@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
 import { DocKeyBuilder } from "../../shared/docKey";
 
 describe("DocKeyBuilder", () => {
@@ -12,6 +13,6 @@ describe("DocKeyBuilder", () => {
     } as any;
     const dk = DocKeyBuilder.fromSymbol(symbol);
     const key = DocKeyBuilder.toCacheKey(dk);
-    expect(key).toBe("pandas::pandas.core.frame::DataFrame");
+    assert.equal(key, "pandas::pandas.core.frame::DataFrame");
   });
 });

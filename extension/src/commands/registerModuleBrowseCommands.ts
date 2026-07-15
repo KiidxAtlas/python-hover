@@ -93,14 +93,30 @@ export function registerModuleBrowseCommands(
           moduleName?: string
         }
 
-        const packages = await getBrowseablePackages()
+        const packages = await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Window,
+            title: 'PyHover: Preparing module index…',
+          },
+          getBrowseablePackages,
+        )
 
         if (packages.length === 0) {
-          vscode.window.showInformationMessage(
-            deps.configOnlineDiscovery()
-              ? 'No indexed packages are available yet. PyHover could not seed its starter indexes. Hover a library symbol once or build the corpus first.'
-              : 'No indexed packages are available yet. Online discovery is off, so PyHover needs cached inventories or a built corpus before Browse Modules can populate.',
+          const online = deps.configOnlineDiscovery()
+          const action = await vscode.window.showInformationMessage(
+            online
+              ? 'PyHover could not prepare a module index. You can still search docs or inspect resolver logs.'
+              : 'Browse Modules needs cached indexes. Enable online discovery to fetch them, or search the docs already available.',
+            online ? 'Search Docs' : 'Enable Online Discovery',
+            'Show Logs',
           )
+          if (action === 'Search Docs') {
+            await vscode.commands.executeCommand('python-hover.searchDocs')
+          } else if (action === 'Enable Online Discovery') {
+            await vscode.commands.executeCommand('python-hover.toggleOnlineDiscovery')
+          } else if (action === 'Show Logs') {
+            await vscode.commands.executeCommand('python-hover.showLogs')
+          }
           return
         }
 
@@ -204,13 +220,26 @@ export function registerModuleBrowseCommands(
         await deps.hoverProvider.hydrateCachedInventories()
         moduleSymbols = deps.hoverProvider.getModuleSymbols(targetModule)
         if (moduleSymbols.length > 0) {
+          await deps.rememberRecentPackage(targetModule)
           deps.moduleBrowserPanel.show(targetModule, moduleSymbols, deps.buildModuleBrowserSettings())
           return
         }
 
-        vscode.window.showInformationMessage(
-          `No indexed symbols found for "${targetModule}". Hover over a symbol from this package once to cache its inventory.`,
+        const failedDiscovery = deps.hoverProvider.hasFailedDiscovery(
+          targetModule.split('.')[0] || targetModule,
         )
+        const action = await vscode.window.showInformationMessage(
+          failedDiscovery
+            ? `No browsable documentation index was found for "${targetModule}". Individual symbol hovers may still work from runtime docstrings.`
+            : `No indexed symbols are available for "${targetModule}" yet.`,
+          'Search Docs',
+          'Show Logs',
+        )
+        if (action === 'Search Docs') {
+          await vscode.commands.executeCommand('python-hover.searchDocs', targetModule)
+        } else if (action === 'Show Logs') {
+          await vscode.commands.executeCommand('python-hover.showLogs')
+        }
         return
       }
 

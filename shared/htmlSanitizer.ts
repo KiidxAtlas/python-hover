@@ -33,22 +33,44 @@ export function stripDangerousTagBlocks(input: string, tagNames: string[]): stri
 }
 
 export function stripHtmlTags(input: string): string {
+  const htmlTags = new Set([
+    'a', 'abbr', 'article', 'aside', 'b', 'blockquote', 'body', 'br', 'button',
+    'code', 'dd', 'details', 'div', 'dl', 'dt', 'em', 'figcaption', 'figure',
+    'footer', 'form', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'head', 'header',
+    'hr', 'html', 'i', 'iframe', 'img', 'input', 'kbd', 'label', 'li', 'link',
+    'main', 'meta', 'nav', 'ol', 'option', 'p', 'pre', 's', 'script', 'section',
+    'select', 'small', 'span', 'strong', 'style', 'sub', 'summary', 'sup',
+    'table', 'tbody', 'td', 'textarea', 'tfoot', 'th', 'thead', 'tr', 'u', 'ul',
+    'var', 'video', 'class',
+  ])
   let out = ''
-  let inTag = false
+  for (let index = 0; index < input.length; index++) {
+    if (input[index] !== '<') {
+      out += input[index]
+      continue
+    }
 
-  for (let i = 0; i < input.length; i++) {
-    const ch = input[i]
-    if (ch === '<') {
-      inTag = true
+    const close = input.indexOf('>', index + 1)
+    if (close === -1) {
+      out += input.slice(index)
+      break
+    }
+
+    const candidate = input.slice(index, close + 1)
+    const tagName = /^<\/?\s*([A-Za-z][\w-]*)/.exec(candidate)?.[1]?.toLowerCase()
+    // Only consume syntactically tag-like spans. A bare comparison such as
+    // `x < y and z > 0` is documentation text, not markup.
+    if (
+      (!!tagName && htmlTags.has(tagName) && /^<\/?[A-Za-z][^<>]*>$/.test(candidate)) ||
+      /^<![A-Za-z][^<>]*>$/.test(candidate) ||
+      /^<\?[^<>]*\?>$/.test(candidate) ||
+      /^<!--[\s\S]*-->$/.test(candidate)
+    ) {
+      index = close
       continue
     }
-    if (ch === '>' && inTag) {
-      inTag = false
-      continue
-    }
-    if (!inTag) {
-      out += ch
-    }
+
+    out += '<'
   }
 
   return out

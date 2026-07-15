@@ -27,15 +27,22 @@ export class InventoryParser {
 
     // 1. Split header and compressed body
     // The header ends with a line saying "The remainder of this file is compressed using zlib."
-    const headerEndMarker = 'The remainder of this file is compressed using zlib.\n'
-    const headerEndIndex = buffer.indexOf(headerEndMarker)
+    const headerMarkerText = 'The remainder of this file is compressed using zlib.'
+    const headerEndIndex = buffer.indexOf(headerMarkerText)
 
     if (headerEndIndex === -1) {
       getEngineLogger().log('Invalid objects.inv format: Header marker not found')
       return inventory
     }
 
-    const startOfCompressed = headerEndIndex + headerEndMarker.length
+    let startOfCompressed = headerEndIndex + headerMarkerText.length
+    // Accept both LF and CRLF inventories and start exactly after the marker line.
+    if (buffer[startOfCompressed] === 13) {
+      startOfCompressed++
+    }
+    if (buffer[startOfCompressed] === 10) {
+      startOfCompressed++
+    }
     const compressedData = buffer.slice(startOfCompressed)
 
     try {
@@ -86,7 +93,13 @@ export class InventoryParser {
           uri = uri.slice(0, -1) + name
         }
 
-        const fullUrl = baseUrl.endsWith('/') ? baseUrl + uri : baseUrl + '/' + uri
+        let fullUrl: string
+        try {
+          const normalizedBase = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`
+          fullUrl = new URL(uri, normalizedBase).toString()
+        } catch {
+          continue
+        }
         const kind = this.mapRoleToKind(domainRole)
 
         // Store in map

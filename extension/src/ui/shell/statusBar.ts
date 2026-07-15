@@ -93,13 +93,10 @@ export class StatusBarManager {
       return;
     }
 
-    // Build a truncated status bar text that fits narrow windows.
-    // Priority: online icon + "PyHover" + cacheSize + (error if any) + (loading spinner if any).
-    // History preview is dropped when space is tight.
+    // Keep the idle state compact. Cache size and history belong in the tooltip and
+    // command center; continuously rendering them makes the editor status bar noisy.
     const statusParts: string[] = [];
-    statusParts.push(online ? "$(globe)" : "$(circle-slash)");
-    statusParts.push("PyHover");
-    statusParts.push(cacheSize);
+    statusParts.push(online ? "$(symbol-key) PyHover" : "$(circle-slash) PyHover");
 
     // Show error in status bar text — gives users immediate feedback.
     if (this._lastError) {
@@ -110,9 +107,6 @@ export class StatusBarManager {
     if (this._loadingState) {
       statusParts.push(`$(sync-spin)`);
       statusParts.push(this.truncateString(this._loadingState, 25));
-    } else if (historyPreview) {
-      statusParts.push("·");
-      statusParts.push(this.truncateString(historyPreview, 35));
     }
 
     this.item.text = statusParts.join(" ");
@@ -227,12 +221,12 @@ export class StatusBarManager {
     // Online toggle
     items.push({
       label: online
-        ? "$(globe) Online docs enabled"
-        : "$(circle-slash) Online docs disabled",
+        ? "$(circle-slash) Disable online docs"
+        : "$(globe) Enable online docs",
       description: `Cache ${cacheSize}`,
       detail: online
-        ? "Web docs lookup, inventories, and scraping are available."
-        : "Only cached docs and local/runtime sources will be used.",
+        ? "Currently online. Switch to cached docs and local/runtime sources only."
+        : "Currently offline. Allow web docs lookup, inventories, and scraping.",
       command: "python-hover.toggleOnlineDiscovery",
     });
 
@@ -241,7 +235,7 @@ export class StatusBarManager {
       items.push({
         label: "$(pin) Re-pin last hover",
         description: lastHoverTitle,
-        detail: "Re-pin the latest hover into the inspector or docs panel.",
+        detail: "Open the latest hover in a persistent pinned panel.",
         command: "python-hover.pinLast",
       });
     }

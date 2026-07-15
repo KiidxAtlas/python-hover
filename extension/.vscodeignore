@@ -23,6 +23,8 @@ python-helper/**/*.py[cod]
 **/__pycache__/**
 **/*.pyc
 scripts/**
+test-fixtures/**
+out/extension/src/test-integration/**
 python-hover-*.vsix
 # Exclude demo GIF — README links via GitHub raw URL, not local path
 media/media.gif

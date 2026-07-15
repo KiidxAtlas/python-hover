@@ -44,7 +44,11 @@ export class SavedDocsView extends BaseTreeView<SavedDocEntry> {
       kind: 'placeholder',
       id: 'saved-docs-empty',
       label: 'No saved docs yet',
-      description: 'Save symbols from hover cards to build a reusable reading list.',
+      description: 'Search docs, then save useful symbols for quick access.',
+      command: {
+        command: 'python-hover.searchDocs',
+        title: 'Search Python Docs',
+      },
     }
   }
 

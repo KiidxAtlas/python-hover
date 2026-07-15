@@ -109,6 +109,11 @@ export class DocResolver {
     return this.inventoryFetcher.getIndexedPackageSummaries();
   }
 
+  /** Whether online discovery has already been attempted for `packageName` and failed. */
+  hasFailedDiscovery(packageName: string): boolean {
+    return this.inventoryFetcher.hasFailedDiscovery(packageName);
+  }
+
   async ensureIndexedPackage(
     packageName: string,
     isStdlib = false,
@@ -806,28 +811,37 @@ export class DocResolver {
     packageName: string,
     isStdlib = false,
   ): Promise<HoverDoc> {
+    const distributionCandidate = packageName.split(".")[0] || packageName;
     const docKey: DocKey = {
-      name: packageName,
+      name: distributionCandidate,
       qualname: packageName,
-      package: packageName,
+      // PyPI metadata is distribution-level. Querying a dotted import such as
+      // numpy.linalg as though it were its own distribution guarantees an empty
+      // summary even though numpy has useful project metadata.
+      package: distributionCandidate,
       module: packageName,
       isStdlib,
     };
 
     // Trigger inventory load (no-op if already cached)
+    let inventoryModuleDoc: HoverDoc | null = null;
     try {
-      await this.inventoryFetcher.findInInventory(docKey);
+      inventoryModuleDoc = await this.inventoryFetcher.findInInventory(docKey);
     } catch {
       /* swallow — we'll still show what we have */
     }
 
     const moduleExports = this.inventoryFetcher.getModuleExports(
-      packageName,
+      distributionCandidate,
       16,
+      packageName,
     );
     const exportCount =
-      this.inventoryFetcher.getPackageExportCount(packageName);
-    const baseUrl = this.inventoryFetcher.getPackageBaseUrl(packageName);
+      this.inventoryFetcher.getPackageExportCount(
+        distributionCandidate,
+        packageName,
+      );
+    const baseUrl = this.inventoryFetcher.getPackageBaseUrl(distributionCandidate);
 
     // Get PyPI summary for third-party packages
     let summary: string | undefined;
@@ -855,7 +869,12 @@ export class DocResolver {
     }
 
     // Derive a useful docs URL: prefer the package index page
-    let url = baseUrl ? `${baseUrl}/index.html` : undefined;
+    const inventoryModuleUrl =
+      inventoryModuleDoc?.kind === "module" &&
+      inventoryModuleDoc.title?.toLowerCase() === packageName.toLowerCase()
+        ? inventoryModuleDoc.url
+        : undefined;
+    let url = inventoryModuleUrl || (baseUrl ? `${baseUrl}/index.html` : undefined);
     if (isStdlib) {
       const version = this.inventoryFetcher.getPythonVersion();
       url = buildStdlibDocsUrl(packageName, version);
@@ -894,7 +913,7 @@ export class DocResolver {
         this.extractSummaryFromStructuredOrContent(structuredContent, content);
     }
 
-    if ((!summary || !content) && this.config?.onlineDiscovery !== false) {
+    if (!summary && this.config?.onlineDiscovery !== false) {
       const siteIndexDoc = await this.resolveSearchIndexedDoc(
         docKey,
         corpusPackage,
