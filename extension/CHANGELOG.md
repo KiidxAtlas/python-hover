@@ -4,6 +4,11 @@ All notable changes to Python Hover will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.7.11] - 2026-07-16
+
+- Implemented import parsing and module summaries in hovers, providing richer context for library and module overviews.
+- Added support for displaying import statements and module summaries directly within hover cards.
+
 ## [0.7.10] - 2026-07-15
 
 - Added useful library and module overviews that prefer indexed documentation, PyPI project summaries, and installed module docstrings so import hovers explain what a library actually does.
@@ -19,8 +24,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Hardened scraped HTML and Sphinx inventory handling while preserving comparisons, generic type expressions, relative links, and absolute documentation URLs.
 - Expanded automated regression coverage for extraction, context detection, structured merging, cache identity, and hover resolution edge cases.
 - Updated Marketplace positioning and search metadata to describe Python docs, IntelliSense, parameter help, examples, and library summaries more clearly.
-
-## [0.7.9] - 2026-07-15
 
 - Verified guessed Read the Docs inventory URLs before treating them as valid documentation roots, avoiding dead module-browser links and misleading indexes.
 - Shared documentation caches across workspaces while keeping version-specific Python standard-library inventories isolated.

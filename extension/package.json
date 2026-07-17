@@ -2,7 +2,7 @@
   "name": "python-hover",
   "displayName": "Python Hover: Docs & IntelliSense",
   "description": "Instant Python docs in VS Code: signatures, docstrings, parameter help, examples, library summaries, and searchable documentation for Pylance, NumPy, pandas, and more.",
-  "version": "0.7.10",
+  "version": "0.7.11",
   "imports": {
     "#src/*": "./out/extension/src/*.js",
     "#shared/*": "./out/shared/*.js",
