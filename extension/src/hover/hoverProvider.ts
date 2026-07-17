@@ -24,6 +24,7 @@ import {
   prioritizeExamplesForContext,
 } from "#src/hover/hoverContext";
 import { HoverParameterLensService } from "#src/hover/hoverParameterLensService";
+import { getImportModuleAtColumn } from "#src/hover/importParsing";
 import { HoverResolutionManager } from "#src/hover/hoverResolutionManager";
 import { HoverSessionState } from "#src/hover/hoverSessionState";
 import { ResolutionService } from "#src/hover/resolutionService";
@@ -117,9 +118,6 @@ export class HoverProvider implements vscode.HoverProvider {
   private static readonly MAX_CACHE_SIZE = 500;
   /** Short coalescing window; VS Code already handles the longer hover-intent delay. */
   private static readonly HOVER_DEBOUNCE_MS = 40;
-  /** Maximum concurrent in-flight hover resolutions (20). */
-  private static readonly MAX_CONCURRENT_HOVERS = 20;
-
   private renderer: HoverRenderer;
   private docResolver: DocResolver;
   private pythonHelper: PythonHelper;
@@ -341,13 +339,9 @@ export class HoverProvider implements vscode.HoverProvider {
     if (this.config.keepCacheIndefinitely || map.size <= HoverProvider.MAX_CACHE_SIZE) {
       return;
     }
-    const excess = map.size - HoverProvider.MAX_CACHE_SIZE;
-    const iter = map.keys();
-    for (let i = 0; i < excess; i++) {
-      const { value } = iter.next();
-      if (value !== undefined) {
-        map.delete(value);
-      }
+    const oldest = map.keys().next();
+    if (!oldest.done) {
+      map.delete(oldest.value);
     }
   }
 
@@ -901,6 +895,13 @@ export class HoverProvider implements vscode.HoverProvider {
       // before we start any expensive resolution (IPC, network, cache reads).
       const delay = this.config.hoverActivationDelay;
       if (delay > 0) {
+        let activationDelayIndicatorShown = false;
+        const activationDelayIndicator = this.onLoadingStateCallback
+          ? setTimeout(() => {
+              activationDelayIndicatorShown = true;
+              this.onLoadingStateCallback?.("Resolving hover…");
+            }, HoverProvider.LOADING_INDICATOR_DELAY_MS)
+          : undefined;
         await new Promise<void>((resolve, reject) => {
           if (token.isCancellationRequested) {
             reject(new Error("cancelled"));
@@ -923,7 +924,10 @@ export class HoverProvider implements vscode.HoverProvider {
           if (token.isCancellationRequested) {
             cancellationSubscription.dispose();
           }
-        }).catch(() => null);
+        }).catch(() => null).finally(() => {
+          if (activationDelayIndicator) clearTimeout(activationDelayIndicator);
+          if (activationDelayIndicatorShown) this.onLoadingStateCallback?.(undefined);
+        });
         if (token.isCancellationRequested) {
           Logger.debug("doProvideHover: cancelled during activation delay");
           return null;
@@ -1073,16 +1077,20 @@ export class HoverProvider implements vscode.HoverProvider {
           return null;
         }
 
-        const isImportHover = this.isImportModuleHover(document, position);
+        const importModule = this.getImportModuleAtPosition(document, position);
+        const isImportHover = importModule !== undefined;
 
         // ── Import-line fast path: module overview ────────────────────────────
         // When the user hovers on `import foo` or `from foo import …` (on "foo"),
         // skip AST identification and the full symbol pipeline entirely — just fetch
         // a module overview card (inventory + PyPI summary + top exports).
-        if (isImportHover && lspSymbol) {
-          const moduleName = NameRefinement.normalizeImportModule(
-            lspSymbol.name,
-          );
+        if (
+          importModule &&
+          lspSymbol &&
+          /^(?:module|namespace)$/i.test(lspSymbol.kind ?? "") &&
+          NameRefinement.normalizeImportModule(lspSymbol.name) === importModule
+        ) {
+          const moduleName = importModule;
           if (moduleName) {
             const isStdlib =
               !!lspSymbol.isStdlib ||
@@ -2236,9 +2244,7 @@ export class HoverProvider implements vscode.HoverProvider {
       title: word,
       kind: "keyword",
       content,
-      structuredContent: !contentFromRuntime
-        ? resolvedDoc?.structuredContent
-        : undefined,
+      structuredContent: resolvedDoc?.structuredContent,
       seeAlso: resolvedDoc?.seeAlso,
       sourceUrl: resolvedDoc?.sourceUrl,
       links: resolvedDoc?.links,
@@ -2256,33 +2262,17 @@ export class HoverProvider implements vscode.HoverProvider {
     return hover;
   }
 
-  private isImportModuleHover(
+  private getImportModuleAtPosition(
     document: vscode.TextDocument,
     position: vscode.Position,
-  ): boolean {
+  ): string | undefined {
     try {
       const line = document.lineAt(position.line).text;
-      const col = position.character;
-
-      const fromIdx = line.indexOf("from ");
-      const importIdx = line.indexOf(" import ");
-      if (
-        fromIdx !== -1 &&
-        importIdx !== -1 &&
-        col >= fromIdx + 5 &&
-        col <= importIdx
-      ) {
-        return true;
-      }
-
-      const importStart = line.match(/^\s*import\s+/);
-      if (importStart && col >= importStart[0].length) {
-        return true;
-      }
+      return getImportModuleAtColumn(line, position.character);
     } catch {
       /* ignore */
     }
-    return false;
+    return undefined;
   }
 
   private logHoverEvent(

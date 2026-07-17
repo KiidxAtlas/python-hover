@@ -33,6 +33,44 @@ import {
 import { HOVER_MARKDOWN_COMMANDS } from "#src/ui/webview/webviewCommandAllowlist";
 import * as vscode from "vscode";
 
+export function splitInlineOverloads(signature: string): string[] {
+  const lines = signature.split("\n");
+  const parts: string[] = [];
+  let start = 0;
+  let tripleQuote: '"""' | "'''" | undefined;
+
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+    const line = lines[lineIndex];
+    if (
+      !tripleQuote &&
+      lineIndex > start &&
+      lines[lineIndex - 1].trim() === "" &&
+      /^(?:async\s+def|def|class)\s+[A-Za-z_][A-Za-z0-9_]*/.test(line)
+    ) {
+      parts.push(lines.slice(start, lineIndex).join("\n").trim());
+      start = lineIndex;
+    }
+
+    for (let column = 0; column < line.length; column++) {
+      if (tripleQuote) {
+        const closing = line.indexOf(tripleQuote, column);
+        if (closing < 0) break;
+        column = closing + 2;
+        tripleQuote = undefined;
+        continue;
+      }
+      const token = line.slice(column, column + 3);
+      if (token === '"""' || token === "'''") {
+        tripleQuote = token;
+        column += 2;
+      }
+    }
+  }
+
+  parts.push(lines.slice(start).join("\n").trim());
+  return parts.filter(Boolean);
+}
+
 export class HoverRenderer {
   private detectedVersion: string | undefined;
 
@@ -183,11 +221,7 @@ export class HoverRenderer {
    *  "Fallback" tier hit when nothing better was found) that the hover would
    *  otherwise show only a header with no indication anything is missing. */
   private isLowConfidenceEmptyResult(doc: HoverDoc): boolean {
-    return (
-      doc.source === ResolutionSource.Fallback &&
-      doc.confidence > 0 &&
-      doc.confidence <= 0.5
-    );
+    return doc.confidence >= 0 && doc.confidence <= 0.5;
   }
 
   private renderNoDocsFoundHint(md: vscode.MarkdownString, doc: HoverDoc): void {
@@ -461,12 +495,7 @@ export class HoverRenderer {
       return [];
     }
 
-    const split = trimmed
-      .split(/\n\s*\n(?=(?:async\s+def|def|class)\s+[A-Za-z_][A-Za-z0-9_]*)/)
-      .map((part) => part.trim())
-      .filter(Boolean);
-
-    return split;
+    return splitInlineOverloads(trimmed);
   }
 
   private renderSignatureEntry(

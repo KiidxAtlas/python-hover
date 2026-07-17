@@ -42,4 +42,37 @@ describe("detectHoverContext", () => {
 
     assert.deepEqual(context.tags, ["async", "requests"]);
   });
+
+  it("handles long unmatched brackets without regex backtracking", () => {
+    const crafted = `${"[a".repeat(50_000)} for value`;
+    const context = detectHoverContext(fakeDocument([crafted]), {
+      line: 0,
+      character: 0,
+    } as any);
+
+    assert.deepEqual(context.tags, []);
+  });
+
+  it("detects a comprehension inside nested brackets", () => {
+    const context = detectHoverContext(
+      fakeDocument(["values = [[item] for item in source]"]),
+      { line: 0, character: 10 } as any,
+    );
+
+    assert.deepEqual(context.tags, ["comprehension"]);
+  });
+
+  it("ignores comprehension-like text in comments and strings", () => {
+    const context = detectHoverContext(
+      fakeDocument([
+        "# example: [item for item in values]",
+        'message = "{value for value in values}"',
+        "'''[entry for entry in entries]'''",
+        "result = []",
+      ]),
+      { line: 2, character: 10 } as any,
+    );
+
+    assert.deepEqual(context.tags, []);
+  });
 });

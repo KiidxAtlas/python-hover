@@ -2,6 +2,7 @@ import { DocResolver } from "#docs-engine/docResolver";
 import { DocKey, HoverDoc, ResolutionSource } from "#shared/types";
 import { PythonHelper } from "#src/core/pythonHelper";
 import { Logger } from "#src/logger";
+import { moduleSummariesSubstantiallyOverlap } from "#src/hover/moduleSummary";
 
 export class HoverResolutionManager {
   private installedVersionCache = new Map<string, string | null>();
@@ -53,7 +54,9 @@ export class HoverResolutionManager {
 
       const hasStructured = Boolean(
         doc.structuredContent &&
-        (doc.structuredContent.sections?.length ?? 0) > 0,
+        (doc.structuredContent.sections ?? []).some((section) =>
+          isUsefulText(section.content, 20),
+        ),
       );
       const hasSummary = Boolean(doc.summary && isUsefulText(doc.summary));
       const hasContent = Boolean(doc.content && isUsefulText(doc.content));
@@ -84,8 +87,8 @@ export class HoverResolutionManager {
         const runtime = await this.tryRuntimeFallback(key);
         if (runtime) {
           // Merge runtime doc into resolver doc for richer hover
-          doc.summary = doc.summary || runtime.summary;
-          doc.content = doc.content || runtime.content;
+          if (!isUsefulText(doc.summary)) doc.summary = runtime.summary;
+          if (!isUsefulText(doc.content)) doc.content = runtime.content;
           doc.signature = doc.signature || runtime.signature;
           doc.source = runtime.source || doc.source;
           Logger.debug(
@@ -224,6 +227,10 @@ export class HoverResolutionManager {
       return indexed.length >= runtime.length ? indexed : runtime;
     }
 
+    if (moduleSummariesSubstantiallyOverlap(indexed, runtime)) {
+      return indexed.length >= runtime.length ? indexed : runtime;
+    }
+
     const punctuatedIndexed = /[.!?]$/.test(indexed) ? indexed : `${indexed}.`;
     const sentenceRuntime = runtime.replace(/^Provides\s+/, 'It provides ');
     return this.normalizeModuleSummary(`${punctuatedIndexed} ${sentenceRuntime}`);
@@ -235,7 +242,7 @@ export class HoverResolutionManager {
     const cleaned = summary
       .replace(/\[([^\]]+)]\(https?:\/\/[^)]+\)/g, '$1')
       .replace(/<https?:\/\/[^>]+>/g, '')
-      .replace(/\bhttps?:\/\/\S+/g, '')
+      .replace(/\bhttps?:\/\/\S+/g, (url) => url.match(/[.!?]+$/)?.[0] ?? '')
       .replace(/^This section outlines\s+/i, 'Provides ')
       .replace(/^#{1,6}\s+/gm, '')
       .replace(/^\s*[=~`^#*_-]{3,}\s*$/gm, '')

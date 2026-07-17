@@ -144,6 +144,7 @@ export class DocstringParser {
       const isGrammar = content.includes('::=')
       const isPythonPrompt = content.trim().startsWith('>>>')
       const isContinuation = content.trim().startsWith('...')
+      const looksLikePython = this.looksLikePythonCode(content.trim())
 
       // Detect start of examples
       if (content.trim().match(/^Examples?:$/)) {
@@ -175,10 +176,11 @@ export class DocstringParser {
           // Standard block
           isCode =
             currentIndent >= 4 ||
-            isGrammar ||
-            isPythonPrompt ||
-            isContinuation ||
-            (inExampleSection && currentIndent >= 2)
+          isGrammar ||
+          isPythonPrompt ||
+          isContinuation ||
+          (inExampleSection && currentIndent >= 2) ||
+          (currentIndent >= 4 && looksLikePython)
           // Also keep open if indented same as start (e.g. grammar blocks starting at 3)
           if (currentIndent >= codeBlockIndent && codeBlockIndent > 0) {
             isCode = true
@@ -190,7 +192,7 @@ export class DocstringParser {
           isGrammar ||
           isPythonPrompt ||
           (inExampleSection && currentIndent >= 2) ||
-          currentIndent >= 4
+          (currentIndent >= 4 && looksLikePython)
       }
 
       if (isCode) {
@@ -240,6 +242,13 @@ export class DocstringParser {
 
     result.summary = processedLines.join('\n').trim()
     return result
+  }
+
+  private looksLikePythonCode(line: string): boolean {
+    if (!line || /^[A-Z][^=()[\]{}]*[.!?]$/.test(line)) {
+      return false
+    }
+    return /^(?:async\s+def|def|class|for|while|if|elif|else:|try:|except\b|finally:|with|return\b|raise\b|yield\b|import\b|from\b|@)|^[A-Za-z_]\w*(?:\.\w+)*(?:\s*=|\s*\(|\s*\[)|^(?:print|len|range|list|dict|set|tuple)\s*\(/.test(line)
   }
 
   private isNumpyStyle(docstring: string): boolean {

@@ -7,6 +7,67 @@ type ContextRule = {
   test: (text: string) => boolean;
 };
 
+function hasComprehension(text: string): boolean {
+  const stack: Array<{ opener: "[" | "{"; sawFor: boolean }> = [];
+  let quote: "'" | '"' | "'''" | '"""' | undefined;
+  let inComment = false;
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (inComment) {
+      if (char === "\n") inComment = false;
+      continue;
+    }
+    if (quote) {
+      if ((quote === "'" || quote === '"') && char === "\\") {
+        i++;
+        continue;
+      }
+      if (text.startsWith(quote, i)) {
+        i += quote.length - 1;
+        quote = undefined;
+      } else if ((quote === "'" || quote === '"') && char === "\n") {
+        quote = undefined;
+      }
+      continue;
+    }
+    if (char === "#") {
+      inComment = true;
+      continue;
+    }
+    if (text.startsWith("'''", i) || text.startsWith('"""', i)) {
+      quote = text.slice(i, i + 3) as "'''" | '"""';
+      i += 2;
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+      continue;
+    }
+    if (char === "[" || char === "{") {
+      stack.push({ opener: char, sawFor: false });
+      continue;
+    }
+    if (char === "]" || char === "}") {
+      const opener = char === "]" ? "[" : "{";
+      const frame = stack[stack.length - 1];
+      if (frame?.opener === opener) {
+        stack.pop();
+        if (frame.sawFor) return true;
+      }
+      continue;
+    }
+    if (
+      stack.length > 0 &&
+      text.startsWith("for", i) &&
+      !/[A-Za-z0-9_]/.test(text[i - 1] ?? "") &&
+      !/[A-Za-z0-9_]/.test(text[i + 3] ?? "")
+    ) {
+      stack[stack.length - 1].sawFor = true;
+    }
+  }
+  return false;
+}
+
 const CONTEXT_RULES: ContextRule[] = [
   {
     tag: "async",
@@ -29,7 +90,7 @@ const CONTEXT_RULES: ContextRule[] = [
   {
     tag: "comprehension",
     summary: "Comprehension expression nearby",
-    test: (text) => /\[[^\]]+\bfor\b[^\]]+\]|\{[^}]+\bfor\b[^}]+\}/.test(text),
+    test: hasComprehension,
   },
   {
     tag: "requests",

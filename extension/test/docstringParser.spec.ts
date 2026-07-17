@@ -107,4 +107,20 @@ External paper that should not become example code.`);
     assert.doesNotMatch(parsed.examples?.[0] ?? "", /External paper/);
     assert.doesNotMatch(parsed.examples?.[0] ?? "", /internal_state/);
   });
+
+  it("does not promote ordinary indented help prose to a code block", () => {
+    const parsed = parser.parseHelpText(`Topic
+    This paragraph is indented by the help formatter.
+    It remains ordinary explanatory prose.`);
+
+    assert.doesNotMatch(parsed.summary ?? "", /```/);
+  });
+
+  it("still promotes recognizable indented Python to a code block", () => {
+    const parsed = parser.parseHelpText(`Example
+    result = transform(value)
+    print(result)`);
+
+    assert.match(parsed.summary ?? "", /```python/);
+  });
 });
